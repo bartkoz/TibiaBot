@@ -12,9 +12,10 @@ def configurate():
 def read_config():
     try:
         with open('config.json', 'r') as f:
+            print('Config found, processing with current settings.')
             return json.load(f)
     except IOError:
-        print('config not found, processing with configuration')
+        print('Config not found, processing with configuration')
         with open('config.json', 'w') as f:
             cfg = configurate()
             f.write(json.dumps(cfg))
