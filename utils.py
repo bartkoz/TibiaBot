@@ -1,16 +1,22 @@
 from pyautogui import *
+import settings
+from random import randint
+
+
+xMiddle = settings.xMiddle
+yMiddle = settings.yMiddle
 
 
 def detect_enemy():
     for monster_name in settings.monsters_names:
         if locateOnScreen('images/{}.png'.format(monster_name)):
-            perform_attack(monster_name)
+            print('monster found, attacking')
+            perform_attack()
 
 
-def perform_attack(monster_name):
-    while not locateOnScreen('images/attacking.png'):
-        click(locateCenterOnScreen('images/follow.png'))
-        click(locateCenterOnScreen('images/{}.png'.format(monster_name)))
+def perform_attack():
+    click(locateCenterOnScreen('images/follow.png'))
+    keyDown('space')
 
 
 def collect_loot():
