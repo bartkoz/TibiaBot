@@ -1,2 +1,7 @@
 *.pyc
 .idea
+.bin
+.lib
+.include
+.Python
+.__pycache__
