@@ -1,11 +1,13 @@
 import json
-from pyautogui import *
+from image_grab import detect
 
 
 def configurate():
     return {
-        'constant_locator_distance': calculate_distance_from_const_to_waypoint(),
-        'constant_locator_location': locate_constant_locator()
+        'constant_locator_x_distance': calculate_distance_from_const_to_waypoint()[0],
+        'constant_locator_y_distance': calculate_distance_from_const_to_waypoint()[1],
+        'constant_locator_x_location': locate_constant_locator('constant_locator'),
+        'constant_locator_y_location': locate_constant_locator('constant_locator2')
     }
 
 
@@ -22,12 +24,14 @@ def read_config():
             return cfg
 
 
-def locate_constant_locator():
-    return locateCenterOnScreen('images/constant_locator.png').x
+def locate_constant_locator(locator):
+    return detect('images/{}.png'.format(locator))
 
 
 def calculate_distance_from_const_to_waypoint():
     try:
-        return locate_constant_locator().x - locateCenterOnScreen('waypoints/1.png').x
+        x = locate_constant_locator('constant_locator')[1] - detect('waypoints/1.png')[1]
+        y = locate_constant_locator('constant_locator2')[0] - detect('waypoints/1.png')[0]
+        return x, y
     except TypeError:
         print('Could not find loupe or waypoint on screen, are you sure you have Tibia client focused?')

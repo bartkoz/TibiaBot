@@ -1,1 +1,4 @@
-{"constant_locator_distance": 75, "constant_locator_location": [2521, 64]}
+{'constant_locator_x_distance': 70,
+ 'constant_locator_y_distance': 58,
+ 'constant_locator_x_location': (55, 2513),
+ 'constant_locator_y_location': (114, 2464)}

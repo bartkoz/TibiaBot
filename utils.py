@@ -8,23 +8,35 @@ xMiddle = settings.xMiddle
 yMiddle = settings.yMiddle
 
 
-def detect_enemy():
-    """
-    Detects if enemy is visible on screen
-    """
-    for monster_name in settings.monsters_names:
-        if detect('images/{}.png'.format(monster_name)):
-            print('monster found, attacking')
-            perform_attack()
+class Attack:
 
+    def __init__(self):
+        self.attacking = False
 
-def perform_attack():
-    """
-    Changes stance to 'follow' and attacks with space
-    """
-    x, y = detect('images/follow.png')
-    pyautogui.click(x=x, y=y)
-    pyautogui.keyDown('space')
+    def detect_enemy(self):
+        """
+        Detects if enemy is visible on screen
+        """
+        for monster_name in settings.monsters_names:
+            while not self.attacking:
+                if detect('images/{}.png'.format(monster_name)):
+                    print('monster found, attacking')
+                    self.perform_attack(monster_name)
+
+    def perform_attack(self, monster_name):
+        """
+        Attacks with space
+        """
+        if not self.check_if_attacking(monster_name):
+            pyautogui.keyDown('space')
+            self.attacking = True
+
+    def check_if_attacking(self, monster_name):
+        if detect('images/{}_attacking.png'.format(monster_name)):
+            self.attacking = True
+            return True
+        self.attacking = False
+        return False
 
 
 def collect_loot():
