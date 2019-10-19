@@ -1,3 +1,4 @@
+import settings
 import mss.tools
 import cv2
 import numpy as np
@@ -9,18 +10,18 @@ def image_grab():
     :return: ScreenShot object, used in detect()
     """
     with mss.mss() as sct:
-        monitor = {"top": 0, "left": 0, "width": 2560, "height": 1440}
+        monitor = {"top": 0, "left": 0, "width": settings.screenResolutionX, "height": settings.screenResolutionY}
         return sct.grab(monitor)
 
 
 def detect(image):
     """
     :param image: file name with location eg. images/test.png
-    :return: x,y coordinates in nested tuple [0][0] [0][1], can be empty
-    if nothing has been detected
+    :return: x,y coordinates in (x,y) tuple, returns False if
+    nothing has been recognized
     """
-    img = cv2.cvtColor(np.array(image_grab()), cv2.COLOR_BGR2GRAY)
-    template = cv2.imread('{}'.format(image), 0)
+    img = np.array(image_grab())
+    template = cv2.imread('{}'.format(image), cv2.IMREAD_UNCHANGED)
     res = cv2.matchTemplate(img, template, cv2.TM_CCORR_NORMED)
     threshold = 0.99
     x, y = np.where(res >= threshold)
