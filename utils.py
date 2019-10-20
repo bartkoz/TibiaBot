@@ -13,7 +13,7 @@ class Attack:
 
     def __init__(self):
         self.attacking = False
-        self.loot_collected = False
+        self.loot_collected = True
 
     def attack(self):
         """
@@ -21,11 +21,13 @@ class Attack:
         :return:
         """
         while True:
-            dev_print('self.attacking Bool set to: {}'.format(self.attacking))
+            dev_print('self.attacking Bool set to: {} self.loot_collected set to: {}'.format(self.attacking,
+                                                                                             self.loot_collected))
             for monster_name in settings.MONSTER_NAMES:
                 if self.detect_enemy(monster_name) and not self.check_if_attacking(monster_name):
                     print('performing attack procedure')
                     self.perform_attack(monster_name)
+            dev_print('loot_collected: {}'.format(self.loot_collected))
             if not self.attacking and not self.loot_collected:
                 self.collect_loot()
 
@@ -35,6 +37,7 @@ class Attack:
         """
         print('Marked {}.'.format(monster_name))
         pyautogui.keyDown('space')
+        self.loot_collected = False
 
     def check_if_attacking(self, monster_name):
         if detect('images/{}_attacking.png'.format(monster_name), threshold=0.98):
@@ -72,5 +75,5 @@ class Attack:
         pyautogui.keyDown('shift')
         for position in pos_list:
             pyautogui.click(x=position[0], y=position[1], button='right')
-            pyautogui.keyUp('shift')
+        pyautogui.keyUp('shift')
         self.loot_collected = True
