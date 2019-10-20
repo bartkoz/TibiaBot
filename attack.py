@@ -12,7 +12,6 @@ yMiddle = settings.Y_MIDDLE
 class Attack:
 
     def __init__(self):
-        self.attacking = False
         self.loot_collected = True
 
     def attack(self):
@@ -21,15 +20,13 @@ class Attack:
         :return:
         """
         while True:
-            dev_print('self.attacking Bool set to: {} self.loot_collected set to: {}'.format(self.attacking,
-                                                                                             self.loot_collected))
+            dev_print('self.loot_collected set to: {}'.format(self.loot_collected))
             for monster_name in settings.MONSTER_NAMES:
                 if self.detect_enemy(monster_name) and not self.check_if_attacking(monster_name):
                     print('performing attack procedure')
                     self.perform_attack(monster_name)
-            dev_print('loot_collected: {}'.format(self.loot_collected))
-            if not self.attacking and not self.loot_collected:
-                self.collect_loot()
+                if not self.check_if_attacking(monster_name) and not self.loot_collected:
+                    self.collect_loot()
 
     def perform_attack(self, monster_name):
         """
@@ -41,9 +38,7 @@ class Attack:
 
     def check_if_attacking(self, monster_name):
         if detect('images/{}_attacking.png'.format(monster_name), threshold=0.98):
-            self.attacking = True
             return True
-        self.attacking = False
         return False
 
     def detect_enemy(self, monster_name):
@@ -60,6 +55,7 @@ class Attack:
         """
         Collects loot on all 8 sqms around character, to be changed, in the future
         """
+        print('Collecting loot...')
         offset = settings.OFFSET + randint(10, 15)
         pos_list = [
             [xMiddle - offset, yMiddle],
