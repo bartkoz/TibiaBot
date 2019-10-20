@@ -37,12 +37,11 @@ class Attack:
         pyautogui.keyDown('space')
 
     def check_if_attacking(self, monster_name):
-        for image in [monster_name, '{}2'.format(monster_name)]:
-            if detect('images/{}_attacking.png'.format(image), threshold=0.98):
-                self.attacking = True
-                return True
-            self.attacking = False
-            return False
+        if detect('images/{}_attacking.png'.format(monster_name), threshold=0.98):
+            self.attacking = True
+            return True
+        self.attacking = False
+        return False
 
     def detect_enemy(self, monster_name):
         """
