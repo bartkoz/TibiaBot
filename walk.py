@@ -2,8 +2,8 @@ import settings
 import pyautogui
 from image_grab import detect
 
-xMiddle = settings.xMiddle
-yMiddle = settings.yMiddle
+xMiddle = settings.X_MIDDLE
+yMiddle = settings.Y_MIDDLE
 
 
 def move_mouse_to_center():
@@ -29,7 +29,7 @@ def perform_movement(config):
         coordinates = detect('waypoints/{}.png'.format(waypoint_number))
         pyautogui.click(coordinates[1], coordinates[0])
 
-    for waypoint_number in range(1, settings.number_of_wpts+1):
+    for waypoint_number in range(1, settings.NUMBER_OF_WPTS+1):
         try:
             print('Moving to {}'.format(waypoint_number))
             print('performing movement')

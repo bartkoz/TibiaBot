@@ -1,6 +1,8 @@
-xMiddle = 875
-yMiddle = 440
-monsters_names = ['rat']
-number_of_wpts = 4
-screenResolutionX = 2560
-screenResolutionY = 1440
+X_MIDDLE = 1185
+Y_MIDDLE = 610
+MONSTER_NAMES = ['rat']
+NUMBER_OF_WPTS = 4
+SCREEN_X_RESOLUTION = 2560
+SCREEN_Y_RESOLUTION = 1440
+OFFSET = 100
+DEV_MODE = True
