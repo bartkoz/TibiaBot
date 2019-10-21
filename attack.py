@@ -19,14 +19,13 @@ class Attack:
         Main method gathering compiling all other defs.
         :return:
         """
-        while True:
-            dev_print('self.loot_collected set to: {}'.format(self.loot_collected))
-            for monster_name in settings.MONSTER_NAMES:
-                if self.detect_enemy(monster_name) and not self.check_if_attacking(monster_name):
-                    print('performing attack procedure')
-                    self.perform_attack(monster_name)
-                if not self.check_if_attacking(monster_name) and not self.loot_collected:
-                    self.collect_loot()
+        dev_print('self.loot_collected set to: {}'.format(self.loot_collected))
+        for monster_name in settings.MONSTER_NAMES:
+            if not self.check_if_attacking(monster_name) and not self.loot_collected:
+                self.collect_loot()
+            if self.detect_enemy(monster_name) and not self.check_if_attacking(monster_name):
+                print('performing attack procedure')
+                self.perform_attack(monster_name)
 
     def perform_attack(self, monster_name):
         """
