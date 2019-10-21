@@ -13,6 +13,7 @@ class Attack:
 
     def __init__(self):
         self.loot_collected = True
+        self.follow_coordinates = detect('images/follow.png')
 
     def attack(self):
         """
@@ -21,10 +22,10 @@ class Attack:
         """
         dev_print('self.loot_collected set to: {}'.format(self.loot_collected))
         for monster_name in settings.MONSTER_NAMES:
-            if not self.check_if_attacking(monster_name) and not self.loot_collected:
-                self.collect_loot()
+            self.perform_loot_collection(monster_name)
             if self.detect_enemy(monster_name) and not self.check_if_attacking(monster_name):
                 print('performing attack procedure')
+                self.perform_loot_collection(monster_name)
                 self.perform_attack(monster_name)
 
     def perform_attack(self, monster_name):
@@ -32,8 +33,13 @@ class Attack:
         Attacks with space
         """
         print('Marked {}.'.format(monster_name))
+        pyautogui.click(x=self.follow_coordinates[1], y=self.follow_coordinates[0])
         pyautogui.keyDown('space')
         self.loot_collected = False
+
+    def perform_loot_collection(self, monster_name):
+        if not self.check_if_attacking(monster_name) and not self.loot_collected:
+            self.collect_loot()
 
     def check_if_attacking(self, monster_name):
         if detect('images/{}_attacking.png'.format(monster_name), threshold=0.98):
