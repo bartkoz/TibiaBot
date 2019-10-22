@@ -2,6 +2,7 @@ import settings
 import pyautogui
 from image_grab import detect
 from attack import Attack
+from setup import read_config
 
 xMiddle = settings.X_MIDDLE
 yMiddle = settings.Y_MIDDLE
@@ -13,7 +14,11 @@ def move_mouse_to_center():
 
 class Walk:
 
-    def perform_movement(self, config):
+    def __init__(self):
+        self.config = read_config()
+
+    def perform_movement(self):
+        config = self.config
         locator_x_distance = config['constant_locator_x_distance']
         locator_y_distance = config['constant_locator_y_distance']
         locator_x_position = config['constant_locator_x_location']
