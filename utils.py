@@ -21,7 +21,7 @@ class JunkRemover:
         pyautogui.mouseUp()
 
     def remove_junk_from_bp(self):
-        while not detect('images/medicinepouch.png') == (self.y, self.x):
+        while not detect('images/medicinepouch.png') == (self.loot_y, self.loot_x):
             if detect('images/fish.png'):
                 for i in range(randint(1,3)):
                     pyautogui.press('f1')
