@@ -1,26 +1,14 @@
-from setup import read_config
-from walk import perform_movement
-from mana import get_mana
-from multiprocessing import Process
+import multiprocessing
+from walk import Walk
+from utils import JunkRemover
 
+if __name__ == "__main__":
+    Walk().perform_movement()
+    # p1 = multiprocessing.Process(target=Walk().perform_movement)
+    # p2 = multiprocessing.Process(target=JunkRemover().remove_junk_from_bp)
 
-class Bot:
+    p1.start()
+    # p2.start()
 
-    def __init__(self):
-        self.config = read_config()
-        self.performing_action = False
-
-    def move(self):
-        perform_movement(self.config)
-
-    def get_mana_status(self):
-        print(get_mana())
-
-    def run(self):
-        while True:
-            Process(target=self.get_mana_status).start()
-            # Process(target=self.move).start()
-
-
-bot = Bot()
-bot.run()
+    p1.join()
+    # p2.join()

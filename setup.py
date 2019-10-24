@@ -4,10 +4,11 @@ from image_grab import detect
 
 def configurate():
     return {
-        'constant_locator_x_distance': calculate_distance_from_const_to_waypoint()[0],
-        'constant_locator_y_distance': calculate_distance_from_const_to_waypoint()[1],
+        'constant_locator_x_distance': calculate_distance_from_const_to_waypoint()[1],
+        'constant_locator_y_distance': calculate_distance_from_const_to_waypoint()[0],
         'constant_locator_x_location': locate_constant_locator('constant_locator'),
         'constant_locator_y_location': locate_constant_locator('constant_locator2')
+
     }
 
 

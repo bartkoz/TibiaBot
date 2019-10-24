@@ -1,23 +1,34 @@
-import pyautogui
+import numpy as np
+from image_grab import detect, image_grab
 
 
-def get_life():
-    # TODO: refactor
-    health = pyautogui.locateOnScreen('images/health.png')
-    if pyautogui.pixelMatchesColor((health.left + 105), (health.top + 7), (219, 79, 79)):
-        return 100
-    elif pyautogui.pixelMatchesColor((health.left + 94), (health.top + 7), (219, 79, 79)):
-        return 90
-    elif pyautogui.pixelMatchesColor((health.left + 74), (health.top + 7), (219, 79, 79)):
-        return 70
-    elif pyautogui.pixelMatchesColor((health.left + 54), (health.top + 7), (219, 79, 79)):
-        return 50
-    elif pyautogui.pixelMatchesColor((health.left + 34), (health.top + 7), (219, 79, 79)):
-        return 30
-    elif pyautogui.pixelMatchesColor((health.left + 24), (health.top + 7), (219, 79, 79)):
-        return 20
-    elif pyautogui.pixelMatchesColor((health.left + 14), (health.top + 7), (219, 79, 79)):
-        return 15
-    elif pyautogui.pixelMatchesColor((health.left + 5), (health.top + 7), (219, 79, 79)):
-        return 10
-    return 0
+class Health:
+
+    def __init__(self):
+        coordinates = detect('images/health.png')
+        self.hp_x = coordinates[1]
+        self.hp_y = coordinates[0] + 6
+        self.rgb = (149, 73, 39)
+
+    def _get_array(self):
+        return np.array(image_grab())
+
+    def get_life(self):
+        array = self._get_array()
+        if tuple(array[self.hp_y + 9][self.hp_x + 100][:3]) == self.rgb:
+            return 100
+        elif array[self.hp_y + 9][self.hp_x + 89] == self.rgb:
+            return 90
+        elif array[self.hp_y + 9][self.hp_x + 69] == self.rgb:
+            return 70
+        elif array[self.hp_y + 9][self.hp_x + 49] == self.rgb:
+            return 50
+        elif array[self.hp_y + 9][self.hp_x + 29] == self.rgb:
+            return 30
+        elif array[self.hp_y + 9][self.hp_x + 19] == self.rgb:
+            return 20
+        elif array[self.hp_y + 9][self.hp_x + 9] == self.rgb:
+            return 15
+        elif array[self.hp_y + 9][self.hp_x] == self.rgb:
+            return 10
+        return 0
