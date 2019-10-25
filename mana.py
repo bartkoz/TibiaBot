@@ -1,26 +1,41 @@
-import pyautogui
+import cv2
+import numpy as np
+from image_grab import detect, image_grab
 
 
-def get_mana():
+class Mana:
+
     # TODO: refactor
-    health = pyautogui.locateOnScreen('images/mana.png')
-    try:
-        if pyautogui.pixelMatchesColor((health.left + 105), (health.top + 5), (67, 64, 192)):
+    def __init__(self):
+        coordinates = detect('images/mana.png')
+        self.mana_x = coordinates[1] + 5
+        self.mana_y = coordinates[0] + 6
+        self.rgb = (101, 98, 240)
+
+    def _get_array(self):
+        return np.array(image_grab())
+
+    def get_mana(self):
+        array = self._get_array()
+        array = cv2.cvtColor(array, cv2.COLOR_BGR2RGB)
+        if tuple(array[self.mana_y][self.mana_x + 90][:3]) == self.rgb:
             return 100
-        elif pyautogui.pixelMatchesColor((health.left + 94), (health.top + 5), (67, 64, 192)):
+        elif tuple(array[self.mana_y][self.mana_x + 81][:3]) == self.rgb:
             return 90
-        elif pyautogui.pixelMatchesColor((health.left + 74), (health.top + 5), (67, 64, 192)):
+        elif tuple(array[self.mana_y][self.mana_x + 72][:3]) == self.rgb:
+            return 80
+        elif tuple(array[self.mana_y][self.mana_x + 63][:3]) == self.rgb:
             return 70
-        elif pyautogui.pixelMatchesColor((health.left + 54), (health.top + 5), (67, 64, 192)):
+        elif tuple(array[self.mana_y][self.mana_x + 54][:3]) == self.rgb:
+            return 60
+        elif tuple(array[self.mana_y][self.mana_x + 45][:3]) == self.rgb:
             return 50
-        elif pyautogui.pixelMatchesColor((health.left + 34), (health.top + 7), (219, 79, 79)):
+        elif tuple(array[self.mana_y][self.mana_x + 36][:3]) == self.rgb:
+            return 40
+        elif tuple(array[self.mana_y][self.mana_x + 27][:3]) == self.rgb:
             return 30
-        elif pyautogui.pixelMatchesColor((health.left + 24), (health.top + 7), (219, 79, 79)):
+        elif tuple(array[self.mana_y][self.mana_x + 18][:3]) == self.rgb:
             return 20
-        elif pyautogui.pixelMatchesColor((health.left + 14), (health.top + 7), (219, 79, 79)):
-            return 15
-        elif pyautogui.pixelMatchesColor((health.left + 5), (health.top + 28), (219, 79, 79)):
+        elif tuple(array[self.mana_y][self.mana_x + 9][:3]) == self.rgb:
             return 10
         return 0
-    except AttributeError:
-        print("An error occurred while trying to read mana")

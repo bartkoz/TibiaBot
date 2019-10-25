@@ -1,23 +1,41 @@
-import pyautogui
+import cv2
+import numpy as np
+from image_grab import detect, image_grab
 
 
-def get_life():
+class Health:
+
     # TODO: refactor
-    health = pyautogui.locateOnScreen('images/health.png')
-    if pyautogui.pixelMatchesColor((health.left + 105), (health.top + 7), (219, 79, 79)):
-        return 100
-    elif pyautogui.pixelMatchesColor((health.left + 94), (health.top + 7), (219, 79, 79)):
-        return 90
-    elif pyautogui.pixelMatchesColor((health.left + 74), (health.top + 7), (219, 79, 79)):
-        return 70
-    elif pyautogui.pixelMatchesColor((health.left + 54), (health.top + 7), (219, 79, 79)):
-        return 50
-    elif pyautogui.pixelMatchesColor((health.left + 34), (health.top + 7), (219, 79, 79)):
-        return 30
-    elif pyautogui.pixelMatchesColor((health.left + 24), (health.top + 7), (219, 79, 79)):
-        return 20
-    elif pyautogui.pixelMatchesColor((health.left + 14), (health.top + 7), (219, 79, 79)):
-        return 15
-    elif pyautogui.pixelMatchesColor((health.left + 5), (health.top + 7), (219, 79, 79)):
-        return 10
-    return 0
+    def __init__(self):
+        coordinates = detect('images/health.png')
+        self.hp_x = coordinates[1] + 5
+        self.hp_y = coordinates[0] + 7
+        self.rgb = (255, 113, 113)
+
+    def _get_array(self):
+        return np.array(image_grab())
+
+    def get_life(self):
+        array = self._get_array()
+        array = cv2.cvtColor(array, cv2.COLOR_BGR2RGB)
+        if tuple(array[self.hp_y][self.hp_x + 90][:3]) == self.rgb:
+            return 100
+        elif tuple(array[self.hp_y][self.hp_x + 81][:3]) == self.rgb:
+            return 90
+        elif tuple(array[self.hp_y][self.hp_x + 72][:3]) == self.rgb:
+            return 80
+        elif tuple(array[self.hp_y][self.hp_x + 63][:3]) == self.rgb:
+            return 70
+        elif tuple(array[self.hp_y][self.hp_x + 54][:3]) == self.rgb:
+            return 60
+        elif tuple(array[self.hp_y][self.hp_x + 45][:3]) == self.rgb:
+            return 50
+        elif tuple(array[self.hp_y][self.hp_x + 36][:3]) == self.rgb:
+            return 40
+        elif tuple(array[self.hp_y][self.hp_x + 27][:3]) == self.rgb:
+            return 30
+        elif tuple(array[self.hp_y][self.hp_x + 18][:3]) == self.rgb:
+            return 20
+        elif tuple(array[self.hp_y][self.hp_x + 9][:3]) == self.rgb:
+            return 10
+        return 0
