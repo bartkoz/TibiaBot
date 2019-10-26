@@ -25,13 +25,12 @@ class JunkRemover:
         # while True:
         print('Checking if anything to throw away...')
         if detect('images/medicinepouch.png') != (self.loot_x, self.loot_y):
+            pyautogui.keyDown('escape')
+            self.throw_away_junk()
             if detect('images/fish.png'):
                 for _ in range(randint(2, 5)):
                     sleep(0.3)
                     pyautogui.keyDown('F1')
-            pyautogui.keyDown('escape')
-            self.throw_away_junk()
-            # sleep(randint(5, 7))
 
 
 class Array:

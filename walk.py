@@ -49,9 +49,8 @@ class Walk(Attack, JunkRemover):
                     while not waypoint_achieved(waypoint_number):
                         if settings.RUN_SINGLE_PROCESS:
                             self.remove_junk_from_bp()
-                        for monster_name in settings.MONSTER_NAMES:
-                            while self.detect_enemy(monster_name):
-                                self.attack()
+                        while self.detect_enemy():
+                            self.attack()
                         print('waypoint not achieved')
                         move_to_waypoint(waypoint_number)
                     print('waypoint achieved')

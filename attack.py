@@ -24,10 +24,11 @@ class Attack(Array):
         Main method gathering compiling all other defs.
         :return:
         """
+        pyautogui.keyUp('shift')
         dev_print('self.loot_collected set to: {}'.format(self.loot_collected))
         for monster_name in settings.MONSTER_NAMES:
             self.perform_loot_collection(monster_name)
-            if self.detect_enemy(monster_name) and not self.check_if_attacking(monster_name):
+            if self.detect_enemy() and not self.check_if_attacking(monster_name):
                 print('performing attack procedure')
                 self.perform_loot_collection(monster_name)
                 self.perform_attack(monster_name)
@@ -50,7 +51,7 @@ class Attack(Array):
             return True
         return False
 
-    def detect_enemy(self, monster_name):
+    def detect_enemy(self):
         """
         Detects whether enemy is available to attack
         :param monster_name: name of monster, for template matching
@@ -58,8 +59,7 @@ class Attack(Array):
         """
         array = self._get_array()
         array = cv2.cvtColor(array, cv2.COLOR_BGR2RGB)
-        if tuple(array[self.battle_coordinates[0] + 20][self.battle_coordinates[1] + 6][
-                 :3]) != self.no_monster_on_screen_rgb:  # noqa
+        if tuple(array[self.battle_coordinates[0] + 20][self.battle_coordinates[1] + 6][:3]) != self.no_monster_on_screen_rgb:  # noqa
             return True
         return False
 
