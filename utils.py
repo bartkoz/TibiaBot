@@ -1,6 +1,7 @@
-import settings
 import pyautogui
-from image_grab import detect
+import numpy as np
+import settings
+from image_grab import detect, image_grab
 from random import randint
 from time import sleep
 
@@ -31,3 +32,9 @@ class JunkRemover:
             pyautogui.keyDown('escape')
             self.throw_away_junk()
             # sleep(randint(5, 7))
+
+
+class Array:
+
+    def _get_array(self):
+        return np.array(image_grab())
