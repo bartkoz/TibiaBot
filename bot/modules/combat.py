@@ -1,18 +1,31 @@
 """Enemy detection, attack management, and reachability tracking.
 
+Attack detection without per-monster screenshots
+-------------------------------------------------
+Tibia draws a pure-red (R=255 G=0 B=0) 1-px border around the battle-list
+entry of the currently selected monster.  Checking a small pixel region at
+the corner of that entry is all we need to know whether we are attacking,
+regardless of monster type.
+
+``attack_indicator_offset`` in config controls where that corner is relative
+to the enemy-detection pixel (_battle_pixel).  The default (-10, -10) is
+derived from the standard client where each battle-list entry is 20×20 px:
+the enemy-detection pixel sits at the centre (+10, +10 from entry top-left),
+so the red corner is 10 rows above and 10 columns to the left.
+
 Reachability logic
 ------------------
-After initiating an attack, the module watches how long the character has
-been stationary.  If the position hasn't changed for ``stuck_timeout``
-seconds, the current target area is flagged as unreachable and the attack
-is cancelled so navigation can move on.
+If the character's position has not changed for ``stuck_timeout`` seconds
+while an attack is in progress, the area is flagged as temporarily
+unreachable and the attack is cancelled so navigation can resume.
 """
 
 import asyncio
 import os
 import time
-from typing import Optional
+from typing import Optional, Tuple
 
+import numpy as np
 import pyautogui
 
 from bot.config import CombatConfig
@@ -32,9 +45,11 @@ class CombatModule(BaseModule):
         super().__init__(screen, state)
         self.config = config
 
-        # Located once at startup (retries until Tibia is on screen)
-        self._battle_pixel: Optional[tuple] = None   # (row, col) to sample
-        self._follow_pos: Optional[tuple] = None      # (row, col) of Follow button
+        # Located once at startup via template matching; all subsequent
+        # checks are pure pixel comparisons — no per-monster images needed.
+        self._battle_pixel: Optional[Tuple[int, int]] = None   # (row, col)
+        self._attack_indicator: Optional[Tuple[int, int]] = None  # (row, col)
+        self._follow_pos: Optional[Tuple[int, int]] = None
 
         self._attack_started_at: Optional[float] = None
         self._pos_at_attack_start: Optional[Position] = None
@@ -42,18 +57,13 @@ class CombatModule(BaseModule):
     # ── startup ──────────────────────────────────────────────────────────────
 
     async def _setup(self) -> None:
-        """Locate UI anchors by template matching.
-
-        Retries every second until both templates are found, so it is safe
-        to start the bot slightly before Tibia is in the foreground.
-        Missing template *files* are reported immediately as hard errors.
-        """
+        """Locate UI anchors by template matching; retries until found."""
         battle_path = "images/battle.png"
         follow_path = "images/follow.png"
 
         for path in (battle_path, follow_path):
             if not os.path.exists(path):
-                print(f"[Combat] ERROR: {path} is missing – place a screenshot of that UI element in images/")
+                print(f"[Combat] ERROR: {path} is missing")
 
         while self._battle_pixel is None or self._follow_pos is None:
             frame = self.screen.get_frame()
@@ -62,7 +72,16 @@ class CombatModule(BaseModule):
                     bp = find_template(frame, battle_path)
                     if bp:
                         self._battle_pixel = (bp[0] + 20, bp[1] + 6)
-                        print(f"[Combat] Battle indicator at row={self._battle_pixel[0]} col={self._battle_pixel[1]}")
+                        r_off, c_off = self.config.attack_indicator_offset
+                        self._attack_indicator = (
+                            self._battle_pixel[0] + r_off,
+                            self._battle_pixel[1] + c_off,
+                        )
+                        print(
+                            f"[Combat] Battle list found – "
+                            f"enemy pixel=({self._battle_pixel[1]},{self._battle_pixel[0]})  "
+                            f"attack indicator=({self._attack_indicator[1]},{self._attack_indicator[0]})"
+                        )
 
                 if self._follow_pos is None:
                     fp = find_template(frame, follow_path)
@@ -73,22 +92,36 @@ class CombatModule(BaseModule):
             if self._battle_pixel is None or self._follow_pos is None:
                 await asyncio.sleep(1.0)
 
-    # ── detection helpers ────────────────────────────────────────────────────
+    # ── detection ────────────────────────────────────────────────────────────
 
     def _enemy_present(self, frame) -> bool:
-        """Single-pixel check on the battle list – O(1), very fast."""
+        """Single-pixel check: is there any enemy in the battle list?"""
         if self._battle_pixel is None:
             return False
         r, c = self._battle_pixel
-        rgb = pixel_rgb(frame, x=c, y=r)
-        return rgb != _NO_ENEMY_RGB
+        return pixel_rgb(frame, x=c, y=r) != _NO_ENEMY_RGB
 
     def _is_attacking(self, frame) -> bool:
-        """Template-match check for the active-attack sprite overlay."""
-        for name in self.config.monsters:
-            if find_template(frame, f"images/{name}_attacking.png", threshold=0.98):
-                return True
-        return False
+        """Check for the red attack-indicator border on the selected entry.
+
+        Samples a 3×3 pixel region at the top-left corner of the first
+        battle-list slot.  If ≥ 3 pixels are pure red (R>200, G<50, B<50)
+        the character is actively attacking.
+
+        No per-monster screenshots required — works for any enemy type.
+        """
+        if self._attack_indicator is None:
+            return False
+        row, col = self._attack_indicator
+        region = frame[row : row + 3, col : col + 3, :3]
+        if region.size == 0:
+            return False
+        red = np.sum(
+            (region[:, :, 2] > 200) &   # R (index 2 in BGR)
+            (region[:, :, 1] < 50) &    # G
+            (region[:, :, 0] < 50)      # B
+        )
+        return int(red) >= 3
 
     # ── actions ──────────────────────────────────────────────────────────────
 
@@ -110,11 +143,9 @@ class CombatModule(BaseModule):
     # ── reachability ─────────────────────────────────────────────────────────
 
     def _stuck_seconds(self) -> float:
-        """Return how long we've been attacking without moving, or 0."""
         if self._attack_started_at is None:
             return 0.0
         if self.state.seconds_since_last_move() < 0.5:
-            # We moved recently – reset the attack timer
             self._attack_started_at = time.monotonic()
             return 0.0
         return time.monotonic() - self._attack_started_at
@@ -141,7 +172,6 @@ class CombatModule(BaseModule):
                 if not attacking:
                     print("[Combat] Enemy detected – attacking")
                     self._start_attack()
-
                 else:
                     stuck = self._stuck_seconds()
                     if stuck > self.config.stuck_timeout:
@@ -153,7 +183,6 @@ class CombatModule(BaseModule):
                         self.state.mark_unreachable(pos, self.config.unreachable_cooldown)
                         self._cancel_attack()
                         self.state.loot_pending = True
-
             else:
                 if self.state.currently_attacking:
                     print("[Combat] Enemy defeated – switching to loot")

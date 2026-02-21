@@ -181,15 +181,78 @@ def cmd_show_viewport(cfg: dict) -> None:
     print(f"  Tile size: {ts}px")
 
 
+def cmd_show_attack_indicator(cfg: dict) -> None:
+    """Visualise the attack indicator pixel so the user can verify / adjust
+    attack_indicator_offset in bot_config.yaml.
+
+    Stand in Tibia and START attacking a monster before running this.
+    The output image marks:
+      • green cross  – enemy-detection pixel (_battle_pixel)
+      • red square   – 3×3 attack-indicator region being sampled
+    If the red square falls outside the red border, adjust
+    attack_indicator_offset until it is inside the border.
+    """
+    from bot.vision import find_template
+    import numpy as np
+
+    c = cfg.get("combat", {})
+    r_off, c_off = c.get("attack_indicator_offset", [-10, -10])
+
+    print("Taking screenshot in 2 s – attack a monster in Tibia first…")
+    time.sleep(2)
+    frame = _grab_frame(cfg)
+    vis = frame[:, :, :3].copy()
+
+    bp = find_template(frame, "images/battle.png")
+    if not bp:
+        print("ERROR: battle.png not found on screen – is Tibia open?")
+        return
+
+    brow, bcol = bp[0] + 20, bp[1] + 6
+    ind_row, ind_col = brow + r_off, bcol + c_off
+
+    # Sample the indicator region
+    region = frame[ind_row : ind_row + 3, ind_col : ind_col + 3, :3]
+    red_count = int(np.sum(
+        (region[:, :, 2] > 200) & (region[:, :, 1] < 50) & (region[:, :, 0] < 50)
+    ))
+
+    # Annotate
+    cv2.drawMarker(vis, (bcol, brow), (0, 255, 0), cv2.MARKER_CROSS, 16, 2)
+    cv2.rectangle(vis, (ind_col, ind_row), (ind_col + 3, ind_row + 3), (0, 0, 255), 1)
+
+    # Zoom into the battle list area for detailed inspection
+    zoom_col = max(0, bcol - 30)
+    zoom_row = max(0, brow - 30)
+    zoom = vis[zoom_row : zoom_row + 80, zoom_col : zoom_col + 80]
+    zoom = cv2.resize(zoom, None, fx=6, fy=6, interpolation=cv2.INTER_NEAREST)
+
+    out_full = "calibration_attack_indicator.png"
+    out_zoom = "calibration_attack_indicator_zoom.png"
+    cv2.imwrite(out_full, cv2.resize(vis, None, fx=0.5, fy=0.5))
+    cv2.imwrite(out_zoom, zoom)
+
+    status = "ATTACKING ✓" if red_count >= 3 else "NOT detected"
+    print(f"Enemy pixel   : ({bcol}, {brow})")
+    print(f"Indicator     : ({ind_col}, {ind_row})  offset=[{r_off}, {c_off}]")
+    print(f"Red pixels    : {red_count}/9  →  {status}")
+    print(f"Full screenshot (50%)  → {out_full}")
+    print(f"Zoom (6×) around battle list  → {out_zoom}")
+    if red_count < 3:
+        print("\nHint: adjust attack_indicator_offset in bot_config.yaml so the")
+        print("      red square lands on the red border of the selected entry.")
+
+
 # ── main ──────────────────────────────────────────────────────────────────────
 
 def main() -> None:
     p = argparse.ArgumentParser(description="TibiaBot v2 calibration helper")
     p.add_argument("--config", default="bot_config.yaml")
-    p.add_argument("--show-coords",   action="store_true")
-    p.add_argument("--show-bars",     action="store_true")
-    p.add_argument("--show-viewport", action="store_true")
-    p.add_argument("--dump-frame",    action="store_true")
+    p.add_argument("--show-coords",            action="store_true")
+    p.add_argument("--show-bars",              action="store_true")
+    p.add_argument("--show-viewport",          action="store_true")
+    p.add_argument("--show-attack-indicator",  action="store_true")
+    p.add_argument("--dump-frame",             action="store_true")
     args = p.parse_args()
 
     cfg = _load_yaml(args.config)
@@ -200,6 +263,8 @@ def main() -> None:
         cmd_show_bars(cfg)
     elif args.show_viewport:
         cmd_show_viewport(cfg)
+    elif args.show_attack_indicator:
+        cmd_show_attack_indicator(cfg)
     elif args.dump_frame:
         cmd_dump_frame(cfg)
     else:

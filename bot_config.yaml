@@ -40,11 +40,14 @@ healing:
 
 # ── combat ─────────────────────────────────────────────────────────────────
 combat:
-  monsters:
-    - swamp_troll
   attack_key: "space"
   stuck_timeout: 3.0        # seconds without position change → unreachable
   unreachable_cooldown: 30.0 # seconds before retrying that area
+  # Pixel offset [rows, cols] from the enemy-detection pixel to the corner of
+  # the battle-list entry where the red attack border appears.
+  # Default (-10, -10) works for the standard Tibia client (20×20 px entries).
+  # Run  python calibrate.py --show-attack-indicator  if detection is wrong.
+  attack_indicator_offset: [-10, -10]
 
 # ── waypoints ──────────────────────────────────────────────────────────────
 # Option A – load from a JSON file recorded with record_waypoints.py

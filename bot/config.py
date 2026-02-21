@@ -61,10 +61,14 @@ class HealingConfig:
 
 @dataclass
 class CombatConfig:
-    monsters: List[str] = field(default_factory=lambda: ["swamp_troll"])
     attack_key: str = "space"
     stuck_timeout: float = 3.0        # seconds without position change = stuck
     unreachable_cooldown: float = 30.0  # seconds before retrying that area
+    # Row and column offset from the enemy-detection pixel (_battle_pixel) to
+    # the top-left corner of the battle list entry.  The red attack border
+    # lives there when a monster is selected.  Default (-10, -10) is derived
+    # from the standard Tibia client where each battle entry is 20×20 px.
+    attack_indicator_offset: Tuple[int, int] = (-10, -10)
 
 
 @dataclass
@@ -167,11 +171,13 @@ def load_config(path: str = "bot_config.yaml") -> BotConfig:
     )
 
     c = raw.get("combat", {})
+    raw_offset = c.get("attack_indicator_offset", None)
+    attack_offset = tuple(raw_offset) if raw_offset else cfg.combat.attack_indicator_offset
     cfg.combat = CombatConfig(
-        monsters=c.get("monsters", cfg.combat.monsters),
         attack_key=c.get("attack_key", cfg.combat.attack_key),
         stuck_timeout=c.get("stuck_timeout", cfg.combat.stuck_timeout),
         unreachable_cooldown=c.get("unreachable_cooldown", cfg.combat.unreachable_cooldown),
+        attack_indicator_offset=attack_offset,
     )
 
     n = raw.get("navigation", {})

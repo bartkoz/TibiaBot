@@ -135,35 +135,25 @@ To continue editing an existing route:
 uv run python record_waypoints.py --load waypoints/my_route.json
 ```
 
-### Step 3 — Add monster templates
+### Step 3 — Verify the attack indicator
 
-For each monster type you want to hunt, the bot needs one screenshot so it
-can tell when the character is actively attacking that monster.
+No per-monster screenshots are needed.  The bot detects attacks by checking
+for the **red border** that Tibia draws around any selected battle-list entry
+— it looks the same regardless of which monster you are fighting.
 
-1. Log in and find the monster.
-2. Attack it — its name appears highlighted in the battle list on the right.
-3. Take a screenshot of **just that battle-list entry** (the row showing the
-   monster name while it is selected/being attacked).
-4. Crop it tightly and save it as `images/{monster_name}_attacking.png`,
-   e.g. `images/swamp_troll_attacking.png`.
-5. Add the same name (without `_attacking.png`) to `combat.monsters` in
-   `bot_config.yaml`.
+The default offset should work out of the box.  To confirm, start attacking
+any monster in Tibia, then run:
 
-```yaml
-combat:
-  monsters:
-    - swamp_troll        # → bot looks for images/swamp_troll_attacking.png
-    - dragon             # → bot looks for images/dragon_attacking.png
+```bash
+uv run python calibrate.py --show-attack-indicator
 ```
 
-**Why only one image per monster?**
-Detecting *whether an enemy is present* is done instantly via a single pixel
-check on the battle list (no template needed, works for any creature).  The
-`_attacking.png` template is only used to confirm the bot is already attacking
-that specific monster so it doesn't try to start a second attack mid-fight.
+This saves two images:
+- `calibration_attack_indicator.png` — full screenshot with the sampled pixel marked
+- `calibration_attack_indicator_zoom.png` — 6× zoom of the battle list area
 
-> A repo ships with `images/swamp_troll_attacking.png` as an example.
-> You will need to capture your own for any other monster.
+The output also prints `ATTACKING ✓` if the pixel is correctly inside the
+red border, or instructions to adjust `attack_indicator_offset` if not.
 
 ### Step 4 — Configure the bot (bot_config.yaml)
 
@@ -226,15 +216,15 @@ healing:
   mana_key: null       # set to e.g. "f3", or null to disable
 
 combat:
-  monsters:
-    # One entry per monster type you hunt.
-    # Each name must have a matching images/{name}_attacking.png –
-    # a screenshot of the battle-list row while that monster is selected.
-    # See "Step 3 – Add monster templates" above for how to capture it.
-    - swamp_troll            # → images/swamp_troll_attacking.png
   attack_key: "space"
   stuck_timeout: 3.0           # seconds without moving = unreachable
   unreachable_cooldown: 30.0   # seconds before retrying that area
+  # Offset [rows, cols] from the enemy-detection pixel to the corner of the
+  # battle-list entry where the red attack border is sampled.
+  # Default works for the standard Tibia client.  Run:
+  #   python calibrate.py --show-attack-indicator
+  # to verify or adjust this value.
+  attack_indicator_offset: [-10, -10]
 
 navigation:
   waypoints_file: "waypoints/my_route.json"  # recommended
