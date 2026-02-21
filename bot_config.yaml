@@ -47,9 +47,15 @@ combat:
   unreachable_cooldown: 30.0 # seconds before retrying that area
 
 # ── waypoints ──────────────────────────────────────────────────────────────
-# World coordinates (X, Y, Z).  The bot walks them in order and loops back.
-# Find your coordinates by standing at each waypoint and reading the minimap.
+# Option A – load from a JSON file recorded with record_waypoints.py
+#   waypoints_file: "waypoints/my_route.json"
+#
+# Option B – define waypoints inline as (X, Y, Z) world coordinates.
+# The bot walks them in order and loops back.
+# Find your coordinates by standing at each spot and reading the minimap,
+# or use record_waypoints.py to record them while walking in-game.
 navigation:
+  # waypoints_file: "waypoints/my_route.json"   # ← recommended: use recorder
   waypoints:
     - [32372, 31949, 7]
     - [32380, 31955, 7]

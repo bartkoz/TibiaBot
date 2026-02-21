@@ -5,6 +5,7 @@ root.  Sensible defaults are baked in so the bot can start even from a
 minimal config file.
 """
 
+import json
 import os
 from dataclasses import dataclass, field
 from typing import List, Optional, Tuple
@@ -68,10 +69,22 @@ class CombatConfig:
 
 @dataclass
 class NavigationConfig:
-    # List of (X, Y, Z) world coordinate tuples
+    # Path to a JSON waypoints file produced by record_waypoints.py.
+    # Takes priority over the inline `waypoints` list below.
+    waypoints_file: Optional[str] = None
+    # Inline fallback – ignored when waypoints_file is set.
     waypoints: List[Tuple[int, int, int]] = field(default_factory=list)
     waypoint_tolerance: int = 2       # tiles – how close = "arrived"
     move_interval: float = 0.9        # seconds between navigation clicks
+
+
+def load_waypoints_json(path: str) -> List[Tuple[int, int, int]]:
+    """Load waypoints from a JSON file created by record_waypoints.py."""
+    with open(path) as f:
+        data = json.load(f)
+    # Support both {"waypoints": [[x,y,z], ...]} and bare [[x,y,z], ...]
+    raw = data.get("waypoints", data) if isinstance(data, dict) else data
+    return [tuple(int(v) for v in wp) for wp in raw]
 
 
 @dataclass
@@ -162,9 +175,19 @@ def load_config(path: str = "bot_config.yaml") -> BotConfig:
     )
 
     n = raw.get("navigation", {})
-    raw_wps = n.get("waypoints", [])
-    waypoints = [tuple(int(v) for v in wp) for wp in raw_wps]
+    wps_file = n.get("waypoints_file", None)
+    if wps_file:
+        try:
+            waypoints = load_waypoints_json(wps_file)
+            print(f"[Config] Loaded {len(waypoints)} waypoints from {wps_file}")
+        except Exception as e:
+            print(f"[Config] Could not load waypoints_file {wps_file!r}: {e}")
+            waypoints = []
+    else:
+        raw_wps = n.get("waypoints", [])
+        waypoints = [tuple(int(v) for v in wp) for wp in raw_wps]
     cfg.navigation = NavigationConfig(
+        waypoints_file=wps_file,
         waypoints=waypoints,
         waypoint_tolerance=n.get("waypoint_tolerance", cfg.navigation.waypoint_tolerance),
         move_interval=n.get("move_interval", cfg.navigation.move_interval),
