@@ -20,8 +20,11 @@ calibrate  = "calibrate:main"
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
-[tool.uv]
-dev-dependencies = [
+[tool.hatch.build.targets.wheel]
+packages = ["bot"]
+
+[dependency-groups]
+dev = [
     "pytest>=8.0",
     "ruff>=0.4",
 ]
