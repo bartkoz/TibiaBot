@@ -1,0 +1,75 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# TibiaBot v2 – configuration
+# Run  python calibrate.py  first to find the correct pixel regions.
+# ─────────────────────────────────────────────────────────────────────────────
+
+screen:
+  width: 2560
+  height: 1440
+  capture_fps: 20          # screen grabs per second (shared by all modules)
+
+# ── game viewport ──────────────────────────────────────────────────────────
+# The rectangular area of the game world that is rendered on screen.
+# center_x / center_y is always your character's tile centre pixel.
+# tile_size is the pixel width/height of one in-game tile at default zoom.
+viewport:
+  left: 0
+  top: 0
+  width: 1700
+  height: 1280
+  center_x: 1185
+  center_y: 610
+  tile_size: 64
+
+# ── minimap coordinate display ─────────────────────────────────────────────
+# The small text area that shows "X, Y, Z" below the minimap.
+# Run:  python calibrate.py --show-coords
+# to take a screenshot and print the ROI so you can adjust these values.
+coord_display:
+  x: 1820
+  y: 372
+  width: 180
+  height: 14
+
+# ── healing ────────────────────────────────────────────────────────────────
+healing:
+  hp_threshold: 70          # press heal_key when HP % drops below this
+  heal_key: "f1"
+  mana_threshold: 30        # press mana_key when mana % drops below this
+  mana_key: null            # set to e.g. "f3" to enable mana pot usage
+
+# ── combat ─────────────────────────────────────────────────────────────────
+combat:
+  monsters:
+    - swamp_troll
+  attack_key: "space"
+  stuck_timeout: 3.0        # seconds without position change → unreachable
+  unreachable_cooldown: 30.0 # seconds before retrying that area
+
+# ── waypoints ──────────────────────────────────────────────────────────────
+# World coordinates (X, Y, Z).  The bot walks them in order and loops back.
+# Find your coordinates by standing at each waypoint and reading the minimap.
+navigation:
+  waypoints:
+    - [32372, 31949, 7]
+    - [32380, 31955, 7]
+    - [32375, 31962, 7]
+    - [32365, 31953, 7]
+  waypoint_tolerance: 2     # tiles – how close counts as "arrived"
+  move_interval: 0.9        # seconds between navigation clicks
+
+# ── looting ────────────────────────────────────────────────────────────────
+loot:
+  enabled: true
+  delay_after_kill: 1.5     # seconds to wait for corpse to appear
+
+  # Directory containing one PNG per item (e.g. loot/gold_coin.png)
+  templates_dir: "loot"
+
+  # List item names (filename without .png extension) to collect.
+  # Leave empty to collect nothing (safe default).
+  # Use ["*"] for take-all mode (collects everything, like the old bot).
+  whitelist:
+    - gold_coin
+    # - plate_armor
+    # - "*"           # uncomment for take-all / legacy mode
