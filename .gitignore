@@ -1,7 +1,23 @@
+# Python
 *.pyc
-.idea
-.bin
-.lib
-.include
-.Python
-.__pycache__
+*.pyo
+__pycache__/
+*.egg-info/
+
+# Virtual environments
+.venv/
+.env/
+
+# IDE
+.idea/
+.vscode/
+
+# Claude Code local settings
+.claude/
+
+# Bot runtime artefacts
+config.json
+
+# OS
+.DS_Store
+Thumbs.db
