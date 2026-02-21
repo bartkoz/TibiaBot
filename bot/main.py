@@ -4,7 +4,6 @@ Usage::
 
     python -m bot.main                      # run with bot_config.yaml
     python -m bot.main --config my.yaml     # custom config file
-    python -m bot.main --debug              # verbose per-module output
 """
 
 import argparse
@@ -25,11 +24,10 @@ from bot.state import GameState
 def _parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="TibiaBot v2")
     p.add_argument("--config", default="bot_config.yaml", help="Path to config file")
-    p.add_argument("--debug", action="store_true", help="Extra verbose output")
     return p.parse_args()
 
 
-async def _run(cfg, debug: bool) -> None:
+async def _run(cfg, stop_event: asyncio.Event) -> None:
     screen = ScreenCapture(
         width=cfg.screen.width,
         height=cfg.screen.height,
@@ -57,14 +55,14 @@ async def _run(cfg, debug: bool) -> None:
     tasks = [asyncio.create_task(m.run(), name=type(m).__name__) for m in modules]
 
     try:
-        await asyncio.gather(*tasks)
-    except asyncio.CancelledError:
-        pass
+        await stop_event.wait()
     finally:
+        print("\nShutting down…")
         state.running = False
         screen.stop()
         for t in tasks:
             t.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
 
 
 def main() -> None:
@@ -76,22 +74,28 @@ def main() -> None:
     print(f"  Resolution    : {cfg.screen.width}×{cfg.screen.height}")
     print(f"  Waypoints     : {len(cfg.navigation.waypoints)}")
     print(f"  Heal key      : {cfg.healing.heal_key} at {cfg.healing.hp_threshold}% HP")
-    print(f"  Loot mode     : {'take-all' if '*' in cfg.loot.whitelist else f'{len(cfg.loot.whitelist)} items'}")
+    loot_mode = "take-all" if "*" in cfg.loot.whitelist else f"{len(cfg.loot.whitelist)} items"
+    print(f"  Loot mode     : {loot_mode}")
     print()
 
-    loop = asyncio.new_event_loop()
+    async def _entry() -> None:
+        stop_event = asyncio.Event()
+        loop = asyncio.get_running_loop()
 
-    def _stop(sig, frame):
-        print(f"\nReceived {signal.Signals(sig).name} – shutting down…")
-        loop.stop()
+        def _on_stop() -> None:
+            print(f"\nStop signal received – shutting down…")
+            stop_event.set()
 
-    signal.signal(signal.SIGINT,  _stop)
-    signal.signal(signal.SIGTERM, _stop)
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            try:
+                loop.add_signal_handler(sig, _on_stop)
+            except NotImplementedError:
+                # Windows does not support add_signal_handler
+                signal.signal(sig, lambda *_: stop_event.set())
 
-    try:
-        loop.run_until_complete(_run(cfg, args.debug))
-    finally:
-        loop.close()
+        await _run(cfg, stop_event)
+
+    asyncio.run(_entry())
 
 
 if __name__ == "__main__":

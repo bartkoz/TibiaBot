@@ -9,6 +9,7 @@ is cancelled so navigation can move on.
 """
 
 import asyncio
+import os
 import time
 from typing import Optional
 
@@ -31,7 +32,7 @@ class CombatModule(BaseModule):
         super().__init__(screen, state)
         self.config = config
 
-        # Pixel anchor for the battle-list indicator – located once at startup
+        # Located once at startup (retries until Tibia is on screen)
         self._battle_pixel: Optional[tuple] = None   # (row, col) to sample
         self._follow_pos: Optional[tuple] = None      # (row, col) of Follow button
 
@@ -41,25 +42,36 @@ class CombatModule(BaseModule):
     # ── startup ──────────────────────────────────────────────────────────────
 
     async def _setup(self) -> None:
-        frame = self.screen.get_frame()
-        while frame is None:
-            await asyncio.sleep(0.1)
+        """Locate UI anchors by template matching.
+
+        Retries every second until both templates are found, so it is safe
+        to start the bot slightly before Tibia is in the foreground.
+        Missing template *files* are reported immediately as hard errors.
+        """
+        battle_path = "images/battle.png"
+        follow_path = "images/follow.png"
+
+        for path in (battle_path, follow_path):
+            if not os.path.exists(path):
+                print(f"[Combat] ERROR: {path} is missing – place a screenshot of that UI element in images/")
+
+        while self._battle_pixel is None or self._follow_pos is None:
             frame = self.screen.get_frame()
+            if frame is not None:
+                if self._battle_pixel is None:
+                    bp = find_template(frame, battle_path)
+                    if bp:
+                        self._battle_pixel = (bp[0] + 20, bp[1] + 6)
+                        print(f"[Combat] Battle indicator at row={self._battle_pixel[0]} col={self._battle_pixel[1]}")
 
-        bp = find_template(frame, "images/battle.png")
-        if bp:
-            # Offset into the first battle-slot cell (empirical, same as original)
-            self._battle_pixel = (bp[0] + 20, bp[1] + 6)
-            print(f"[Combat] Battle indicator at row={self._battle_pixel[0]} col={self._battle_pixel[1]}")
-        else:
-            print("[Combat] WARNING: images/battle.png not found – enemy detection disabled")
+                if self._follow_pos is None:
+                    fp = find_template(frame, follow_path)
+                    if fp:
+                        self._follow_pos = fp
+                        print(f"[Combat] Follow button at row={fp[0]} col={fp[1]}")
 
-        fp = find_template(frame, "images/follow.png")
-        if fp:
-            self._follow_pos = fp
-            print(f"[Combat] Follow button at row={fp[0]} col={fp[1]}")
-        else:
-            print("[Combat] WARNING: images/follow.png not found")
+            if self._battle_pixel is None or self._follow_pos is None:
+                await asyncio.sleep(1.0)
 
     # ── detection helpers ────────────────────────────────────────────────────
 
@@ -127,12 +139,10 @@ class CombatModule(BaseModule):
                 self.state.currently_attacking = attacking
 
                 if not attacking:
-                    # New target available – start attacking
                     print("[Combat] Enemy detected – attacking")
                     self._start_attack()
 
                 else:
-                    # Already attacking – watch for stuck condition
                     stuck = self._stuck_seconds()
                     if stuck > self.config.stuck_timeout:
                         pos = self.state.position
@@ -142,11 +152,9 @@ class CombatModule(BaseModule):
                         )
                         self.state.mark_unreachable(pos, self.config.unreachable_cooldown)
                         self._cancel_attack()
-                        # Signal loot module to try picking up whatever dropped
                         self.state.loot_pending = True
 
             else:
-                # No enemy in battle list
                 if self.state.currently_attacking:
                     print("[Combat] Enemy defeated – switching to loot")
                     pyautogui.keyUp(self.config.attack_key)
