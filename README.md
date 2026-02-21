@@ -135,7 +135,37 @@ To continue editing an existing route:
 uv run python record_waypoints.py --load waypoints/my_route.json
 ```
 
-### Step 3 — Configure the bot
+### Step 3 — Add monster templates
+
+For each monster type you want to hunt, the bot needs one screenshot so it
+can tell when the character is actively attacking that monster.
+
+1. Log in and find the monster.
+2. Attack it — its name appears highlighted in the battle list on the right.
+3. Take a screenshot of **just that battle-list entry** (the row showing the
+   monster name while it is selected/being attacked).
+4. Crop it tightly and save it as `images/{monster_name}_attacking.png`,
+   e.g. `images/swamp_troll_attacking.png`.
+5. Add the same name (without `_attacking.png`) to `combat.monsters` in
+   `bot_config.yaml`.
+
+```yaml
+combat:
+  monsters:
+    - swamp_troll        # → bot looks for images/swamp_troll_attacking.png
+    - dragon             # → bot looks for images/dragon_attacking.png
+```
+
+**Why only one image per monster?**
+Detecting *whether an enemy is present* is done instantly via a single pixel
+check on the battle list (no template needed, works for any creature).  The
+`_attacking.png` template is only used to confirm the bot is already attacking
+that specific monster so it doesn't try to start a second attack mid-fight.
+
+> A repo ships with `images/swamp_troll_attacking.png` as an example.
+> You will need to capture your own for any other monster.
+
+### Step 4 — Configure the bot (bot_config.yaml)
 
 Edit `bot_config.yaml`:
 
@@ -156,7 +186,7 @@ For loot filtering, place a small PNG screenshot of each item icon into the
 `loot/` directory.  The filename (without `.png`) must match the whitelist entry.
 Use `["*"]` to take everything without filtering.
 
-### Step 4 — Run the bot
+### Step 5 — Run the bot
 
 ```bash
 # macOS / Linux
@@ -197,7 +227,11 @@ healing:
 
 combat:
   monsters:
-    - swamp_troll
+    # One entry per monster type you hunt.
+    # Each name must have a matching images/{name}_attacking.png –
+    # a screenshot of the battle-list row while that monster is selected.
+    # See "Step 3 – Add monster templates" above for how to capture it.
+    - swamp_troll            # → images/swamp_troll_attacking.png
   attack_key: "space"
   stuck_timeout: 3.0           # seconds without moving = unreachable
   unreachable_cooldown: 30.0   # seconds before retrying that area
