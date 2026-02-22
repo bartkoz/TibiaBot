@@ -17,6 +17,7 @@ from bot.modules.health import HealthModule
 from bot.modules.loot import LootModule
 from bot.modules.mana import ManaModule
 from bot.modules.navigation import NavigationModule
+from bot.modules.minimap_navigation import MinimapNavigationModule
 from bot.screen import ScreenCapture
 from bot.state import GameState
 
@@ -39,9 +40,12 @@ async def _run(cfg, stop_event: asyncio.Event) -> None:
         HealthModule(screen, state, cfg.healing),
         ManaModule(screen, state, cfg.healing),
         CombatModule(screen, state, cfg.combat),
-        NavigationModule(screen, state, cfg.navigation, cfg.viewport, cfg.coord_display),
         LootModule(screen, state, cfg.loot, cfg.viewport),
     ]
+    if cfg.minimap.enabled:
+        modules.append(MinimapNavigationModule(screen, state, cfg.minimap, cfg.viewport))
+    elif cfg.navigation.enabled:
+        modules.append(NavigationModule(screen, state, cfg.navigation, cfg.viewport, cfg.coord_display))
 
     screen.start()
     print("Screen capture started – waiting for first frame…")
@@ -72,7 +76,13 @@ def main() -> None:
     print("=== TibiaBot v2 ===")
     print(f"  Config        : {args.config}")
     print(f"  Resolution    : {cfg.screen.width}×{cfg.screen.height}")
-    print(f"  Waypoints     : {len(cfg.navigation.waypoints)}")
+    if cfg.minimap.enabled:
+        nav_status = f"minimap visual ({cfg.minimap.waypoints_file or 'no file set'})"
+    elif cfg.navigation.enabled:
+        nav_status = f"OCR coordinate ({len(cfg.navigation.waypoints)} waypoints)"
+    else:
+        nav_status = "disabled"
+    print(f"  Navigation    : {nav_status}")
     print(f"  Heal key      : {cfg.healing.heal_key} at {cfg.healing.hp_threshold}% HP")
     loot_mode = "take-all" if "*" in cfg.loot.whitelist else f"{len(cfg.loot.whitelist)} items"
     print(f"  Loot mode     : {loot_mode}")

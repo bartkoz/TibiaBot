@@ -5,16 +5,19 @@ access (BattleEye safe).  Written with Claude Code.
 
 ## Features
 
-- **Waypoint navigation** — walks a looping route defined by world coordinates
-  (X, Y, Z); no minimap screenshot templates required
-- **Concurrent modules** — healing, mana, combat and navigation all run at the
-  same time via asyncio coroutines sharing a single 20 fps screen capture
-- **Reachability detection** — detects when a monster is behind a wall and
-  skips it instead of getting stuck
+- **Minimap visual-odometry navigation** — records minimap snapshots at each
+  patrol point; navigates by template-matching the live minimap feed.  No
+  coordinate display or OCR required
+- **OCR coordinate navigation** — alternative mode that reads the on-screen
+  X, Y, Z display and clicks toward exact world coordinates
+- **Concurrent modules** — healing, mana, combat, navigation and loot all run
+  simultaneously via asyncio coroutines sharing a single 20 fps screen capture
 - **Smart loot** — only picks up items whose PNG template is in your whitelist;
-  empty whitelist = collect nothing (no accidental backpack fill)
-- **Waypoint recorder** — walk the route yourself, press INSERT at each spot,
-  get a reusable JSON file
+  empty whitelist = collect nothing
+- **Loot recorder** — hover over item icons in a container, press INSERT, get
+  PNGs + `bot_config.yaml` whitelist entry automatically
+- **Waypoint recorders** — two tools: minimap-snapshot recorder (no OCR needed)
+  and classic coordinate recorder (needs OCR display)
 
 ---
 
@@ -24,24 +27,24 @@ access (BattleEye safe).  Written with Claude Code.
 |---|---|---|---|
 | **Python 3.11+** | `brew install python` | [python.org](https://www.python.org/downloads/) | `sudo apt install python3` |
 | **uv** (package manager) | see below | see below | see below |
-| **Tesseract OCR** | `brew install tesseract` | [UB-Mannheim installer](https://github.com/UB-Mannheim/tesseract/wiki) | `sudo apt install tesseract-ocr` |
-| **Git** | `brew install git` | [git-scm.com](https://git-scm.com/) | `sudo apt install git` |
+| **Tesseract OCR** *(optional)* | `brew install tesseract` | [UB-Mannheim installer](https://github.com/UB-Mannheim/tesseract/wiki) | `sudo apt install tesseract-ocr` |
+
+> Tesseract is only required if you use **OCR coordinate navigation**
+> (`record_waypoints.py` + `navigation:` in config).  The minimap visual-odometry
+> mode (`record_minimap_waypoints.py` + `minimap:`) works without it.
 
 ---
 
 ## Installation
 
-### macOS
+### macOS / Linux
 
 ```bash
-# 1. Install Tesseract (coordinate OCR)
-brew install tesseract
-
-# 2. Install uv
+# 1. Install uv
 curl -LsSf https://astral.sh/uv/install.sh | sh
 source $HOME/.local/bin/env   # or restart terminal
 
-# 3. Clone and install Python dependencies
+# 2. Clone and install Python dependencies
 git clone https://github.com/bartkoz/TibiaBot.git
 cd TibiaBot
 uv sync
@@ -50,34 +53,11 @@ uv sync
 ### Windows (PowerShell)
 
 ```powershell
-# 1. Install Tesseract – download and run the installer from:
-#    https://github.com/UB-Mannheim/tesseract/wiki
-#    During install, note the path (e.g. C:\Program Files\Tesseract-OCR)
-#    Then add it to PATH:
-$env:PATH += ";C:\Program Files\Tesseract-OCR"
-# To make it permanent: System Properties → Environment Variables → Path
-
-# 2. Install uv
+# 1. Install uv
 powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
 # Restart PowerShell after this
 
-# 3. Clone and install Python dependencies
-git clone https://github.com/bartkoz/TibiaBot.git
-cd TibiaBot
-uv sync
-```
-
-### Linux (Ubuntu / Debian)
-
-```bash
-# 1. Install Tesseract
-sudo apt update && sudo apt install -y tesseract-ocr git
-
-# 2. Install uv
-curl -LsSf https://astral.sh/uv/install.sh | sh
-source $HOME/.local/bin/env   # or restart terminal
-
-# 3. Clone and install Python dependencies
+# 2. Clone and install Python dependencies
 git clone https://github.com/bartkoz/TibiaBot.git
 cd TibiaBot
 uv sync
@@ -87,106 +67,121 @@ uv sync
 
 ## Quick start
 
-### Step 1 — Calibrate the UI regions
-
-Open Tibia, log in, stand somewhere safe, then run:
-
-```bash
-# macOS / Linux
-uv run python calibrate.py --show-coords
-
-# Windows
-uv run python calibrate.py --show-coords
-```
-
-This saves two images:
-- `calibration_coords_roi.png` — what the OCR is looking at (should show digits)
-- `calibration_coords_full.png` — full screenshot with the region highlighted
-
-Edit `bot_config.yaml` → `coord_display` until the OCR reads the correct X, Y, Z.
+### Step 1 — Calibrate the viewport and bars
 
 ```bash
 uv run python calibrate.py --show-bars      # verify HP / mana bar detection
 uv run python calibrate.py --show-viewport  # verify tile grid alignment
 ```
 
-### Step 2 — Record your waypoints
+Edit `bot_config.yaml` → `viewport` until the tile grid lines up with in-game tiles.
 
-Log in, go to the hunting spot, then run the recorder in a terminal:
+### Step 2 — Calibrate the minimap region
 
 ```bash
-uv run python record_waypoints.py waypoints/my_route.json
+uv run python calibrate.py --show-minimap
 ```
 
-Switch back to Tibia.  Walk to each waypoint and press **INSERT** to stamp it.
-Press **ESC** when done.
+Open `calibration_minimap_zoom.png`.  The **green box** must cover exactly the
+minimap image.  Adjust `minimap.x / y / width / height` in `bot_config.yaml`
+until it does.
+
+The **red cross** shows the player-dot position (should land on the white `+`
+in the minimap).  The **cyan box** shows the template crop area.
+
+### Step 3 — Record your patrol route
+
+```bash
+uv run python record_minimap_waypoints.py
+```
+
+Switch to Tibia.  Walk to each patrol point and press **INSERT**.  A
+`minimap_wp_preview.png` is saved after each stamp so you can confirm the
+capture.  Press **ESC** when done.
 
 | Key | Action |
 |---|---|
-| `INSERT` | Record current position |
-| `BACKSPACE` | Undo last waypoint |
-| `Ctrl+S` | Save now (also auto-saved on every addition) |
+| `INSERT` | Save minimap snapshot as next waypoint |
+| `BACKSPACE` | Remove last recorded waypoint |
+| `Ctrl+S` | Save now (also auto-saved on every change) |
 | `Ctrl+L` | List all recorded waypoints |
 | `ESC` | Save and quit |
 
-To continue editing an existing route:
+### Step 4 — Record loot templates
 
 ```bash
-uv run python record_waypoints.py --load waypoints/my_route.json
+uv run python record_loot.py
 ```
 
-### Step 3 — Verify the attack indicator
+Open a container in Tibia.  Hover over each item icon and press **INSERT**,
+type a name, press Enter.  The PNG is saved to `loot/` and the item is added
+to `bot_config.yaml` automatically.
 
-No per-monster screenshots are needed.  The bot detects attacks by checking
-for the **red border** that Tibia draws around any selected battle-list entry
-— it looks the same regardless of which monster you are fighting.
-
-The default offset should work out of the box.  To confirm, start attacking
-any monster in Tibia, then run:
-
-```bash
-uv run python calibrate.py --show-attack-indicator
-```
-
-This saves two images:
-- `calibration_attack_indicator.png` — full screenshot with the sampled pixel marked
-- `calibration_attack_indicator_zoom.png` — 6× zoom of the battle list area
-
-The output also prints `ATTACKING ✓` if the pixel is correctly inside the
-red border, or instructions to adjust `attack_indicator_offset` if not.
-
-### Step 4 — Configure the bot (bot_config.yaml)
+### Step 5 — Configure and run
 
 Edit `bot_config.yaml`:
 
 ```yaml
-navigation:
-  waypoints_file: "waypoints/my_route.json"   # point to your recorded route
+minimap:
+  enabled: true
+  waypoints_file: "waypoints/minimap_route.json"
 
 healing:
   hp_threshold: 70    # heal when HP drops below 70 %
-  heal_key: "f1"      # hotkey you have bound to a healing spell / potion
+  heal_key: "f1"
 
 loot:
   whitelist:
-    - gold_coin        # add one entry per item; put gold_coin.png in loot/
+    - gold_coin
 ```
 
-For loot filtering, place a small PNG screenshot of each item icon into the
-`loot/` directory.  The filename (without `.png`) must match the whitelist entry.
-Use `["*"]` to take everything without filtering.
-
-### Step 5 — Run the bot
+Then run:
 
 ```bash
-# macOS / Linux
-uv run python -m bot.main
-
-# Windows
 uv run python -m bot.main
 ```
 
 Press **Ctrl+C** to stop.
+
+---
+
+## Navigation modes
+
+### Minimap visual odometry (recommended)
+
+Does **not** require the X, Y, Z coordinate display in the Tibia client.
+
+1. Calibrate: `calibrate.py --show-minimap`
+2. Record:    `record_minimap_waypoints.py`
+3. Enable in config:
+
+```yaml
+minimap:
+  enabled: true
+  waypoints_file: "waypoints/minimap_route.json"
+```
+
+The bot template-matches each waypoint's minimap snapshot against the live
+feed to determine direction and arrival.  All waypoints must be within
+`(minimap_width − template_size) / 2` pixels of each other on the minimap
+(≈ 33 tiles with the defaults).
+
+### OCR coordinate navigation (alternative)
+
+Requires the X, Y, Z text to be visible somewhere on screen.
+
+1. Calibrate: `calibrate.py --show-coords`
+2. Record:    `record_waypoints.py`
+3. Enable in config:
+
+```yaml
+navigation:
+  enabled: true
+  waypoints_file: "waypoints/my_route.json"
+```
+
+When `minimap.enabled: true` the minimap mode takes priority; OCR navigation
+is used only when `minimap.enabled: false` and `navigation.enabled: true`.
 
 ---
 
@@ -196,51 +191,52 @@ Press **Ctrl+C** to stop.
 screen:
   width: 2560          # your screen resolution
   height: 1440
-  capture_fps: 20      # screen grabs per second (shared by all modules)
+  capture_fps: 20
 
 viewport:
   center_x: 1185       # pixel X of your character's tile centre
   center_y: 610        # pixel Y of your character's tile centre
   tile_size: 64        # pixels per in-game tile at default zoom
 
-coord_display:
-  x: 1820              # top-left of the minimap coordinate text
-  y: 372
-  width: 180
-  height: 14
-
 healing:
   hp_threshold: 70     # heal when HP < this %
   heal_key: "f1"
-  mana_threshold: 30   # use mana potion when mana < this %
-  mana_key: null       # set to e.g. "f3", or null to disable
+  mana_threshold: 30
+  mana_key: null       # e.g. "f3", or null to disable
 
 combat:
   attack_key: "space"
-  stuck_timeout: 3.0           # seconds without moving = unreachable
-  unreachable_cooldown: 30.0   # seconds before retrying that area
-  # Offset [rows, cols] from the enemy-detection pixel to the corner of the
-  # battle-list entry where the red attack border is sampled.
-  # Default works for the standard Tibia client.  Run:
-  #   python calibrate.py --show-attack-indicator
-  # to verify or adjust this value.
+  stuck_timeout: 3.0
+  unreachable_cooldown: 30.0
   attack_indicator_offset: [-10, -10]
 
+# ── Minimap visual-odometry navigation (recommended) ──────────────────────
+minimap:
+  enabled: true
+  x: 1633              # minimap region on screen (calibrate.py --show-minimap)
+  y: 44
+  width: 106
+  height: 109
+  template_size: 40    # centre-crop size saved per waypoint
+  arrival_px: 8        # pixels from centre = "arrived"
+  move_interval: 0.9
+  stuck_timeout: 5.0
+  waypoints_file: "waypoints/minimap_route.json"
+
+# ── OCR coordinate navigation (alternative, requires coord display) ────────
 navigation:
-  waypoints_file: "waypoints/my_route.json"  # recommended
-  # OR define inline:
-  # waypoints:
-  #   - [32372, 31949, 7]
-  waypoint_tolerance: 2        # tiles – how close counts as arrived
-  move_interval: 0.9           # seconds between movement clicks
+  enabled: false
+  waypoints_file: "waypoints/my_route.json"
+  waypoint_tolerance: 2
+  move_interval: 0.9
 
 loot:
   enabled: true
-  delay_after_kill: 1.5        # wait this long before looting
-  templates_dir: "loot"        # directory with item PNG templates
+  delay_after_kill: 1.5
+  templates_dir: "loot"
   whitelist:
     - gold_coin
-    # - "*"                    # uncomment for take-all mode
+    # - "*"            # take-all mode
 ```
 
 ---
@@ -250,23 +246,26 @@ loot:
 ```
 TibiaBot/
 ├── bot/
-│   ├── main.py              # entry point / asyncio engine
-│   ├── screen.py            # background screen capture thread
-│   ├── state.py             # shared game state
-│   ├── vision.py            # template matching, bar reading, OCR
-│   ├── config.py            # config dataclasses + YAML / JSON loader
+│   ├── main.py                   # entry point / asyncio engine
+│   ├── screen.py                 # background screen capture thread
+│   ├── state.py                  # shared game state
+│   ├── vision.py                 # template matching, bar reading, OCR
+│   ├── config.py                 # config dataclasses + YAML loader
 │   └── modules/
-│       ├── health.py        # HP monitoring + auto-heal
-│       ├── mana.py          # mana monitoring + auto-recovery
-│       ├── combat.py        # enemy detection, attack, reachability
-│       ├── navigation.py    # coordinate-based waypoint following
-│       └── loot.py          # whitelist-filtered loot collection
-├── bot_config.yaml          # main configuration file
-├── record_waypoints.py      # interactive waypoint recorder
-├── calibrate.py             # UI region calibration helper
-├── loot/                    # item PNG templates for loot whitelist
-├── images/                  # UI element templates (health bar, battle list…)
-└── waypoints/               # saved waypoint JSON files
+│       ├── health.py             # HP monitoring + auto-heal
+│       ├── mana.py               # mana monitoring + auto-recovery
+│       ├── combat.py             # enemy detection, attack, reachability
+│       ├── navigation.py         # OCR coordinate waypoint following
+│       ├── minimap_navigation.py # minimap visual-odometry navigation
+│       └── loot.py               # whitelist-filtered loot collection
+├── bot_config.yaml               # main configuration file
+├── calibrate.py                  # UI region calibration helper
+├── record_minimap_waypoints.py   # minimap waypoint recorder (no OCR needed)
+├── record_waypoints.py           # OCR coordinate waypoint recorder
+├── record_loot.py                # loot template recorder
+├── loot/                         # item PNG templates for loot whitelist
+├── images/                       # UI element templates (health bar, battle list…)
+└── waypoints/                    # saved waypoint JSON / PNG template files
 ```
 
 ---
@@ -274,14 +273,15 @@ TibiaBot/
 ## How it works
 
 One background thread captures the screen at 20 fps.  All bot modules share
-that single frame instead of issuing their own screen grabs, so there is no
-redundant I/O.  Each module is an asyncio coroutine:
+that single frame so there is no redundant I/O.  Each module is an asyncio
+coroutine:
 
-| Module | Check rate | What it does |
+| Module | Rate | What it does |
 |---|---|---|
 | Health | 50 ms | Reads HP bar, presses heal key when below threshold |
 | Mana | 50 ms | Reads mana bar, presses mana key when below threshold |
 | Combat | 50 ms | Pixel-checks battle list, attacks enemies, detects stuck |
+| MinimapNavigation | 100 ms | Template-matches minimap, clicks toward next waypoint |
 | Navigation | 100 ms | OCR-reads minimap coords, clicks toward next waypoint |
 | Loot | on-demand | Opens corpses, template-matches items, takes whitelist only |
 

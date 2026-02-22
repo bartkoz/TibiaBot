@@ -73,6 +73,7 @@ class CombatConfig:
 
 @dataclass
 class NavigationConfig:
+    enabled: bool = True              # set to false to disable waypoint walking
     # Path to a JSON waypoints file produced by record_waypoints.py.
     # Takes priority over the inline `waypoints` list below.
     waypoints_file: Optional[str] = None
@@ -89,6 +90,28 @@ def load_waypoints_json(path: str) -> List[Tuple[int, int, int]]:
     # Support both {"waypoints": [[x,y,z], ...]} and bare [[x,y,z], ...]
     raw = data.get("waypoints", data) if isinstance(data, dict) else data
     return [tuple(int(v) for v in wp) for wp in raw]
+
+
+@dataclass
+class MinimapConfig:
+    """Screen region of the minimap + navigation parameters for visual odometry."""
+    enabled: bool = False
+    # Pixel bounds of the minimap window on screen.
+    # Run:  python calibrate.py --show-minimap  to locate these.
+    x: int = 1633
+    y: int = 44
+    width: int = 106
+    height: int = 109
+    # Size of the centre crop saved as each waypoint template (must be < width/height).
+    template_size: int = 40
+    # Pixel distance from minimap centre that counts as "arrived" at a waypoint.
+    arrival_px: int = 8
+    # Seconds between navigation clicks.
+    move_interval: float = 0.9
+    # Seconds without minimap movement before declaring "stuck" and advancing.
+    stuck_timeout: float = 5.0
+    # JSON file produced by record_minimap_waypoints.py.
+    waypoints_file: Optional[str] = None
 
 
 @dataclass
@@ -109,6 +132,7 @@ class BotConfig:
     healing: HealingConfig = field(default_factory=HealingConfig)
     combat: CombatConfig = field(default_factory=CombatConfig)
     navigation: NavigationConfig = field(default_factory=NavigationConfig)
+    minimap: MinimapConfig = field(default_factory=MinimapConfig)
     loot: LootConfig = field(default_factory=LootConfig)
 
 
@@ -181,6 +205,7 @@ def load_config(path: str = "bot_config.yaml") -> BotConfig:
     )
 
     n = raw.get("navigation", {})
+    nav_enabled = n.get("enabled", cfg.navigation.enabled)
     wps_file = n.get("waypoints_file", None)
     if wps_file:
         try:
@@ -193,10 +218,25 @@ def load_config(path: str = "bot_config.yaml") -> BotConfig:
         raw_wps = n.get("waypoints", [])
         waypoints = [tuple(int(v) for v in wp) for wp in raw_wps]
     cfg.navigation = NavigationConfig(
+        enabled=nav_enabled,
         waypoints_file=wps_file,
         waypoints=waypoints,
         waypoint_tolerance=n.get("waypoint_tolerance", cfg.navigation.waypoint_tolerance),
         move_interval=n.get("move_interval", cfg.navigation.move_interval),
+    )
+
+    mm = raw.get("minimap", {})
+    cfg.minimap = MinimapConfig(
+        enabled=mm.get("enabled", cfg.minimap.enabled),
+        x=mm.get("x", cfg.minimap.x),
+        y=mm.get("y", cfg.minimap.y),
+        width=mm.get("width", cfg.minimap.width),
+        height=mm.get("height", cfg.minimap.height),
+        template_size=mm.get("template_size", cfg.minimap.template_size),
+        arrival_px=mm.get("arrival_px", cfg.minimap.arrival_px),
+        move_interval=mm.get("move_interval", cfg.minimap.move_interval),
+        stuck_timeout=mm.get("stuck_timeout", cfg.minimap.stuck_timeout),
+        waypoints_file=mm.get("waypoints_file", cfg.minimap.waypoints_file),
     )
 
     lo = raw.get("loot", {})

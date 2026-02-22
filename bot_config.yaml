@@ -58,6 +58,7 @@ combat:
 # Find your coordinates by standing at each spot and reading the minimap,
 # or use record_waypoints.py to record them while walking in-game.
 navigation:
+  enabled: false
   # waypoints_file: "waypoints/my_route.json"   # ← recommended: use recorder
   waypoints:
     - [32372, 31949, 7]
@@ -66,6 +67,38 @@ navigation:
     - [32365, 31953, 7]
   waypoint_tolerance: 2     # tiles – how close counts as "arrived"
   move_interval: 0.9        # seconds between navigation clicks
+
+# ── minimap visual-odometry navigation ─────────────────────────────────────
+# Alternative to OCR-coordinate navigation. Does not need the X,Y,Z display.
+# Record waypoints with:  uv run python record_minimap_waypoints.py
+# Verify minimap region:  uv run python calibrate.py --show-minimap
+#
+# When enabled: true, this takes priority over the navigation section above.
+minimap:
+  enabled: false
+
+  # Pixel bounds of the minimap window on screen.
+  # Adjust with --show-minimap until the green box covers exactly the map image.
+  x: 1633
+  y: 44
+  width: 106
+  height: 109
+
+  # Size (px) of the centre crop used as each waypoint's match template.
+  # Must be smaller than width and height.
+  template_size: 40
+
+  # Pixel distance from minimap centre that counts as "arrived" at a waypoint.
+  arrival_px: 8
+
+  # Seconds between navigation clicks.
+  move_interval: 0.9
+
+  # Seconds of minimap stillness before skipping the current waypoint.
+  stuck_timeout: 5.0
+
+  # JSON produced by record_minimap_waypoints.py
+  # waypoints_file: "waypoints/minimap_route.json"
 
 # ── looting ────────────────────────────────────────────────────────────────
 loot:

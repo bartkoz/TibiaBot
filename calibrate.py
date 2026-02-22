@@ -181,6 +181,60 @@ def cmd_show_viewport(cfg: dict) -> None:
     print(f"  Tile size: {ts}px")
 
 
+def cmd_show_minimap(cfg: dict) -> None:
+    """Overlay the configured minimap region on a screenshot so the user can
+    verify that ``minimap.x/y/width/height`` in bot_config.yaml covers the
+    actual minimap image.
+
+    Output images
+    -------------
+    calibration_minimap_full.png  – 50 % screenshot with a green box around
+                                    the minimap region and a red dot at centre.
+    calibration_minimap_zoom.png  – 6× crop of just the minimap region.
+    """
+    mm = cfg.get("minimap", {})
+    x  = mm.get("x",      2381)
+    y  = mm.get("y",         1)
+    w  = mm.get("width",    86)
+    h  = mm.get("height",  104)
+    ts = mm.get("template_size", 40)
+
+    print(f"Minimap region: x={x} y={y} w={w} h={h}  template_size={ts}")
+    print("Taking screenshot in 2 s – switch to Tibia…")
+    time.sleep(2)
+
+    frame = _grab_frame(cfg)
+    vis   = frame[:, :, :3].copy()
+
+    # Highlight minimap region
+    cv2.rectangle(vis, (x, y), (x + w, y + h), (0, 255, 0), 2)
+    # Player dot (always at centre)
+    cx, cy = x + w // 2, y + h // 2
+    cv2.drawMarker(vis, (cx, cy), (0, 0, 255), cv2.MARKER_CROSS, 10, 1)
+    # Template crop outline
+    th = ts // 2
+    cv2.rectangle(vis,
+                  (cx - th, cy - th), (cx + th, cy + th),
+                  (255, 255, 0), 1)
+
+    out_full = "calibration_minimap_full.png"
+    cv2.imwrite(out_full, cv2.resize(vis, None, fx=0.5, fy=0.5))
+    print(f"Full screenshot (50%) → {out_full}")
+
+    # Zoomed crop of the minimap itself
+    pad = 20
+    x1, y1 = max(0, x - pad), max(0, y - pad)
+    x2, y2 = x + w + pad, y + h + pad
+    crop = vis[y1:y2, x1:x2]
+    out_zoom = "calibration_minimap_zoom.png"
+    cv2.imwrite(out_zoom, cv2.resize(crop, None, fx=6, fy=6, interpolation=cv2.INTER_NEAREST))
+    print(f"Zoomed minimap region (6×) → {out_zoom}")
+    print()
+    print("Green box  = minimap region (adjust x/y/width/height until it covers the map)")
+    print("Red cross  = player dot position (always at centre)")
+    print("Yellow box = template_size crop that gets saved as each waypoint")
+
+
 def cmd_show_attack_indicator(cfg: dict) -> None:
     """Visualise the attack indicator pixel so the user can verify / adjust
     attack_indicator_offset in bot_config.yaml.
@@ -252,6 +306,7 @@ def main() -> None:
     p.add_argument("--show-bars",              action="store_true")
     p.add_argument("--show-viewport",          action="store_true")
     p.add_argument("--show-attack-indicator",  action="store_true")
+    p.add_argument("--show-minimap",           action="store_true")
     p.add_argument("--dump-frame",             action="store_true")
     args = p.parse_args()
 
@@ -265,6 +320,8 @@ def main() -> None:
         cmd_show_viewport(cfg)
     elif args.show_attack_indicator:
         cmd_show_attack_indicator(cfg)
+    elif args.show_minimap:
+        cmd_show_minimap(cfg)
     elif args.dump_frame:
         cmd_dump_frame(cfg)
     else:
