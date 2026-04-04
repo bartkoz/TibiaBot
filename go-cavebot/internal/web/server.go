@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/anthropics/tibiabot/internal/core"
 	"github.com/anthropics/tibiabot/internal/navigation"
@@ -23,6 +24,7 @@ import (
 var staticFS embed.FS
 
 type Server struct {
+	mu      sync.RWMutex
 	Config  *core.BotConfig
 	Atlas   *navigation.Atlas
 	Bot     *core.CaveBot
@@ -80,6 +82,14 @@ func (s *Server) setupRoutes() {
 			http.Error(w, "method not allowed", 405)
 			return
 		}
+		s.mu.Lock()
+		defer s.mu.Unlock()
+
+		// Stop existing bot if running
+		if s.Bot != nil {
+			s.Bot.Stop()
+		}
+
 		if s.Atlas == nil {
 			atlas := navigation.NewAtlas(s.Config.Minimap.DataPath)
 			if err := atlas.Load(); err != nil {
@@ -102,6 +112,8 @@ func (s *Server) setupRoutes() {
 			http.Error(w, "method not allowed", 405)
 			return
 		}
+		s.mu.Lock()
+		defer s.mu.Unlock()
 		if s.Bot != nil {
 			s.Bot.Stop()
 			s.Bot = nil
@@ -111,9 +123,12 @@ func (s *Server) setupRoutes() {
 	})
 
 	s.mux.HandleFunc("/api/bot/status", func(w http.ResponseWriter, r *http.Request) {
+		s.mu.RLock()
+		bot := s.Bot
+		s.mu.RUnlock()
 		w.Header().Set("Content-Type", "application/json")
-		if s.Bot != nil {
-			json.NewEncoder(w).Encode(s.Bot.Status())
+		if bot != nil {
+			json.NewEncoder(w).Encode(bot.Status())
 		} else {
 			json.NewEncoder(w).Encode(map[string]interface{}{"state": "IDLE", "running": false})
 		}

@@ -23,35 +23,43 @@ const (
 	Refill
 )
 
-var stateNames = map[BotState]string{
-	Idle:    "IDLE",
-	Walking: "WALKING",
-	Combat:  "COMBAT",
-	Looting: "LOOTING",
-	Healing: "HEALING",
-	Refill:  "REFILL",
+func (s BotState) String() string {
+	switch s {
+	case Idle:
+		return "IDLE"
+	case Walking:
+		return "WALKING"
+	case Combat:
+		return "COMBAT"
+	case Looting:
+		return "LOOTING"
+	case Healing:
+		return "HEALING"
+	case Refill:
+		return "REFILL"
+	default:
+		return "UNKNOWN"
+	}
 }
-
-func (s BotState) String() string { return stateNames[s] }
 
 type BotStateMachine struct {
 	mu            sync.RWMutex
 	state         BotState
 	running       bool
-	Position      [3]int
-	HealthPct     float64
-	ManaPct       float64
-	Kills         int
-	WaypointIndex int
+	position      [3]int
+	healthPct     float64
+	manaPct       float64
+	kills         int
+	waypointIndex int
 	events        []map[string]interface{}
 }
 
 func NewBotStateMachine() *BotStateMachine {
 	return &BotStateMachine{
 		state:     Idle,
-		Position:  [3]int{0, 0, 7},
-		HealthPct: 100.0,
-		ManaPct:   100.0,
+		position:  [3]int{0, 0, 7},
+		healthPct: 100.0,
+		manaPct:   100.0,
 	}
 }
 
@@ -91,17 +99,55 @@ func (sm *BotStateMachine) Transition(newState BotState) {
 	sm.logEvent("State: " + old.String() + " -> " + newState.String())
 }
 
+func (sm *BotStateMachine) GetPosition() [3]int {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	return sm.position
+}
+
+func (sm *BotStateMachine) SetPosition(pos [3]int) {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	sm.position = pos
+}
+
+func (sm *BotStateMachine) GetHealthMana() (float64, float64) {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	return sm.healthPct, sm.manaPct
+}
+
+func (sm *BotStateMachine) SetHealthMana(health, mana float64) {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	sm.healthPct = health
+	sm.manaPct = mana
+}
+
+func (sm *BotStateMachine) IncrementKills() {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	sm.kills++
+}
+
+func (sm *BotStateMachine) AdvanceWaypoint(numWaypoints int) int {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	sm.waypointIndex = (sm.waypointIndex + 1) % numWaypoints
+	return sm.waypointIndex
+}
+
 func (sm *BotStateMachine) Status() map[string]interface{} {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
 	return map[string]interface{}{
 		"state":          sm.state.String(),
 		"running":        sm.running,
-		"position":       sm.Position,
-		"health_pct":     sm.HealthPct,
-		"mana_pct":       sm.ManaPct,
-		"kills":          sm.Kills,
-		"waypoint_index": sm.WaypointIndex,
+		"position":       sm.position,
+		"health_pct":     sm.healthPct,
+		"mana_pct":       sm.manaPct,
+		"kills":          sm.kills,
+		"waypoint_index": sm.waypointIndex,
 	}
 }
 
@@ -130,6 +176,7 @@ type CaveBot struct {
 	spellRotation *combat.SpellRotation
 	currentPath   [][2]int
 	pathIndex     int
+	stopOnce      sync.Once
 	stopCh        chan struct{}
 	onStatus      func(map[string]interface{})
 }
@@ -171,12 +218,14 @@ func (cb *CaveBot) Start() {
 }
 
 func (cb *CaveBot) Stop() {
-	close(cb.stopCh)
-	cb.SM.Stop()
-	cb.capture.Close()
-	if cb.locator != nil {
-		cb.locator.Close()
-	}
+	cb.stopOnce.Do(func() {
+		close(cb.stopCh)
+		cb.SM.Stop()
+		cb.capture.Close()
+		if cb.locator != nil {
+			cb.locator.Close()
+		}
+	})
 }
 
 func (cb *CaveBot) Status() map[string]interface{} {
@@ -211,12 +260,11 @@ func (cb *CaveBot) tick(frame *gocv.Mat) {
 
 	healthBar := vision.CropRegion(*frame, cfg.Capture.HealthBarRegion)
 	manaBar := vision.CropRegion(*frame, cfg.Capture.ManaBarRegion)
-	cb.SM.mu.Lock()
-	cb.SM.HealthPct = vision.ReadBarPercentage(healthBar, 2, 100)
-	cb.SM.ManaPct = vision.ReadBarPercentage(manaBar, 0, 100)
-	cb.SM.mu.Unlock()
+	hp := vision.ReadBarPercentage(healthBar, 2, 100)
+	mp := vision.ReadBarPercentage(manaBar, 0, 100)
+	cb.SM.SetHealthMana(hp, mp)
 
-	healAction := cb.healer.Check(cb.SM.HealthPct, cb.SM.ManaPct)
+	healAction := cb.healer.Check(hp, mp)
 	if healAction == "health" {
 		PressKey(cfg.Healing.HealthPotKey)
 		cb.healer.MarkUsed("health")
@@ -235,14 +283,13 @@ func (cb *CaveBot) tick(frame *gocv.Mat) {
 
 	minimapImg := vision.CropRegion(*frame, cfg.Capture.MinimapRegion)
 	minimapRGB := gocv.NewMat()
-	defer minimapRGB.Close()
 	gocv.CvtColor(minimapImg, &minimapRGB, gocv.ColorBGRToRGB)
 
-	x, y, _, found := cb.locator.Locate(minimapRGB, cb.SM.Position[2])
+	pos := cb.SM.GetPosition()
+	x, y, _, found := cb.locator.Locate(minimapRGB, pos[2])
+	minimapRGB.Close()
 	if found {
-		cb.SM.mu.Lock()
-		cb.SM.Position = [3]int{x, y, cb.SM.Position[2]}
-		cb.SM.mu.Unlock()
+		cb.SM.SetPosition([3]int{x, y, pos[2]})
 	}
 
 	state := cb.SM.State()
@@ -270,9 +317,8 @@ func (cb *CaveBot) tickWalking(frame *gocv.Mat) {
 
 	if cb.pathIndex < len(cb.currentPath) {
 		pos := cb.currentPath[cb.pathIndex]
-		cb.SM.mu.RLock()
-		cx, cy := cb.SM.Position[0], cb.SM.Position[1]
-		cb.SM.mu.RUnlock()
+		curPos := cb.SM.GetPosition()
+		cx, cy := curPos[0], curPos[1]
 		dx := clamp(pos[0]-cx, -1, 1)
 		dy := clamp(pos[1]-cy, -1, 1)
 		if dx == 0 && dy == 0 {
@@ -302,9 +348,7 @@ func (cb *CaveBot) tickCombat(frame *gocv.Mat) {
 	cfg := cb.Config
 	battleRegion := vision.CropRegion(*frame, cfg.Capture.BattleListRegion)
 	if !cb.targeting.HasTarget(battleRegion) {
-		cb.SM.mu.Lock()
-		cb.SM.Kills++
-		cb.SM.mu.Unlock()
+		cb.SM.IncrementKills()
 		cb.SM.Transition(Looting)
 		return
 	}
@@ -316,11 +360,7 @@ func (cb *CaveBot) advanceWaypoint() {
 	if len(waypoints) == 0 {
 		return
 	}
-	cb.SM.mu.Lock()
-	cb.SM.WaypointIndex = (cb.SM.WaypointIndex + 1) % len(waypoints)
-	idx := cb.SM.WaypointIndex
-	cb.SM.mu.Unlock()
-
+	idx := cb.SM.AdvanceWaypoint(len(waypoints))
 	if !cb.Config.Waypoints.Loop && idx == 0 {
 		cb.SM.Stop()
 		return
@@ -334,9 +374,7 @@ func (cb *CaveBot) planPathToWaypoint(wpIndex int) {
 		return
 	}
 	wp := waypoints[wpIndex]
-	cb.SM.mu.RLock()
-	start := cb.SM.Position
-	cb.SM.mu.RUnlock()
+	start := cb.SM.GetPosition()
 	goal := [3]int{wp.X, wp.Y, wp.Z}
 	path := navigation.FindPath(cb.atlas, start, goal, 100000)
 	if path != nil {

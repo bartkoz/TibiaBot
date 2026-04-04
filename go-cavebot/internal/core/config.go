@@ -132,8 +132,13 @@ func LoadConfig(path string) (*BotConfig, error) {
 }
 
 func (c *BotConfig) ToMap() map[string]interface{} {
-	data, _ := json.Marshal(c)
+	data, err := json.Marshal(c)
+	if err != nil {
+		return map[string]interface{}{}
+	}
 	var m map[string]interface{}
-	json.Unmarshal(data, &m)
+	if err := json.Unmarshal(data, &m); err != nil {
+		return map[string]interface{}{}
+	}
 	return m
 }

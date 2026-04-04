@@ -32,9 +32,9 @@ func (ml *MinimapLocator) Close() {
 // Locate finds the position of the minimap snippet within the atlas.
 // Returns (x, y, confidence, found).
 func (ml *MinimapLocator) Locate(snippet gocv.Mat, z int, confidenceThreshold ...float64) (int, int, float64, bool) {
-	threshold := 0.7
+	threshold := float32(0.7)
 	if len(confidenceThreshold) > 0 {
-		threshold = confidenceThreshold[0]
+		threshold = float32(confidenceThreshold[0])
 	}
 
 	snippetH := snippet.Rows()
@@ -48,54 +48,62 @@ func (ml *MinimapLocator) Locate(snippet gocv.Mat, z int, confidenceThreshold ..
 		return 0, 0, 0, false
 	}
 
-	var chunks []navigation.ChunkKey
-	if ml.lastChunk != nil && ml.lastChunk.Z == z {
-		chunks = ml.getNeighborChunks(*ml.lastChunk)
-	} else {
-		chunks = ml.atlas.ChunkKeysForZ(z)
-	}
-
-	bestScore := float32(-1.0)
-	bestX, bestY := 0, 0
-	var bestChunk *navigation.ChunkKey
-
 	mask := gocv.NewMat()
 	defer mask.Close()
 
-	for _, ck := range chunks {
-		tile := ml.getTileMat(ck)
-		if tile.Empty() {
-			continue
-		}
-		if tile.Rows() < snippetH || tile.Cols() < snippetW {
-			continue
+	// Try narrowed search first, then fall back to full z-level search
+	for attempt := 0; attempt < 2; attempt++ {
+		var chunks []navigation.ChunkKey
+		if attempt == 0 && ml.lastChunk != nil && ml.lastChunk.Z == z {
+			chunks = ml.getNeighborChunks(*ml.lastChunk)
+		} else {
+			chunks = ml.atlas.ChunkKeysForZ(z)
 		}
 
-		result := gocv.NewMat()
-		gocv.MatchTemplate(tile, snippet, &result, gocv.TmCcoeffNormed, mask)
-		_, maxVal, _, maxLoc := gocv.MinMaxLoc(result)
-		result.Close()
+		bestScore := float32(-1.0)
+		bestX, bestY := 0, 0
+		var bestChunk *navigation.ChunkKey
 
-		if maxVal > bestScore {
-			bestScore = maxVal
-			bestX = ck.X + maxLoc.X
-			bestY = ck.Y + maxLoc.Y
-			c := ck
-			bestChunk = &c
+		for _, ck := range chunks {
+			tile := ml.getTileMat(ck)
+			if tile.Empty() {
+				continue
+			}
+			if tile.Rows() < snippetH || tile.Cols() < snippetW {
+				continue
+			}
+
+			result := gocv.NewMat()
+			gocv.MatchTemplate(tile, snippet, &result, gocv.TmCcoeffNormed, mask)
+			_, maxVal, _, maxLoc := gocv.MinMaxLoc(result)
+			result.Close()
+
+			if maxVal > bestScore {
+				bestScore = maxVal
+				bestX = ck.X + maxLoc.X
+				bestY = ck.Y + maxLoc.Y
+				c := ck
+				bestChunk = &c
+			}
 		}
+
+		if bestScore >= threshold {
+			ml.lastChunk = bestChunk
+			return bestX, bestY, float64(bestScore), true
+		}
+
+		// If narrowed search failed, clear cache and try full search
+		if ml.lastChunk == nil {
+			return 0, 0, 0, false
+		}
+		ml.lastChunk = nil
 	}
 
-	if bestScore < float32(threshold) {
-		if ml.lastChunk != nil {
-			ml.lastChunk = nil
-			return ml.Locate(snippet, z, threshold)
-		}
-		return 0, 0, 0, false
-	}
-
-	ml.lastChunk = bestChunk
-	return bestX, bestY, float64(bestScore), true
+	return 0, 0, 0, false
 }
+
+// emptyMat is a reusable empty Mat to avoid allocating on every cache miss.
+var emptyMat = gocv.NewMat()
 
 func (ml *MinimapLocator) getTileMat(ck navigation.ChunkKey) gocv.Mat {
 	if mat, ok := ml.matCache[ck]; ok {
@@ -103,7 +111,7 @@ func (ml *MinimapLocator) getTileMat(ck navigation.ChunkKey) gocv.Mat {
 	}
 	tile, ok := ml.atlas.GetColorTile(ck.X, ck.Y, ck.Z)
 	if !ok {
-		return gocv.NewMat()
+		return emptyMat
 	}
 	mat := rgbaToMat(tile)
 	ml.matCache[ck] = mat
