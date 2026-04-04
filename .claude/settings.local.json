@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(uv init:*)",
+      "Bash(export PATH=\"$HOME/.local/bin:/opt/homebrew/bin:$PATH\")",
+      "Bash(uv sync:*)",
+      "Bash(uv run:*)",
+      "Bash(~/.local/bin/uv run:*)",
+      "Bash(ls -la /Users/Bartek/tibiabot/*.md)",
+      "Bash(git remote:*)",
+      "Bash(git init:*)"
+    ]
+  }
+}

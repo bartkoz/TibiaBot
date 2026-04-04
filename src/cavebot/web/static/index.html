@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tibia Cavebot</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div id="app">
+        <header>
+            <h1>Tibia Cavebot</h1>
+            <div id="controls">
+                <button id="btn-start" onclick="startBot()">Start</button>
+                <button id="btn-stop" onclick="stopBot()" disabled>Stop</button>
+                <span id="state-badge">IDLE</span>
+            </div>
+        </header>
+        <main>
+            <div id="map-panel">
+                <canvas id="map-canvas"></canvas>
+                <div id="map-controls">
+                    <label>Z-Level: <input type="number" id="z-level" value="7" min="0" max="15" onchange="loadAtlas()"></label>
+                    <button onclick="clearWaypoints()">Clear Waypoints</button>
+                </div>
+            </div>
+            <aside id="side-panel">
+                <div id="status-panel">
+                    <h3>Status</h3>
+                    <div class="stat-row"><span>Health:</span> <div class="bar"><div id="health-bar" class="bar-fill health"></div></div> <span id="health-val">100%</span></div>
+                    <div class="stat-row"><span>Mana:</span> <div class="bar"><div id="mana-bar" class="bar-fill mana"></div></div> <span id="mana-val">100%</span></div>
+                    <div class="stat-row"><span>Position:</span> <span id="pos-val">-</span></div>
+                    <div class="stat-row"><span>Waypoint:</span> <span id="wp-val">-</span></div>
+                    <div class="stat-row"><span>Kills:</span> <span id="kills-val">0</span></div>
+                </div>
+                <div id="waypoints-panel">
+                    <h3>Waypoints</h3>
+                    <ol id="waypoint-list"></ol>
+                </div>
+                <div id="log-panel">
+                    <h3>Log</h3>
+                    <div id="log-messages"></div>
+                </div>
+            </aside>
+        </main>
+    </div>
+    <script src="/static/app.js"></script>
+</body>
+</html>

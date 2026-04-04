@@ -1,0 +1,29 @@
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: system-ui, sans-serif; background: #1a1a2e; color: #eee; }
+header { display: flex; align-items: center; justify-content: space-between; padding: 12px 20px; background: #16213e; }
+header h1 { font-size: 18px; }
+#controls { display: flex; gap: 8px; align-items: center; }
+button { padding: 6px 16px; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; }
+#btn-start { background: #0f3; color: #000; }
+#btn-stop { background: #f33; color: #fff; }
+button:disabled { opacity: 0.4; cursor: default; }
+#state-badge { padding: 4px 10px; border-radius: 4px; background: #333; font-size: 13px; font-weight: bold; }
+main { display: flex; height: calc(100vh - 50px); }
+#map-panel { flex: 1; position: relative; overflow: hidden; background: #0f0f23; }
+#map-canvas { width: 100%; height: 100%; display: block; }
+#map-controls { position: absolute; top: 8px; left: 8px; display: flex; gap: 8px; align-items: center; }
+#map-controls label, #map-controls button { background: rgba(0,0,0,0.7); padding: 4px 8px; border-radius: 4px; font-size: 12px; }
+#map-controls input { width: 50px; background: #333; color: #fff; border: 1px solid #555; border-radius: 3px; padding: 2px 4px; }
+#side-panel { width: 300px; display: flex; flex-direction: column; gap: 1px; background: #16213e; }
+#side-panel > div { padding: 12px; background: #1a1a2e; }
+h3 { font-size: 14px; margin-bottom: 8px; color: #888; text-transform: uppercase; letter-spacing: 1px; }
+.stat-row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-size: 13px; }
+.bar { flex: 1; height: 14px; background: #333; border-radius: 3px; overflow: hidden; }
+.bar-fill { height: 100%; transition: width 0.3s; }
+.bar-fill.health { background: #d32; }
+.bar-fill.mana { background: #36d; }
+#waypoint-list { list-style: decimal; padding-left: 20px; font-size: 12px; max-height: 150px; overflow-y: auto; }
+#waypoint-list li { margin-bottom: 2px; }
+#log-panel { flex: 1; overflow: hidden; }
+#log-messages { font-size: 11px; font-family: monospace; max-height: 200px; overflow-y: auto; color: #aaa; }
+#log-messages div { padding: 1px 0; border-bottom: 1px solid #222; }
