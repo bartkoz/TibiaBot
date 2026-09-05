@@ -78,7 +78,8 @@ Błędem 400 pozostaje wyłącznie nieprawidłowe wejście: zakres współrzędn
 
 A* działa w prostokącie rozpiętym na starcie i celu, powiększonym o `margin`
 (domyślnie 64 kratki, maksymalnie 256) — nie na całym piętrze. Do tego limit
-iteracji i timeout 5 s. Sam obszar także ma sufit: 4 mln kratek w żądaniu i
+iteracji — liczonym w rozwiniętych kratkach, nie w pobraniach z kolejki, bo ta
+sama kratka trafia do niej wielokrotnie — i timeout 5 s. Sam obszar także ma sufit: 4 mln kratek w żądaniu i
 8 mln po wyrównaniu do granic kafli. Bez niego dwie poprawne współrzędne na
 przeciwległych krańcach mapy alokowałyby gigabajty jeszcze przed wyszukiwaniem.
 
@@ -178,7 +179,9 @@ Po każdym udanym odczycie pozycji, gdy podążanie jest włączone:
    pokazuje instrukcję akcji i czeka. Punkt nie jest zaliczany przez dojście;
    uznaje się go za wykonany dopiero po potwierdzonej zmianie piętra. Inaczej
    para punktów nagrana przy linie zostałaby przejechana jak zwykłe chodzenie,
-   a instrukcja przepadła.
+   a instrukcja przepadła. Przy 10 odczytach na sekundę gracz może przejść
+   między próbkami i nigdy nie zostać zobaczonym na tym punkcie — wtedy
+   dowodem wykonania akcji jest stanięcie na piętrze kolejnego waypointa.
 2. Bieżący waypoint na innym Z niż pozycja → panel pokazuje instrukcję wynikającą
    z typu („użyj liny", „wejdź po drabinie") i czeka, aż tracker potwierdzi nowe Z.
    Ścieżka nie jest liczona.
