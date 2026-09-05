@@ -78,7 +78,13 @@ Błędem 400 pozostaje wyłącznie nieprawidłowe wejście: zakres współrzędn
 
 A* działa w prostokącie rozpiętym na starcie i celu, powiększonym o `margin`
 (domyślnie 64 kratki, maksymalnie 256) — nie na całym piętrze. Do tego limit
-iteracji i timeout 5 s. Trasa wymagająca dużego objazdu poza tym prostokątem
+iteracji i timeout 5 s. Sam obszar także ma sufit: 4 mln kratek w żądaniu i
+8 mln po wyrównaniu do granic kafli. Bez niego dwie poprawne współrzędne na
+przeciwległych krańcach mapy alokowałyby gigabajty jeszcze przed wyszukiwaniem.
+
+Oszacowanie odległości jest skalowane najtańszą przechodnią kratką w obszarze.
+W danych występują kratki tańsze niż 100, więc nieskalowana metryka octile
+przeszacowuje pozostały koszt i A* przestaje zwracać najtańszą trasę. Trasa wymagająca dużego objazdu poza tym prostokątem
 zwróci `found:false`; użytkownik zwiększa `margin` albo dokłada waypoint pośredni.
 
 ### Koszty i przechodniość
@@ -168,17 +174,22 @@ kasuje godzinę nagrywania. Zapis na dysk zawsze wymaga świadomego kliknięcia
 
 Po każdym udanym odczycie pozycji, gdy podążanie jest włączone:
 
-1. Bieżący waypoint na innym Z niż pozycja → panel pokazuje instrukcję wynikającą
+1. Bieżący waypoint niesie typ inny niż `walk`, a gracz już na nim stoi → panel
+   pokazuje instrukcję akcji i czeka. Punkt nie jest zaliczany przez dojście;
+   uznaje się go za wykonany dopiero po potwierdzonej zmianie piętra. Inaczej
+   para punktów nagrana przy linie zostałaby przejechana jak zwykłe chodzenie,
+   a instrukcja przepadła.
+2. Bieżący waypoint na innym Z niż pozycja → panel pokazuje instrukcję wynikającą
    z typu („użyj liny", „wejdź po drabinie") i czeka, aż tracker potwierdzi nowe Z.
    Ścieżka nie jest liczona.
-2. Odległość Chebysheva do waypointa nie większa niż tolerancja (domyślnie
+3. Odległość Chebysheva do waypointa nie większa niż tolerancja (domyślnie
    1 kratka, czyli także po skosie) → punkt zaliczony, przechodzimy do następnego. Koniec listy oznacza „Trasa ukończona"
    albo powrót na początek, jeśli włączone jest zapętlenie.
 3. W pozostałych przypadkach: jeżeli nie mamy ścieżki, jej cel nie jest bieżącym
    waypointem albo bieżąca pozycja nie jest żadną z pozostałych kratek ścieżki,
    prosimy `/api/path`. Nie częściej niż raz
    na 500 ms i nigdy dwa żądania równolegle.
-4. Z posiadanej ścieżki przycinamy przebyty fragment, bierzemy następną kratkę
+5. Z posiadanej ścieżki przycinamy przebyty fragment, bierzemy następną kratkę
    i zamieniamy na kierunek (N, NE, E, …). Panel pokazuje strzałkę oraz dystans
    i numer docelowego waypointa.
 
