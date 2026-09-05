@@ -83,10 +83,30 @@ zwróci `found:false`; użytkownik zwiększa `margin` albo dokłada waypoint po�
 
 ### Koszty i przechodniość
 
-Kafle `Minimap_WaypointCost_*.png` to obrazy 8-bitowe 256×256. Wartość 255
-oznacza kratkę zablokowaną, 0 — teren niezbadany. Obie są nieprzechodnie.
-Brakujący kafel traktujemy jak teren niezbadany, tak samo jak atlas kolorów
-odróżnia brak danych od czarnej ściany.
+Kafle `Minimap_WaypointCost_*.png` to obrazy 256×256 **z paletą**, nie w skali
+szarości. Paleta jest identycznościowa tylko do indeksu 250; 251–255 niosą kolory
+znaczników (`255,0,0`, `255,0,255`, `255,255,0`). Odczyt przez konwersję do skali
+szarości zamieniłby blokadę 255 na około 76, czyli teren przechodni — dlatego
+czytany jest surowy indeks palety.
+
+W rzeczywistych danych z tego repozytorium występują wartości 90–233 dla terenu
+przechodniego oraz 255 dla nieprzechodniego; wartość 0 nie pojawia się w ogóle.
+Przechodnia jest więc każda kratka różna od 255. Brakujący kafel jest
+nieprzechodni. Koszt kroku to wartość podzielona przez 100, gdzie 100 odpowiada
+jednemu zwykłemu krokowi, a przekątna kosztuje √2 razy tyle.
+
+### Ruch po przekątnej
+
+Krok po przekątnej między dwiema kratkami nieprzechodnimi jest niemożliwy, tak
+jak w grze: wzdłuż jednej ściany iść można, przecisnąć się między dwiema nie.
+Bez tej zasady trasa przecinałaby zamknięte rogi budynków.
+
+### Kod wyniku
+
+Odpowiedź niesie `status` obok `reason`: `ok`, `blocked_start`, `blocked_goal`,
+`no_route`, `different_floor`, `limit` lub `cancelled`. Panel reaguje inaczej na
+waypoint postawiony na ścianie niż na brak trasy, a testy nie muszą opierać się
+na treści komunikatu.
 
 ### Współbieżność
 
