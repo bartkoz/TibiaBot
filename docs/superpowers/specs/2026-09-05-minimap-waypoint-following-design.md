@@ -198,7 +198,17 @@ Po każdym udanym odczycie pozycji, gdy podążanie jest włączone:
 
 Ścieżka jest rysowana na istniejącym podglądzie referencyjnym — wycinku 129×129
 kratek wokół gracza, w którym krok `(x,y)` wypada na pikselu
-`(64 + x − px, 64 + y − py)`.
+`(64 + x − px, 64 + y − py)`. Podczas śledzenia podgląd odświeża się najwyżej raz
+na sekundę, więc `px, py` to pozycja, dla której powstał bieżący obraz, a nie
+najświeższy odczyt.
+
+Nieudane wyliczenie trasy jest stanem chwilowym, nie końcowym: panel pokazuje
+powód i ponawia próbę po zmianie kratki albo po kilku sekundach. Jedno zerwane
+połączenie nie może zamrozić prowadzenia do czasu ręcznego przełączenia.
+
+Zmiana tolerancji i zapętlenia działa od następnego odczytu i nie przestawia
+trasy na pierwszy punkt — inaczej drobna korekta ustawień cofałaby gracza
+o kilkadziesiąt waypointów.
 
 ## Moduły
 
