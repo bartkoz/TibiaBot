@@ -361,9 +361,12 @@ func TestDriverEnforcesTapRateWithoutBanking(t *testing.T) {
 	if over.Status != "refused" {
 		t.Fatalf("got %+v", over)
 	}
-	// A quiet stretch must not hand back a burst of unused budget.
-	*now = now.Add(10 * time.Second)
-	d.Beat(session)
+	// A quiet stretch must not hand back a burst of unused budget. The clock
+	// moves in heartbeat-sized steps, or the driver would disarm instead.
+	for range 6 {
+		*now = now.Add(200 * time.Millisecond)
+		d.Beat(session)
+	}
 	for i := uint64(100); i < 100+maxTapsPerSecond; i++ {
 		if got := d.Submit(walk(i, session)); got.Status != "emitted" {
 			t.Fatalf("after idle, tap %d: %+v", i, got)
@@ -898,6 +901,7 @@ git commit -m "feat: add hotkey-then-click sequence for floor transitions"
 
 **Files:**
 - Create: `minimap-lab/inputapi.go`
+- Create: `minimap-lab/input_other.go`
 - Modify: `minimap-lab/main.go` (pole `driver` w `server`, trasy w `routes()`, flaga `-input`)
 - Test: `minimap-lab/inputapi_test.go`
 
@@ -1121,6 +1125,18 @@ Trasy w `routes()`, obok istniejących:
 	mux.HandleFunc("GET /api/input/status", s.inputStatus)
 ```
 
+Nowy plik `input_other.go` — `selectEmitter` woła `newSystemEmitter`, więc bez
+tego stuba build nie przejdzie na żadnej platformie poza Windows. Tag jest
+tymczasowo szeroki; Task 6 zawęża go po dodaniu emitera macOS:
+
+```go
+//go:build !windows
+
+package main
+
+func newSystemEmitter() (Emitter, error) { return nil, ErrUnsupported }
+```
+
 Nowy plik `inputapi.go`:
 
 ```go
@@ -1251,7 +1267,7 @@ Expected: PASS — nowe testy oraz wszystkie istniejące
 - [ ] **Step 5: Commit**
 
 ```bash
-git add minimap-lab/inputapi.go minimap-lab/inputapi_test.go minimap-lab/main.go
+git add minimap-lab/inputapi.go minimap-lab/input_other.go minimap-lab/inputapi_test.go minimap-lab/main.go
 git commit -m "feat: expose input driver over local HTTP API"
 ```
 
@@ -1261,29 +1277,15 @@ git commit -m "feat: expose input driver over local HTTP API"
 
 **Files:**
 - Create: `minimap-lab/input_windows.go`
-- Create: `minimap-lab/input_other.go`
 
 **Interfaces:**
-- Consumes: `Emitter`, `Window`, `ErrUnsupported`
-- Produces: `func newSystemEmitter() (Emitter, error)` dla Windows oraz dla pozostałych platform
+- Consumes: `Emitter`, `Window`, `selectEmitter` z Task 4
+- Produces: `func newSystemEmitter() (Emitter, error)` dla Windows
 
 Emitera nie da się przetestować automatycznie — wymaga sesji graficznej Windows.
 Weryfikacją w tym tasku jest kompilacja krzyżowa, `go vet` i test ręczny z Taska 11.
 
-- [ ] **Step 1: Napisz stub dla platform bez implementacji**
-
-`minimap-lab/input_other.go` — tag jest tymczasowo szeroki, żeby drzewo było
-zielone po tym commicie; Task 6 zawęża go po dodaniu emitera macOS:
-
-```go
-//go:build !windows
-
-package main
-
-func newSystemEmitter() (Emitter, error) { return nil, ErrUnsupported }
-```
-
-- [ ] **Step 2: Napisz emiter Windows**
+- [ ] **Step 1: Napisz emiter Windows**
 
 `minimap-lab/input_windows.go`:
 
@@ -1486,7 +1488,7 @@ func (e *windowsEmitter) sendMouse(in mouseInput) error {
 }
 ```
 
-- [ ] **Step 3: Zweryfikuj rozmiar struktur i kompilację krzyżową**
+- [ ] **Step 2: Zweryfikuj rozmiar struktur i kompilację krzyżową**
 
 Dopisz do `input_windows.go` asercję rozmiaru wykonywaną w czasie kompilacji —
 jeśli układ pól się rozjedzie, `SendInput` po cichu odrzucałby zdarzenia:
@@ -1507,16 +1509,16 @@ CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go vet .
 Expected: wszystkie trzy bez wyjścia. Jeżeli asercja rozmiaru się nie kompiluje,
 popraw układ pól — nie usuwaj asercji.
 
-- [ ] **Step 4: Uruchom pełne testy na macOS**
+- [ ] **Step 3: Uruchom pełne testy na macOS**
 
 Run: `cd minimap-lab && go test ./...`
 Expected: PASS — pliki Windows nie wchodzą do buildu macOS, a `input_other.go`
-dostarcza `newSystemEmitter`
+z Taska 4 dostarcza `newSystemEmitter`
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 4: Commit**
 
 ```bash
-git add minimap-lab/input_windows.go minimap-lab/input_other.go
+git add minimap-lab/input_windows.go
 git commit -m "feat: add Windows emitter using SendInput with scan codes"
 ```
 
@@ -2021,6 +2023,7 @@ test('klatka po emisji z docelową kratką kończy krok', () => {
 
 test('brak ruchu przed timeoutem nie powtarza kroku', () => {
   const ex = new StepExecutor({stepTimeoutMS: 1000});
+  ex.observe(at(100, 100), 0, 0);
   ex.intentFor(walk('N', [100, 99]), 0);
   ex.emitted(0);
   ex.observe(at(100, 100), 500, 510);
@@ -2030,6 +2033,7 @@ test('brak ruchu przed timeoutem nie powtarza kroku', () => {
 
 test('brak ruchu po timeoucie powtarza krok raz', () => {
   const ex = new StepExecutor({stepTimeoutMS: 1000});
+  ex.observe(at(100, 100), 0, 0);
   ex.intentFor(walk('N', [100, 99]), 0);
   ex.emitted(0);
   ex.observe(at(100, 100), 500, 510);
@@ -2090,9 +2094,11 @@ test('powrót poprawnego odczytu odblokowuje wykonawcę', () => {
 
 test('nieoczekiwana kratka porzuca krok zamiast liczyć go jako nieudany', () => {
   const ex = new StepExecutor();
+  ex.observe(at(100, 100), 0, 0);
   ex.intentFor(walk('N', [100, 99]), 0);
   ex.emitted(10);
 
+  // Pushed by a creature, or the player took over: not a failed step.
   ex.observe(at(105, 120), 100, 110);
 
   assert.equal(ex.state().waiting, false);
@@ -2200,7 +2206,10 @@ class StepExecutor {
     }
     if (!out) return null;
     if (out.action === 'walk') {
-      this.pending = {kind: 'walk', target: out.next, from: null, emittedAt: null};
+      // from is where the character stood when the key was sent. Taking it
+      // from the first observation after the press would make "did not move"
+      // and "moved somewhere unexpected" indistinguishable.
+      this.pending = {kind: 'walk', target: out.next, from: this.last, emittedAt: null};
       return {action: 'walk', direction: out.direction};
     }
     if (out.action === 'transition') {
@@ -2233,7 +2242,6 @@ class StepExecutor {
     this.last = {...position};
     const p = this.pending;
     if (!p || p.emittedAt === null || capturedAt <= p.emittedAt) return;
-    if (p.from === null) p.from = {...position};
     if (p.kind === 'transition') {
       // A floor change is the only proof, whether an item was used or the
       // character simply walked onto stairs.
@@ -2247,7 +2255,9 @@ class StepExecutor {
     // Standing still is a failed step and belongs to the retry counter, which
     // intentFor bumps after the timeout. Standing somewhere else entirely is a
     // changed situation: drop the step and let the follower replan.
-    const stillThere = position.x === p.from.x && position.y === p.from.y;
+    // With no reference tile the step cannot be judged, so it is left to the
+    // timeout rather than guessed at.
+    const stillThere = !p.from || (position.x === p.from.x && position.y === p.from.y);
     if (!stillThere) { this.pending = null; }
   }
   done() {
@@ -2263,9 +2273,7 @@ if (typeof module !== 'undefined') module.exports = {StepExecutor};
 ```
 
 > **Uwaga dla wykonawcy:** testy są kontraktem. Jeżeli któryś nie przechodzi,
-> popraw `executor.js`, nie test. `p.from` musi być zapisane z **pierwszej**
-> obserwacji po emisji, inaczej „stoi w miejscu" i „przesunął się" są
-> nierozróżnialne.
+> popraw `executor.js`, nie test.
 
 - [ ] **Step 4: Run test to verify it passes**
 
