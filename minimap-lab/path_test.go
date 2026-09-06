@@ -58,7 +58,7 @@ func assertWalk(t *testing.T, r PathResult, from, to [2]int) {
 	}
 }
 
-func TestFindPathWalksOpenGroundDiagonally(t *testing.T) {
+func TestFindPathCrossesOpenGroundOnStraightSteps(t *testing.T) {
 	g := gridFrom([]string{
 		".....",
 		".....",
@@ -68,9 +68,14 @@ func TestFindPathWalksOpenGroundDiagonally(t *testing.T) {
 	r := findPath(context.Background(), NewPathGrid(g, nil), at(0, 0), at(3, 2), 10000)
 
 	assertWalk(t, r, at(0, 0), at(3, 2))
-	// Octile movement reaches (3,2) in three steps, not five.
-	if r.Tiles != 3 {
-		t.Errorf("tiles: got %d, want 3", r.Tiles)
+	// Five straight steps cost 5; the diagonal shortcut would reach the same
+	// tile in three steps but cost 7, because a diagonal takes three times as
+	// long in game. The bot spends time, not tiles.
+	if r.Tiles != 5 {
+		t.Errorf("tiles: got %d, want 5", r.Tiles)
+	}
+	if r.Cost != 5 {
+		t.Errorf("cost: got %v, want 5", r.Cost)
 	}
 }
 
@@ -473,5 +478,44 @@ func TestTemporaryPenaltyOutweighsALongDetour(t *testing.T) {
 		if s == at(5, 1) {
 			t.Fatal("A* preferred a fresh block over a detour far cheaper than the penalty")
 		}
+	}
+}
+
+func TestStraightStepsBeatDiagonalsOverOpenGround(t *testing.T) {
+	// Walking a diagonal in Tibia takes three times as long as a straight step,
+	// so ten diagonals cost far more than ten right + ten down. The shortest
+	// route in tiles is not the fastest route in time, and it is time the bot
+	// spends.
+	rows := make([]string, 12)
+	for i := range rows {
+		rows[i] = strings.Repeat(".", 12)
+	}
+	g := NewPathGrid(gridFrom(rows), nil)
+	r := findPath(context.Background(), g, at(0, 0), at(10, 10), 100000)
+	assertWalk(t, r, at(0, 0), at(10, 10))
+
+	diagonals := 0
+	for i := 1; i < len(r.Steps); i++ {
+		if r.Steps[i][0] != r.Steps[i-1][0] && r.Steps[i][1] != r.Steps[i-1][1] {
+			diagonals++
+		}
+	}
+	if diagonals > 0 {
+		t.Fatalf("route uses %d diagonals over open ground; straight steps are faster", diagonals)
+	}
+}
+
+func TestDiagonalIsStillUsedWhenItSavesEnough(t *testing.T) {
+	// One diagonal replaces two straight steps at a cost of three, so it loses
+	// on open ground - but where the straight way is walled off, it must still
+	// be taken rather than refused outright.
+	g := NewPathGrid(gridFrom([]string{
+		"..#",
+		"#..",
+		"...",
+	}), nil)
+	r := findPath(context.Background(), g, at(0, 0), at(2, 1), 1000)
+	if !r.Found {
+		t.Fatalf("status %s (%s); the only way through is diagonal", r.Status, r.Reason)
 	}
 }

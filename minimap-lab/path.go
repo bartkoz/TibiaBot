@@ -33,15 +33,34 @@ type step struct {
 	weight float64
 }
 
-// Octile movement: diagonals cost sqrt(2) of a straight step.
+// diagonalWeight is what one diagonal step costs in units of a straight one.
+// Geometry would say sqrt(2), but the bot does not spend distance - it spends
+// time, and the game takes three times as long over a diagonal as over a
+// straight step. At sqrt(2) the search crossed open ground on diagonals, which
+// is the shortest route in tiles and the slowest one in practice; at 3 a
+// diagonal only wins where it genuinely saves more than the two straight steps
+// it replaces.
+const diagonalWeight = 3
+
 var steps = []step{
 	{0, -1, 1}, {0, 1, 1}, {-1, 0, 1}, {1, 0, 1},
-	{-1, -1, math.Sqrt2}, {1, -1, math.Sqrt2}, {-1, 1, math.Sqrt2}, {1, 1, math.Sqrt2},
+	{-1, -1, diagonalWeight}, {1, -1, diagonalWeight}, {-1, 1, diagonalWeight}, {1, 1, diagonalWeight},
 }
 
+// octile estimates the remaining cost the same way the steps above charge it:
+// every tile of overlap between the axes can be taken as one diagonal instead
+// of two straight steps, saving 2 - diagonalWeight each time. With
+// diagonalWeight at 3 that saving is negative, so the estimate reduces to the
+// Manhattan distance - which is exactly right when diagonals never pay off on
+// open ground, and stays admissible either way.
 func octile(ax, ay, bx, by int) float64 {
 	dx, dy := float64(abs(bx-ax)), float64(abs(by-ay))
-	return math.Max(dx, dy) + (math.Sqrt2-1)*math.Min(dx, dy)
+	// Each tile of overlap between the axes could be taken as one diagonal
+	// instead of two straight steps, saving 2-diagonalWeight. Above a weight of
+	// two there is no saving, and the estimate is simply the Manhattan
+	// distance. Written without a branch so the formula stays correct - and
+	// admissible - if the weight is ever changed.
+	return dx + dy - math.Max(0, 2-diagonalWeight)*math.Min(dx, dy)
 }
 
 // findPath runs A* over the cost grid. The returned steps include the starting
