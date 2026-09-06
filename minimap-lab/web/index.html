@@ -76,7 +76,7 @@
   </section>
   <section class="panel control">
     <h2>5. Sterowanie</h2>
-    <p>Wykonawca startuje rozbrojony. Uzbrajaj dopiero wtedy, gdy klient gry jest oknem aktywnym — zapamiętany zostanie właśnie ten proces. Alt-tab rozbraja. Wymagane jest udostępnienie całego ekranu i praca na jednym monitorze.</p>
+    <p>Wykonawca startuje rozbrojony. Kliknięcie „Uzbrój” uruchamia 5-sekundowe odliczanie — w tym czasie przełącz się na okno gry, bo to ono zostanie zapamiętane jako aktywne w chwili wysłania żądania. Drugie kliknięcie podczas odliczania je anuluje. Alt-tab po uzbrojeniu rozbraja. Wymagane jest udostępnienie całego ekranu i praca na jednym monitorze.</p>
     <div class="toolbar">
       <button id="input-arm" disabled>Uzbrój</button>
       <button id="input-disarm" class="secondary" disabled>Rozbrój</button>
@@ -86,6 +86,13 @@
       <label class="check"><input id="input-walk" type="checkbox" disabled>Chodź automatycznie</label>
       <label class="check"><input id="input-actions" type="checkbox" disabled>Wykonuj akcje pięter</label>
     </div>
+    <div class="route-grid">
+      <label>Klawisz liny<input id="hotkey-rope" type="text" maxlength="16" placeholder="np. f7"></label>
+      <label>Klawisz drabiny<input id="hotkey-ladder" type="text" maxlength="16" placeholder="np. f8"></label>
+      <label>Klawisz dziury<input id="hotkey-hole" type="text" maxlength="16" placeholder="np. f9"></label>
+      <label>Klawisz łopaty<input id="hotkey-shovel" type="text" maxlength="16" placeholder="np. f10"></label>
+    </div>
+    <label class="check"><input id="input-own-tile" type="checkbox">Klawisz działa na własnej kratce (bez klikania po nim)</label>
     <div id="input-status" role="status" aria-live="polite">Sterowanie wyłączone. Uruchom panel z <code>-input dry</code> albo <code>-input system</code>.</div>
   </section>
   <footer><p id="maps"></p><p>Wynik dopasowania nie jest prawdopodobieństwem. Wybierz piętro startowe; dalsze przejścia Z ±1 mogą być rozpoznawane z obrazu. Pierwszy test na grze wymaga kalibracji i sprawdzenia znanego miejsca.</p></footer>

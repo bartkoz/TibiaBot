@@ -184,7 +184,7 @@ async function locate() {
     tracker.observe(result, capturedAt, completedAt, completedAt-tickStarted);
     if (result.found && num('zoom') === 0) $('zoom').value = result.zoom;
     if (result.found && !demo) $('floor').value = result.position.z;
-    if (result.found && result.position) updateRoute(result.position, completedAt);
+    if (result.found && result.position) updateRoute(result.position, capturedAt, completedAt);
     if (result.floor_changed) { lastPreviewAt = 0; previewPosition = null; $('reference').hidden = true; }
     status((result.mode === 'local' && result.found ? 'Śledzenie lokalne. ' : '') + result.reason, result.found ? 'ok' : 'error');
     $('coordinates').textContent = result.found ? `${result.position.x}, ${result.position.y}, ${result.position.z}` : 'Pozycja nieznana';
@@ -232,7 +232,11 @@ fetch('/api/info').then(r => r.json()).then(info => {
 // --- Trasa: nagrywanie waypointów i podążanie w trybie podglądu ---
 const DRAFT_KEY = 'minimap-lab-route';
 const recorder = new RouteRecorder();
-let follower = null, pathPending = false, lastPosition = null, lastPositionAt = 0, previewPosition = null;
+let follower = null, pathPending = false, lastPosition = null, lastPositionAt = 0, lastCapturedAt = 0, previewPosition = null;
+// Tracks the executor's own blocked flag so a newly blocked target (the false
+// -> true edge) can be told apart from one that has stayed blocked since the
+// previous tick - only the edge should force a fresh path request.
+let wasBlocked = false;
 const executor = new StepExecutor();
 const inputClient = new InputClient({onState: renderInputStatus});
 let calibrating = false;
@@ -342,10 +346,14 @@ async function requestPath(from, to) {
     pathPending = false;
   }
 }
-// Called once per confirmed position, from the tracking loop.
-function updateRoute(position, now) {
+// Called once per confirmed position, from the tracking loop. capturedAt is
+// when the frame was grabbed, not when this reply was parsed - the executor's
+// lock-step proof and the driver's freshness gate both depend on that
+// distinction, since within one tick "now" and "reply parsed" share no gap.
+function updateRoute(position, capturedAt, now) {
   lastPosition = {...position};
   lastPositionAt = now;
+  lastCapturedAt = capturedAt;
   if ($('route-record').checked) {
     recorder.auto = true;
     recorder.every = clampNum('route-every', 1, 100, 10);
@@ -359,13 +367,13 @@ function updateRoute(position, now) {
     $('route-next').textContent = '—';
     return;
   }
-  const out = followStep(position, now);
+  const out = followStep(position, capturedAt, now);
 }
 
 // followStep advances the follower and reports what the player should do. It
 // runs both from the tracking loop and the moment following is switched on, so
 // the panel never sits blank waiting for the next reading.
-function followStep(position, now) {
+function followStep(position, capturedAt, now) {
   if (!recorder.waypoints.length) {
     $('route-next').textContent = 'Brak trasy — wczytaj plik JSON albo nagraj waypointy.';
     return null;
@@ -383,8 +391,15 @@ function followStep(position, now) {
   // checkbox unticked (the default) nothing below ever runs, so the
   // preview-only behaviour above is completely untouched.
   if (!$('input-walk').checked || !inputClient.armed) return out;
-  executor.observe(position, lastPositionAt, now);
-  if (executor.state().actionDone) inputClient.actionDone();
+  executor.observe(position, capturedAt, now);
+  if (executor.state().actionDone) { executor.clearActionDone(); inputClient.actionDone(); }
+  // A newly blocked target means the executor gave up on it (second failure);
+  // without forcing the follower to drop its cached path, it keeps producing
+  // the very same target forever and the executor keeps refusing it - frozen,
+  // never reaching the escalation that would stop the route instead.
+  const blockedNow = executor.state().blocked;
+  if (blockedNow && !wasBlocked) follower.dropPath();
+  wasBlocked = blockedNow;
   // Decided from the follower's own output, before the executor is asked for
   // anything: asking first would create a pending step that this gate then
   // discarded without confirming or resetting it, leaving it to time out into
@@ -401,9 +416,14 @@ function followStep(position, now) {
   // The id ties the confirmation to this step: a reply that arrives after the
   // step was abandoned must not stamp its successor.
   const stepId = executor.state().stepId;
-  inputClient.send(intent, now - lastPositionAt).then(result => {
+  inputClient.send(intent, now - capturedAt).then(result => {
     if (result.status === 'emitted') executor.emitted(performance.now(), stepId);
-    else if (result.status !== 'in_progress') executor.reset();
+    // A refusal means the key was never sent: the situation did not change,
+    // so only the abandoned attempt is dropped, not the escalation counters
+    // that are tracking how many times this route has actually failed.
+    // 'disarmed' is handled by renderInputStatus's !armed branch instead,
+    // which already resets the executor before this callback runs.
+    else if (result.status === 'refused') executor.dropPending();
   });
   return out;
 }
@@ -465,7 +485,7 @@ $('route-follow').addEventListener('change', () => {
   follower = null;
   pathPending = false;
   if (!$('route-follow').checked) { $('route-next').textContent = '—'; return; }
-  followStep(freshPosition(), performance.now());
+  followStep(freshPosition(), lastCapturedAt, performance.now());
 });
 
 // --- Sterowanie: uzbrajanie sesji i podłączenie wykonawcy do pętli śledzenia ---
@@ -490,16 +510,61 @@ function renderInputStatus(state = {}) {
     if ($('input-walk').checked) $('input-walk').checked = false;
     executor.reset();
     calibrating = false;
+    if (state.reason) $('input-status').textContent = `Sterowanie rozbrojone: ${state.reason}`;
+    return;
   }
-  if (armed && state.target) {
+  // The executor's own escalation state takes priority over a routine reply:
+  // it is what tells a user "stopped after repeated failures" apart from
+  // "waiting" and from "position unknown", none of which a bare "Uzbrojono."
+  // or a rate-limit reason from a single reply would convey on their own.
+  const es = executor.state();
+  if (es.stopped) {
+    $('input-status').textContent = 'Zatrzymano: zbyt wiele nieudanych prób pod rząd. Sprawdź trasę albo rozbrój i uzbrój ponownie.';
+  } else if (es.blocked) {
+    $('input-status').textContent = 'Zablokowano bieżący cel — przeliczam trasę.';
+  } else if (es.halted) {
+    $('input-status').textContent = 'Wstrzymano: brak znanej pozycji.';
+  } else if (state.reason) {
+    // Refusals are routine (the tap-rate limit is well below the tracking
+    // rate), so the precise reason must be visible, not swallowed.
+    $('input-status').textContent = state.reason;
+  } else if (state.target) {
     $('input-status').textContent = `Uzbrojono: ${state.target.path}${state.target.title ? ` — ${state.target.title}` : ''}`;
-  } else if (!armed && state.reason) {
-    $('input-status').textContent = `Sterowanie rozbrojone: ${state.reason}`;
-  } else if (armed) {
+  } else {
     $('input-status').textContent = 'Uzbrojono.';
   }
 }
-$('input-arm').addEventListener('click', () => inputClient.arm());
+// Arming from a click on this panel would record the browser as the focused
+// window - the user just clicked it - so the focus gate would pass while the
+// browser has focus and disarm the instant the game is actually focused. A
+// countdown gives the user the window they need to switch to the game before
+// the request that captures the frontmost window actually fires.
+const ARM_COUNTDOWN_S = 5;
+let armCountdownTimer = null, armCountdownRemaining = 0;
+function armCountdownStatus() {
+  return `Przełącz się na okno gry — uzbrajanie za ${armCountdownRemaining} s. Kliknij ponownie, aby anulować.`;
+}
+function tickArmCountdown() {
+  armCountdownRemaining--;
+  if (armCountdownRemaining <= 0) {
+    armCountdownTimer = null;
+    inputClient.arm().then(() => sendHotkeyConfig());
+    return;
+  }
+  $('input-status').textContent = armCountdownStatus();
+  armCountdownTimer = setTimeout(tickArmCountdown, 1000);
+}
+$('input-arm').addEventListener('click', () => {
+  if (armCountdownTimer) {
+    clearTimeout(armCountdownTimer);
+    armCountdownTimer = null;
+    $('input-status').textContent = 'Uzbrojenie anulowane.';
+    return;
+  }
+  armCountdownRemaining = ARM_COUNTDOWN_S;
+  $('input-status').textContent = armCountdownStatus();
+  armCountdownTimer = setTimeout(tickArmCountdown, 1000);
+});
 $('input-disarm').addEventListener('click', async () => {
   await inputClient.disarm();
   executor.reset();
@@ -520,6 +585,36 @@ $('screen').addEventListener('click', async event => {
     ? `Kratka postaci: ${frac.x.toFixed(3)}, ${frac.y.toFixed(3)}`
     : 'Nie udało się zapisać kalibracji.';
 });
+// Floor-action hotkeys are configured from the panel and sent to the driver
+// on arm and whenever they change. Without this, ActionKeys stays empty
+// forever, so every floor action is refused for lack of a hotkey.
+const HOTKEY_TYPES = ['rope', 'ladder', 'hole', 'shovel'];
+const HOTKEY_STORAGE_KEY = 'minimap-lab-hotkeys';
+function hotkeyConfig() {
+  const keys = {};
+  for (const type of HOTKEY_TYPES) keys[type] = $(`hotkey-${type}`).value.trim();
+  return {keys, clickAfterHotkey: !$('input-own-tile').checked};
+}
+function saveHotkeyConfig() {
+  try { localStorage.setItem(HOTKEY_STORAGE_KEY, JSON.stringify(hotkeyConfig())); }
+  catch (e) { /* private mode or blocked storage: the driver still gets the live value */ }
+}
+function sendHotkeyConfig() {
+  if (!inputClient.armed) return;
+  const {keys, clickAfterHotkey} = hotkeyConfig();
+  inputClient.config(keys, clickAfterHotkey);
+}
+for (const type of HOTKEY_TYPES) {
+  $(`hotkey-${type}`).addEventListener('input', () => { saveHotkeyConfig(); sendHotkeyConfig(); });
+}
+$('input-own-tile').addEventListener('change', () => { saveHotkeyConfig(); sendHotkeyConfig(); });
+try {
+  const savedHotkeys = JSON.parse(localStorage.getItem(HOTKEY_STORAGE_KEY) || 'null');
+  if (savedHotkeys) {
+    for (const type of HOTKEY_TYPES) if (savedHotkeys.keys?.[type]) $(`hotkey-${type}`).value = savedHotkeys.keys[type];
+    $('input-own-tile').checked = !savedHotkeys.clickAfterHotkey;
+  }
+} catch (e) { /* private mode or blocked storage */ }
 $('input-walk').addEventListener('change', () => { if (!$('input-walk').checked) executor.reset(); });
 // Availability is only known once the server answers; the button starts
 // disabled so a fresh page never looks armable before this resolves.

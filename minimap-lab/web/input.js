@@ -81,6 +81,15 @@ class InputClient {
     const {ok} = await this.postSafe('/api/input/calibrate', {session: this.session, x: nx, y: ny});
     return ok;
   }
+  // config sends the per-type floor-action hotkeys and whether the hotkey is
+  // used on the character's own tile (no click afterwards). Without this,
+  // ActionKeys stays empty forever and every floor action is refused for
+  // lack of a hotkey.
+  async config(keys, clickAfterHotkey) {
+    const {ok} = await this.postSafe('/api/input/config',
+      {session: this.session, keys, click_after_hotkey: clickAfterHotkey});
+    return ok;
+  }
   // The status poll is also the heartbeat: a gap longer than the driver's
   // timeout disarms it on the Go side. A single failed poll must cost one
   // beat, not the session, so a transient network blip does not end the

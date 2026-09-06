@@ -5,7 +5,7 @@ const vm = require('node:vm');
 
 // Exercise UI event flows and submitted options, with only browser drawing and
 // media permission APIs stubbed. The Go tests verify the actual image matcher.
-function app({respond, respondPath, respondInput, latency=3} = {}) {
+function app({respond, respondPath, respondInput, latency=3, storage={}} = {}) {
   const elements = new Map(), requests = [], pathRequests = [], sendRequests = [];
   let clock = 100, timerID = 0;
   const timers = new Map();
@@ -33,7 +33,7 @@ function app({respond, respondPath, respondInput, latency=3} = {}) {
   const sandbox = {document, Image, Blob, FormData, AbortController, performance:{now:()=>clock}, URL:{createObjectURL:()=>'capture', revokeObjectURL(){}},
     setTimeout(fn,delay) {timers.set(++timerID,{fn,at:clock+delay});return timerID;}, clearTimeout(id) {timers.delete(id);},
     navigator:{mediaDevices:{async getDisplayMedia() {return {getTracks:()=>[track],getVideoTracks:()=>[track]};}}},
-    localStorage:{store:new Map(), getItem(k) {return this.store.has(k)?this.store.get(k):null;},
+    localStorage:{store:new Map(Object.entries(storage)), getItem(k) {return this.store.has(k)?this.store.get(k):null;},
       setItem(k,v) {this.store.set(k,String(v));}, removeItem(k) {this.store.delete(k);}},
     async fetch(url, options) {
       if (url === '/api/info') return {async json() {return {floors:[7,8],maps:'maps',message:''};}};
@@ -69,6 +69,7 @@ function app({respond, respondPath, respondInput, latency=3} = {}) {
   // control objects out explicitly - test-only, nothing app.js itself needs.
   vm.runInContext('globalThis.__inputClient = inputClient; globalThis.__executor = executor;', sandbox);
   return {get:id=>document.getElementById(id), requests, pathRequests, sendRequests, timers,
+    storage: sandbox.localStorage.store,
     normalisedPoint:sandbox.normalisedPoint, inputClient:sandbox.__inputClient, executor:sandbox.__executor,
     async loadRoute(route) {
       const input = document.getElementById('route-file');
@@ -203,6 +204,53 @@ test('a returned path is shown as a direction to walk', async () => {
   await a.get('locate').onclick();
   await a.tick();
   assert.match(a.get('route-next').textContent, /E/);
+});
+
+test('a stale frame produces a non-zero observation age, not the time spent since it arrived', async () => {
+  // C2: the loop used to send now - lastPositionAt, both stamped from the same
+  // reading's completion time, so the age was always ~0 and the driver's
+  // 400ms freshness gate could never fire. The age must instead reflect the
+  // real gap since the frame was captured - here, the mocked fetch latency.
+  const a = app({latency: 50});
+  await new Promise(setImmediate); await a.get('share').onclick();
+  await a.loadRoute(routeFile({x:32970, y:32100, z:7}));
+  a.get('route-follow').checked = true; a.get('live').checked = true;
+  a.get('input-walk').checked = true;
+  a.inputClient.armed = true; a.inputClient.session = 'test-session';
+
+  await a.get('locate').onclick(); // no path yet: nothing sent
+  await a.tick(); // path resolved: a walk intent is sent
+  await new Promise(setImmediate);
+
+  assert.equal(a.sendRequests.length, 1, 'expected exactly one intent sent for the walk step');
+  assert.ok(a.sendRequests[0].observation_age_ms >= 40,
+    `age must track the real capture-to-send gap (~50ms), got ${a.sendRequests[0].observation_age_ms}`);
+});
+
+test('a newly blocked target forces the follower to drop its cached path', async () => {
+  // I1: the character never moves (a wall), so the same walk step times out
+  // twice and the executor blocks it. Without wiring follower.dropPath() to
+  // that, the follower keeps handing back the very same cached path forever
+  // and the executor keeps refusing it - frozen, never reaching a fresh
+  // path request or the stopped escalation.
+  const a = app();
+  await new Promise(setImmediate); await a.get('share').onclick();
+  await a.loadRoute(routeFile({x:32990, y:32077, z:7})); // far enough east to require pathing
+  a.get('route-follow').checked = true;
+  a.get('input-walk').checked = true;
+  a.get('live').checked = true;
+  a.inputClient.armed = true; a.inputClient.session = 'test-session';
+  await a.get('locate').onclick();
+
+  // The mocked position never advances (always 32958,32077), so every walk
+  // attempt times out. Drive enough ticks (~100ms each) to clear two
+  // stepTimeoutMS (1200ms) failures and reach the eventual stop.
+  for (let i = 0; i < 40; i++) { await a.tick(); await new Promise(setImmediate); }
+
+  assert.ok(a.pathRequests.length > 1,
+    `a newly blocked target must trigger a fresh path request, got ${a.pathRequests.length} request(s)`);
+  assert.equal(a.executor.state().stopped, true,
+    'a route that truly never advances must eventually stop, not cycle between block and replan forever');
 });
 
 test('a waypoint on another floor asks for an action instead of a path', async () => {
@@ -388,6 +436,166 @@ test('a disarmed reply from the server leaves the panel showing disarmed control
   assert.match(a.get('input-status').textContent, /zmiana okna aktywnego/);
 });
 
+test('a refused send shows its reason and drops only the pending step, not the escalation counters', async () => {
+  // I3: every refusal used to call executor.reset(), wiping cycles/retries/
+  // blocked, and renderInputStatus only ever showed a reason on the
+  // disarmed branch - so the driver's precise refusal ("limit klawiszy na
+  // sekundę", "brak hotkeya...") vanished, even though refusals are routine
+  // (the tap-rate limit is well below the 10Hz tracking loop).
+  const a = app({respondInput: () => ({status: 'refused', reason: 'limit klawiszy na sekundę'})});
+  await new Promise(setImmediate); await a.get('share').onclick();
+  await a.loadRoute(routeFile({x:32970, y:32100, z:7}));
+  a.get('route-follow').checked = true; a.get('live').checked = true;
+  a.get('input-walk').checked = true;
+  a.inputClient.armed = true; a.inputClient.session = 'test-session';
+  await a.get('locate').onclick(); // no path yet: nothing sent
+  // Pretend a previous target already failed once - a reset would erase this.
+  // currentTarget is seeded to match the walk step about to be sent (the
+  // default mock path steps one tile east of 32958,32077), so startTarget's
+  // own "a genuinely new target gets a fresh allowance" rule does not fire
+  // and mask the very reset this test is checking for.
+  a.executor.retries = 2;
+  a.executor.cycles = 2;
+  a.executor.currentTarget = {x: 32959, y: 32077, z: null};
+
+  await a.tick(); // path resolved: a walk intent is sent and refused
+  await new Promise(setImmediate);
+
+  assert.match(a.get('input-status').textContent, /limit klawiszy na sekundę/, 'the refusal reason must be shown while armed');
+  assert.equal(a.executor.state().retries, 2, 'a refusal must not reset the retry count');
+  assert.equal(a.executor.state().cycles, 2, 'a refusal must not reset the cycle count');
+  assert.equal(a.executor.state().waiting, false, 'the refused attempt must not be left pending forever');
+});
+
+test('a stopped executor is shown distinctly from a blocked or halted one', async () => {
+  // I2: the panel only ever read actionDone and stepId, so stopped/blocked/
+  // halted never reached the user - the toolbar kept showing "armed" and a
+  // direction even after the executor gave up.
+  const a = app();
+  await new Promise(setImmediate);
+  a.inputClient.armed = true;
+  a.executor.stopped = true;
+  a.inputClient.onState({armed: true, target: {path: '/Applications/Tibia.app'}});
+  assert.match(a.get('input-status').textContent, /zatrzym/i);
+});
+
+test('a blocked executor is shown distinctly from a stopped or halted one', async () => {
+  const a = app();
+  await new Promise(setImmediate);
+  a.inputClient.armed = true;
+  a.executor.blocked = true;
+  a.inputClient.onState({armed: true, target: {path: '/Applications/Tibia.app'}});
+  assert.match(a.get('input-status').textContent, /blok/i);
+});
+
+test('a halted executor is shown distinctly from a stopped or blocked one', async () => {
+  const a = app();
+  await new Promise(setImmediate);
+  a.inputClient.armed = true;
+  a.executor.halted = true;
+  a.inputClient.onState({armed: true, target: {path: '/Applications/Tibia.app'}});
+  assert.match(a.get('input-status').textContent, /pozycj/i);
+});
+
+test('uzbrojenie startuje odliczanie zamiast wysyłać żądanie natychmiast', async () => {
+  // C1: arming used to fire /api/arm straight from the click, so whichever
+  // window was frontmost - the browser, since the user just clicked its
+  // button - got recorded as the game. A countdown gives the user the time
+  // to switch to the game before the request actually fires.
+  const a = app();
+  await new Promise(setImmediate);
+  let armCalls = 0;
+  a.inputClient.arm = async () => { armCalls++; return {armed: true, target: {path: '/Applications/Tibia.app'}}; };
+
+  a.get('input-arm').click();
+
+  assert.equal(armCalls, 0, 'arming must not happen immediately on click');
+  assert.match(a.get('input-status').textContent, /5 s/, 'the remaining seconds must be shown');
+});
+
+test('drugie kliknięcie podczas odliczania anuluje uzbrojenie', async () => {
+  const a = app();
+  await new Promise(setImmediate);
+  let armCalls = 0;
+  a.inputClient.arm = async () => { armCalls++; return {armed: true}; };
+
+  a.get('input-arm').click();
+  a.get('input-arm').click();
+
+  assert.equal(a.timers.size, 0, 'no countdown timer must remain after cancelling');
+  assert.match(a.get('input-status').textContent, /anulowan/i);
+  assert.equal(armCalls, 0, 'a cancelled countdown must never arm');
+});
+
+test('po odliczeniu uzbrojenie następuje automatycznie', async () => {
+  const a = app();
+  await new Promise(setImmediate);
+  let armCalls = 0;
+  a.inputClient.arm = async () => { armCalls++; return {armed: true, target: {path: '/Applications/Tibia.app'}}; };
+
+  a.get('input-arm').click();
+  for (let i = 0; i < 5; i++) await a.tick();
+
+  assert.equal(armCalls, 1, 'the countdown must arm exactly once when it reaches zero');
+});
+
+test('zmiana klawisza akcji zapisuje konfigurację i wysyła ją do wykonawcy', async () => {
+  // C3: without this wiring ActionKeys stays empty forever, so every floor
+  // action is refused for lack of a hotkey and the panel retries invisibly.
+  const a = app();
+  await new Promise(setImmediate);
+  a.inputClient.armed = true;
+  const configCalls = [];
+  a.inputClient.config = async (keys, clickAfterHotkey) => { configCalls.push({keys, clickAfterHotkey}); return true; };
+
+  a.get('hotkey-rope').value = 'f7';
+  a.get('hotkey-rope').listeners.input();
+
+  assert.equal(configCalls.length, 1, 'a hotkey change must be sent while armed');
+  assert.equal(configCalls[0].keys.rope, 'f7');
+  assert.equal(configCalls[0].clickAfterHotkey, true, 'the own-tile checkbox starts unticked, meaning a click follows the hotkey');
+  const saved = JSON.parse(a.storage.get('minimap-lab-hotkeys'));
+  assert.equal(saved.keys.rope, 'f7', 'the hotkey must also be persisted to localStorage');
+});
+
+test('konfiguracja klawiszy nie jest wysyłana, dopóki wykonawca jest rozbrojony', async () => {
+  const a = app();
+  await new Promise(setImmediate);
+  const configCalls = [];
+  a.inputClient.config = async (keys, clickAfterHotkey) => { configCalls.push({keys, clickAfterHotkey}); return true; };
+
+  a.get('hotkey-rope').value = 'f7';
+  a.get('hotkey-rope').listeners.input();
+
+  assert.equal(configCalls.length, 0, 'nothing must be sent to a driver with no active session');
+});
+
+test('zapisana wcześniej konfiguracja klawiszy jest wczytywana przy starcie panelu', async () => {
+  const a = app({storage: {'minimap-lab-hotkeys': JSON.stringify(
+    {keys: {rope: 'f7', ladder: 'f8', hole: '', shovel: ''}, clickAfterHotkey: false})}});
+  await new Promise(setImmediate);
+
+  assert.equal(a.get('hotkey-rope').value, 'f7');
+  assert.equal(a.get('hotkey-ladder').value, 'f8');
+  assert.equal(a.get('input-own-tile').checked, true, 'clickAfterHotkey:false means the hotkey acts on the own tile');
+});
+
+test('uzbrojenie po odliczeniu wysyła wcześniej wpisane klawisze akcji', async () => {
+  const a = app();
+  await new Promise(setImmediate);
+  a.get('hotkey-rope').value = 'f7';
+  const configCalls = [];
+  a.inputClient.arm = async () => { a.inputClient.armed = true; return {armed: true, target: {path: '/Applications/Tibia.app'}}; };
+  a.inputClient.config = async (keys, clickAfterHotkey) => { configCalls.push({keys, clickAfterHotkey}); return true; };
+
+  a.get('input-arm').click();
+  for (let i = 0; i < 5; i++) await a.tick();
+  await new Promise(setImmediate);
+
+  assert.equal(configCalls.length, 1, 'the configured hotkeys must be sent right after arming');
+  assert.equal(configCalls[0].keys.rope, 'f7');
+});
+
 test('floor actions unticked still lets the character walk onto stairs', async () => {
   // The follower reports every floor-change waypoint as 'transition',
   // stairs included, but the executor turns a stairs transition into an
@@ -404,6 +612,39 @@ test('floor actions unticked still lets the character walk onto stairs', async (
   await new Promise(setImmediate);
   assert.equal(a.sendRequests.length, 1, 'a stairs step is an ordinary walk, not a paused action');
   assert.equal(a.sendRequests[0].action, 'walk');
+});
+
+test('a completed floor action reports done once, not on every following tick', async () => {
+  // Regression for M2: actionDone used to be cleared only when a new
+  // transition intent was created, so once the route moved past its last
+  // floor action nothing ever cleared it again and every subsequent tick
+  // re-posted /api/input/done forever.
+  const positions = [{x:100,y:100,z:7}, {x:100,y:100,z:7}, {x:100,y:100,z:6}, {x:100,y:100,z:6}, {x:100,y:100,z:6}];
+  let n = 0;
+  const a = app({respond: () => ({found:true, position: positions[Math.min(n++, positions.length-1)], zoom:1,
+    best:{score:.9}, samples:1024, elapsed_ms:1, match_ms:1, mode:'local', reason:'ok'})});
+  await new Promise(setImmediate); await a.get('share').onclick();
+  await a.loadRoute(routeFile({x:100, y:100, z:7, type:'rope'}, {x:100, y:100, z:6}));
+  a.get('route-follow').checked = true;
+  a.get('input-walk').checked = true;
+  a.get('input-actions').checked = true;
+  a.get('live').checked = true;
+  a.inputClient.armed = true; a.inputClient.session = 'test-session';
+  let doneCalls = 0;
+  a.inputClient.actionDone = async () => { doneCalls++; };
+
+  await a.get('locate').onclick(); // standing on the rope: hotkey sent
+  await new Promise(setImmediate);
+  await a.tick(); // same floor: action still pending
+  await new Promise(setImmediate);
+  await a.tick(); // floor changed: actionDone becomes true, reported once
+  await new Promise(setImmediate);
+  await a.tick(); // still on the new floor: must not report again
+  await new Promise(setImmediate);
+  await a.tick();
+  await new Promise(setImmediate);
+
+  assert.equal(doneCalls, 1, 'a completed floor action must be reported exactly once');
 });
 
 test('a changed capture resolution while armed leaves the panel showing disarmed controls', async () => {

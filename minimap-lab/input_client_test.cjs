@@ -49,6 +49,30 @@ test('wiek obserwacji jedzie w żądaniu, nie znacznik czasu', async () => {
   assert.ok(calls[0].body.seq > 0, 'każde żądanie musi mieć rosnący seq');
 });
 
+test('config wysyła klawisze akcji i flagę kliknięcia po hotkeyu', async () => {
+  const {fetch, calls} = fakeFetch([{json: {ok: true}}]);
+  const client = new InputClient({fetch});
+  client.session = 'abc';
+
+  const ok = await client.config({rope: 'f7', ladder: '', hole: '', shovel: ''}, false);
+
+  assert.equal(ok, true);
+  assert.ok(calls[0].url.includes('/api/input/config'));
+  assert.equal(calls[0].body.session, 'abc');
+  assert.deepEqual(calls[0].body.keys, {rope: 'f7', ladder: '', hole: '', shovel: ''});
+  assert.equal(calls[0].body.click_after_hotkey, false);
+});
+
+test('config nieudany zwraca false zamiast wyjątku', async () => {
+  const {fetch} = fakeFetch([{ok: false, json: {}}]);
+  const client = new InputClient({fetch});
+  client.session = 'abc';
+
+  const ok = await client.config({rope: 'f7'}, true);
+
+  assert.equal(ok, false);
+});
+
 test('rozbrojenie po stronie serwera zatrzymuje wysyłanie', async () => {
   const {fetch} = fakeFetch([{json: {status: 'disarmed', reason: 'okno gry straciło focus'}}]);
   const client = new InputClient({fetch});
