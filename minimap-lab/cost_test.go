@@ -159,3 +159,26 @@ func TestCostGridSkipsUnparsableChunkNames(t *testing.T) {
 		t.Errorf("valid chunk should still load: got %d", got)
 	}
 }
+
+func TestCoveredSeparatesMissingChunksFromWalls(t *testing.T) {
+	dir := t.TempDir()
+	writeCostTile(t, dir, 32512, 32256, 7, costTile(100, map[[2]int]uint8{{0, 0}: 255}))
+
+	// The area reaches into the neighbouring chunk, which has no file at all.
+	grid, err := loadCostArea(dir, 7, image.Rect(32500, 32250, 32530, 32270))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !grid.Covered(32512, 32256) {
+		t.Fatal("a tile from a decoded chunk reports as uncovered")
+	}
+	if grid.At(32512, 32256) != blockedCost {
+		t.Fatal("the blocked tile lost its cost")
+	}
+	if grid.Covered(32500, 32250) {
+		t.Fatal("a tile with no chunk on disk reports as covered")
+	}
+	if grid.At(32500, 32250) != blockedCost {
+		t.Fatal("a missing tile must still be impassable for the search")
+	}
+}

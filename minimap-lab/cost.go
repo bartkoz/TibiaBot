@@ -27,10 +27,26 @@ type CostGrid struct {
 	pix    []uint8
 	bounds image.Rectangle
 	area   image.Rectangle
+	// covered lists the chunks actually decoded into pix. A missing chunk and a
+	// real wall are both blockedCost, which is right for the search and wrong
+	// for the panel: an unvisited area would otherwise look like solid rock.
+	covered []image.Rectangle
 	// cheapest walkable tile in pix, in cost units. Zero is a legal cost, so
 	// walkable says whether cheapest means anything at all.
 	cheapest uint8
 	walkable bool
+}
+
+// Covered reports whether the tile comes from a decoded chunk rather than from
+// the blocked filler the loader starts with.
+func (g *CostGrid) Covered(x, y int) bool {
+	p := image.Pt(x, y)
+	for _, r := range g.covered {
+		if p.In(r) {
+			return true
+		}
+	}
+	return false
 }
 
 // At returns the walking cost at world coordinates. Everything outside the
@@ -113,6 +129,7 @@ func loadCostArea(dir string, floor int, area image.Rectangle) (*CostGrid, error
 		if err != nil {
 			return nil, err
 		}
+		grid.covered = append(grid.covered, image.Rect(t.x, t.y, t.x+256, t.y+256))
 		for y := 0; y < 256; y++ {
 			wy := t.y + y
 			if wy < bounds.Min.Y || wy >= bounds.Max.Y {
