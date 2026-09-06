@@ -115,7 +115,7 @@ Flaga `-input` wybiera tryb: `off` (domyślny — każda trasa `/api/arm`, `/api
 
 ### Uzbrajanie i rozbrajanie
 
-Przycisk **Uzbrój** w panelu (sekcja **5. Sterowanie**) zapamiętuje aktywne w tej właśnie chwili okno (PID i identyfikator procesu — bundle ID na macOS, ścieżka pliku na Windows) jako jedyny cel, do którego wolno coś wysłać. **Klient gry musi być oknem aktywnym w chwili kliknięcia „Uzbrój"** — panel nie rozpoznaje, które okno to Tibia, tylko zapamiętuje to, co akurat ma focus.
+Kliknięcie **Uzbrój** w panelu (sekcja **5. Sterowanie**) nie uzbraja od razu — uruchamia **5-sekundowe odliczanie**, widoczne w `#input-status`. Dopiero po jego upływie panel wysyła `POST /api/arm`, a Go zapamiętuje aktywne w tej właśnie chwili okno (PID i identyfikator procesu — bundle ID na macOS, ścieżka pliku na Windows) jako jedyny cel, do którego wolno coś wysłać. **W tym oknie przełącz się na klienta gry** — panel nie rozpoznaje, które okno to Tibia, tylko zapamiętuje to, co ma focus w chwili wysłania żądania, a bez odliczenia tym oknem byłaby zawsze przeglądarka, bo to jej przycisk został właśnie kliknięty. Drugie kliknięcie **Uzbrój** w trakcie odliczania je anuluje, bez wysyłania czegokolwiek.
 
 Każde zdarzenie sprawdza focus tuż przed wysłaniem, więc utrata focusu przez zapamiętany proces (np. alt-tab) rozbraja wykonawcę — to podstawowy, ręczny kill-switch. Wykonawca rozbraja się też sam, gdy panel przestanie odpowiadać na heartbeat dłużej niż 750 ms (np. zamknięta karta) — działa to niezależnie od alt-taba.
 
@@ -142,6 +142,12 @@ Kliknięcia akcji (lina, drabina, dziura, łopata) celują we współrzędne kra
 
 **Chodź automatycznie** włącza rzeczywiste wysyłanie kroków: dopóki jest odznaczony (albo wykonawca nie jest uzbrojony), panel tylko pokazuje kierunek i liczy trasę, dokładnie jak przed tą funkcją. **Wykonuj akcje pięter** dotyczy wyłącznie akcji na przedmiotach — liny, drabiny, dziury i łopaty: gdy jest odznaczony, wykonawca zatrzymuje się przed takim waypointem i czeka, mimo że chodzenie jest włączone. Nie dotyczy to **schodów** (`stairs`) — schody pokonuje się zwykłym krokiem w ich stronę, bez żadnego hotkeya, więc są wykonywane zawsze, gdy tylko włączone jest chodzenie automatyczne, niezależnie od stanu tego checkboxa.
 
+### Klawisze akcji pięter
+
+Wykonawca nie zna żadnego hotkeya, dopóki nie zostanie skonfigurowany z panelu — bez tego każda akcja piętra (lina, drabina, dziura, łopata) kończy się odmową „brak hotkeya dla akcji …”, a **Wykonuj akcje pięter** wygląda na włączony, ale nic nie robi. Cztery pola tekstowe w sekcji **5. Sterowanie** przyjmują nazwę klawisza dla każdego typu (np. `f7`); zaakceptowane nazwy to `f1`–`f12`, `up`/`down`/`left`/`right` i `numpad1`–`numpad9` (bez `numpad5`) — te same, których używają emitery macOS i Windows. Pusty klawisz zostawia daną akcję odrzucaną. Checkbox **Klawisz działa na własnej kratce (bez klikania po nim)** odpowiada temu, czy hotkey sam kończy akcję (np. lina użyta na sobie) czy wymaga kliknięcia we wskazaną wcześniej kratkę postaci (**Wskaż kratkę postaci**) — to drugie dodaje krótkie kliknięcie ~120 ms po tapnięciu klawisza.
+
+Konfiguracja jest zapisywana w `localStorage` (przeżywa odświeżenie karty) i wysyłana do wykonawcy przy każdym uzbrojeniu oraz przy każdej zmianie pola, o ile sesja jest aktywna — zmiana klawisza z rozbrojonym wykonawcą tylko zapisuje wartość lokalnie, wysyła ją dopiero kolejne uzbrojenie. Schody (`stairs`) nie mają tu żadnego pola: pokonuje się je krokiem, nie hotkeyem.
+
 ### Test w trybie dry, bez gry
 
 ```sh
@@ -155,6 +161,8 @@ W panelu: uzbrój, włącz **Chodź automatycznie** na nagranej trasie i sprawd�
 ```sh
 cd minimap-lab && go run . -input system
 ```
+
+Przed punktem 6 wpisz w panelu hotkey przypisany linie w kliencie gry (sekcja **Klawisze akcji pięter** wyżej) — bez tego akcja zawsze kończy się odmową.
 
 W tej kolejności:
 
