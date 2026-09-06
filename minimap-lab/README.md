@@ -1,6 +1,6 @@
 # Minimap Lab (Go)
 
-Samodzielny prototyp lokalizacji `(x,y,z)` z obrazu minimapy, prowadzenia po trasie waypointów i opcjonalnego sterowania klawiaturą i myszą. Bez OpenCV i bez CGO na każdej platformie; jedyna zewnętrzna zależność to `github.com/ebitengine/purego`, wpięta wyłącznie w emiter macOS — Windows i Linux jej nie potrzebują. Panel działa lokalnie i analizuje screenshoty lub klatki ekranu udostępnionego przez przeglądarkę. Moduł realizuje odczyt pozycji i wskazuje kolejny krok trasy; **sterowanie postacią jest opcjonalne i wyłączone domyślnie** — uruchomiony z `-input dry` albo `-input system`, panel może wysyłać klawisze i kliknięcia do gry. Zobacz sekcję **Sterowanie**.
+Samodzielny prototyp lokalizacji `(x,y,z)` z obrazu minimapy, prowadzenia po trasie waypointów i opcjonalnego sterowania klawiaturą i myszą. Bez OpenCV i bez CGO na każdej platformie; jedyna zewnętrzna zależność to `github.com/ebitengine/purego`, wpięta wyłącznie w emiter macOS — Windows i Linux jej nie potrzebują. Panel działa lokalnie i analizuje screenshoty lub klatki ekranu udostępnionego przez przeglądarkę. Moduł realizuje odczyt pozycji i wskazuje kolejny krok trasy; **sterowanie postacią jest opcjonalne i wyłączone domyślnie**. Uruchomiony z `-input system`, panel może wysyłać klawisze i kliknięcia do gry; `-input dry` ćwiczy tę samą ścieżkę, ale nie wysyła nic do systemu. Zobacz sekcję **Sterowanie**.
 
 ## Uruchomienie
 
@@ -129,14 +129,14 @@ Jedyna zewnętrzna zależność w `go.mod` to `github.com/ebitengine/purego`, pr
 
 ### Cały ekran, jeden monitor
 
-Kliknięcia akcji (lina, drabina, dziura, łopata) celują we współrzędne kratki postaci, wskazane przy kalibracji jako **ułamek udostępnionego obrazu** (0–1 w obu osiach); Go mnoży je przez rzeczywisty rozmiar ekranu w punktach systemowych. To przeliczenie jest afiniczne tylko wtedy, gdy źródłem obrazu jest **cały ekran**, a nie pojedyncze okno ani karta przeglądarki, i tylko na **jednym monitorze** — inne źródło albo drugi monitor przesuwają klik w losowe miejsce.
+Kliknięcia akcji (lina, drabina, dziura, łopata) celują we współrzędne kratki postaci, wskazane przy kalibracji jako **ułamek udostępnionego obrazu** (0–1 w obu osiach). Każdy emiter przelicza to inaczej: macOS mnoży współrzędne przez rozmiar głównego ekranu w punktach systemowych (`CGDisplayBounds`), Windows mapuje je na stałą skalę 0–65535 rozciągniętą na cały wirtualny pulpit (`MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK`) i w ogóle nie odpytuje o rozdzielczość. Oba przeliczenia trafiają we właściwe miejsce tylko wtedy, gdy źródłem obrazu jest **cały ekran**, a nie pojedyncze okno ani karta przeglądarki, i tylko na **jednym monitorze** — inne źródło albo drugi monitor przesuwają klik w losowe miejsce.
 
 ### Znane ograniczenia
 
 - Sprawdzenie focusu i wysłanie zdarzenia **nie są atomowe**: alt-tab może zdarzyć się dokładnie pomiędzy nimi i pojedynczy klawisz trafi wtedy do innego okna. Ryzyko jest mocno ograniczone, ale nie da się go wyeliminować tymi API.
 - Ruch myszy wykonany ręcznie przez człowieka **nie przerywa** trwającej sekwencji tap→klik — klik celuje w skalibrowaną kratkę bezwzględnymi współrzędnymi ekranu, niezależnie od tego, gdzie akurat stoi kursor. Jedyną ochroną przed realnym zagrożeniem — zmianą aktywnego okna w trakcie 120 ms przerwy między tapnięciem hotkeya a kliknięciem — jest ponowne sprawdzenie focusu tuż przed samym kliknięciem.
 - Przeglądarka **throttluje kartę w tle**; brak świeżych klatek z udostępnionego ekranu zatrzymuje ruch — to zachowanie zamierzone (bez świeżej pozycji nie ma dowodu, że krok się wykonał), nie błąd.
-- **Nie ma gwarancji, że klient gry przyjmie zdarzenia syntetyczne.** Kod skanowania klawisza nie czyni ze zdarzenia sprzętowego Raw Inputu; jeśli klient je odrzuci, jedyną drogą naprzód są `PostMessage` do okna albo sterownik wejścia — oba poza zakresem tego projektu. Rozstrzyga to wyłącznie test na żywym kliencie, opisany niżej.
+- **Nie ma gwarancji, że klient gry przyjmie zdarzenia syntetyczne.** Na Windows kod skanowania wysyłany przez `SendInput` nie czyni ze zdarzenia sprzętowego Raw Inputu; jeśli klient je odrzuci, jedyną drogą naprzód są `PostMessage` do okna albo sterownik wejścia — oba poza zakresem tego projektu. Rozstrzyga to wyłącznie test na żywym kliencie, opisany niżej.
 
 ### Dwa checkboxy
 
