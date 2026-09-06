@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"runtime"
 )
@@ -73,7 +74,38 @@ func (s *server) input(w http.ResponseWriter, r *http.Request) {
 	if !s.readInput(w, r, &in) {
 		return
 	}
-	writeJSON(w, s.driver.Submit(in))
+	result := s.driver.Submit(in)
+	s.logIntent(in, result)
+	writeJSON(w, result)
+}
+
+// logIntent records what the panel asked for and what the driver did with it.
+// The panel's status line is overwritten by the heartbeat within 200 ms, so
+// without this the reason a step was refused is effectively invisible - which
+// is exactly what a user sees when the character will not move.
+func (s *server) logIntent(in Intent, r InputResult) {
+	line := fmt.Sprintf("%s %s%s -> %s", in.Action, in.Direction, in.Type, r.Status)
+	if r.Key != "" {
+		line += " " + r.Key
+	}
+	if r.Reason != "" {
+		line += ": " + r.Reason
+	}
+	line += fmt.Sprintf(" (wiek %d ms)", in.AgeMS)
+	s.repeatMu.Lock()
+	defer s.repeatMu.Unlock()
+	if line == s.lastLogged {
+		s.repeats++
+		// A refusal repeating at the tracking rate would drown the log, so
+		// only every tenth identical line is printed, carrying the count.
+		if s.repeats%10 != 0 {
+			return
+		}
+		log.Printf("%s [x%d]", line, s.repeats)
+		return
+	}
+	s.lastLogged, s.repeats = line, 1
+	log.Print(line)
 }
 
 func (s *server) calibrate(w http.ResponseWriter, r *http.Request) {

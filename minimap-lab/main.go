@@ -44,6 +44,11 @@ type server struct {
 	costFloor int
 	// Nil until -input selects an emitter; every input route then answers 503.
 	driver *Driver
+	// Collapses identical intent log lines so a refusal repeating at the
+	// tracking rate does not drown the log.
+	repeatMu   sync.Mutex
+	lastLogged string
+	repeats    int
 }
 
 type matchRequest struct {
