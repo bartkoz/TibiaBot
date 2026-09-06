@@ -61,6 +61,8 @@ func main() {
 	dir := flag.String("maps", "../data/minimap", "katalog z Minimap_Color_X_Y_Z.png")
 	addr := flag.String("listen", "127.0.0.1:8095", "lokalny adres panelu")
 	mode := flag.String("input", "off", "sterowanie: off, dry albo system")
+	staleMS := flag.Int("stale-ms", defaultMaxObservationAgeMS,
+		"maksymalny wiek obserwacji pozycji w ms; wolny \"Cały odczyt\" w panelu przekraczający tę wartość odrzuca każdy krok")
 	flag.Parse()
 	host, _, err := net.SplitHostPort(*addr)
 	if err != nil || net.ParseIP(host) == nil || !net.ParseIP(host).IsLoopback() {
@@ -72,8 +74,8 @@ func main() {
 		log.Fatal(err)
 	}
 	if em != nil {
-		s.driver = NewDriver(em)
-		log.Printf("Sterowanie: %s — wykonawca startuje rozbrojony.", *mode)
+		s.driver = NewDriver(em, *staleMS)
+		log.Printf("Sterowanie: %s — wykonawca startuje rozbrojony. Próg świeżości: %d ms.", *mode, *staleMS)
 	}
 	log.Printf("Minimap Lab: http://%s — mapy: %s", *addr, *dir)
 	h := &http.Server{Addr: *addr, Handler: s.routes(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 20 * time.Second, WriteTimeout: 60 * time.Second, IdleTimeout: 60 * time.Second}
@@ -276,6 +278,17 @@ func (s *server) saveDebug(name string, data []byte) {
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(v)
+}
+
+// writeJSONError answers with a JSON body carrying reason, at the given
+// status. Unlike http.Error's plain text, this survives the panel's
+// postSafe(), which always calls response.json() - a plain-text body would
+// fail to parse there and silently discard the actual reason behind a
+// generic parse-error message instead.
+func writeJSONError(w http.ResponseWriter, status int, reason string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(map[string]string{"reason": reason})
 }
 
 func demoAtlas() *Atlas {

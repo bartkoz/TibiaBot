@@ -13,7 +13,7 @@ func driverAt(t *testing.T, start time.Time) (*Driver, *DryEmitter, *time.Time) 
 	t.Helper()
 	now := start
 	em := &DryEmitter{Window: Window{PID: 42, Path: "/Applications/Tibia.app"}}
-	d := NewDriver(em)
+	d := NewDriver(em, defaultMaxObservationAgeMS)
 	d.now = func() time.Time { return now }
 	if _, err := d.Arm(); err != nil {
 		t.Fatal(err)
@@ -38,7 +38,7 @@ func (e *failingEmitter) TapKey(key string, holdMS int) error {
 
 func TestDriverRefusesEverythingWhileDisarmed(t *testing.T) {
 	em := &DryEmitter{Window: Window{PID: 42}}
-	d := NewDriver(em)
+	d := NewDriver(em, defaultMaxObservationAgeMS)
 
 	got := d.Submit(walk(1, "nieistniejąca"))
 
@@ -94,7 +94,7 @@ func TestDriverRepeatedSeqReturnsFirstResultWithoutPressingAgain(t *testing.T) {
 func TestDriverRefusesStaleObservation(t *testing.T) {
 	d, em, _ := driverAt(t, time.Unix(0, 0))
 	in := walk(1, d.Status().Session)
-	in.AgeMS = maxObservationAgeMS + 1
+	in.AgeMS = defaultMaxObservationAgeMS + 1
 
 	got := d.Submit(in)
 
@@ -103,6 +103,25 @@ func TestDriverRefusesStaleObservation(t *testing.T) {
 	}
 	if len(em.Events()) != 0 {
 		t.Error("walking on a stale position is the worst possible state")
+	}
+}
+
+func TestDriverUsesConfiguredMaxObservationAge(t *testing.T) {
+	// A slow capture-to-reply round trip (the panel's "Cały odczyt" telemetry)
+	// on a real machine could exceed the 400ms default and refuse every step;
+	// -stale-ms must actually reach the driver, not just exist as a flag.
+	em := &DryEmitter{Window: Window{PID: 42, Path: "/Applications/Tibia.app"}}
+	d := NewDriver(em, 1000)
+	if _, err := d.Arm(); err != nil {
+		t.Fatal(err)
+	}
+	in := walk(1, d.Status().Session)
+	in.AgeMS = 600 // stale under the 400ms default, fresh under 1000ms
+
+	got := d.Submit(in)
+
+	if got.Status != "emitted" {
+		t.Fatalf("got %+v, want a raised threshold to accept a 600ms-old observation", got)
 	}
 }
 
@@ -372,6 +391,12 @@ func TestDriverSetActionConfigRefusesUnknownKey(t *testing.T) {
 	if err == nil {
 		t.Fatal("an unknown key name must be refused")
 	}
+	// The reason must name which of the four fields was rejected - a typo in
+	// one field voids all four (SetActionConfig is all-or-nothing), so the
+	// user's only way to find the field to fix is this message.
+	if !strings.Contains(err.Error(), "rope") {
+		t.Errorf("got %q, want it to name the rejected action", err.Error())
+	}
 	if len(d.ActionKeys) != 0 {
 		t.Error("a refused config must not partially apply")
 	}
@@ -405,7 +430,7 @@ func TestDriverSetActionConfigAllowsClearingAHotkey(t *testing.T) {
 func TestDriverEmitterFailureDisarmsWithPolishReason(t *testing.T) {
 	inner := &DryEmitter{Window: Window{PID: 42, Path: "/Applications/Tibia.app"}}
 	em := &failingEmitter{DryEmitter: inner, err: errors.New("boom")}
-	d := NewDriver(em)
+	d := NewDriver(em, defaultMaxObservationAgeMS)
 	if _, err := d.Arm(); err != nil {
 		t.Fatal(err)
 	}

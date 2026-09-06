@@ -11,7 +11,7 @@ import (
 func inputServer(t testing.TB) (*server, *DryEmitter) {
 	t.Helper()
 	em := &DryEmitter{Window: Window{PID: 42, Path: "/Applications/Tibia.app"}}
-	s := &server{dir: t.TempDir(), gate: make(chan struct{}, 1), driver: NewDriver(em)}
+	s := &server{dir: t.TempDir(), gate: make(chan struct{}, 1), driver: NewDriver(em, defaultMaxObservationAgeMS)}
 	return s, em
 }
 
@@ -196,6 +196,19 @@ func TestInputAPIConfigRefusesUnknownKey(t *testing.T) {
 
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("got %d, want 400", w.Code)
+	}
+	// The body must be JSON carrying the reason, not http.Error's plain text:
+	// the panel's postSafe() always calls response.json(), and a plain-text
+	// body would fail to parse there, silently discarding the actual reason
+	// (which field was rejected) behind a generic parse error instead.
+	var body struct {
+		Reason string `json:"reason"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("response body is not JSON: %v (%q)", err, w.Body.String())
+	}
+	if !strings.Contains(body.Reason, "rope") {
+		t.Errorf("got reason %q, want it to name the rejected action", body.Reason)
 	}
 }
 

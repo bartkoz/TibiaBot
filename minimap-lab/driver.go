@@ -9,11 +9,14 @@ import (
 )
 
 const (
-	holdMS              = 35
-	maxObservationAgeMS = 400
-	heartbeatTimeoutMS  = 750
-	maxTapsPerSecond    = 5
-	actionClickDelayMS  = 120
+	holdMS = 35
+	// defaultMaxObservationAgeMS is the -stale-ms default. A machine whose
+	// capture-to-reply round trip (the panel's "Cały odczyt" telemetry)
+	// exceeds this would otherwise have every single step refused.
+	defaultMaxObservationAgeMS = 400
+	heartbeatTimeoutMS         = 750
+	maxTapsPerSecond           = 5
+	actionClickDelayMS         = 120
 )
 
 // Intent is a single thing the panel wants done. It carries the age of the
@@ -73,10 +76,15 @@ type Driver struct {
 	// Tile is the player tile in normalised screen coordinates.
 	Tile    [2]float64
 	HasTile bool
+
+	// MaxObservationAgeMS is the freshness gate: an intent whose observation
+	// is older than this is refused. Configurable via -stale-ms, since a slow
+	// capture-to-reply round trip would otherwise refuse every single step.
+	MaxObservationAgeMS int
 }
 
-func NewDriver(e Emitter) *Driver {
-	return &Driver{em: e, now: time.Now, ActionKeys: map[string]string{}}
+func NewDriver(e Emitter, maxObservationAgeMS int) *Driver {
+	return &Driver{em: e, now: time.Now, ActionKeys: map[string]string{}, MaxObservationAgeMS: maxObservationAgeMS}
 }
 
 func (d *Driver) Arm() (ArmState, error) {
@@ -178,9 +186,9 @@ func (d *Driver) Submit(in Intent) InputResult {
 	if in.Seq < d.lastSeq {
 		return InputResult{Status: "refused", Reason: "numer sekwencyjny cofnął się"}
 	}
-	if in.AgeMS < 0 || in.AgeMS > maxObservationAgeMS {
+	if in.AgeMS < 0 || in.AgeMS > d.MaxObservationAgeMS {
 		return d.record(in.Seq, InputResult{Status: "refused",
-			Reason: fmt.Sprintf("pozycja starsza niż %d ms", maxObservationAgeMS)})
+			Reason: fmt.Sprintf("pozycja starsza niż %d ms", d.MaxObservationAgeMS)})
 	}
 	// Focus is checked as late as possible. It still is not atomic with the
 	// emission that follows; see the spec's "granica gwarancji".
@@ -292,7 +300,7 @@ func (d *Driver) SetActionConfig(keys map[string]string, clickAfterHotkey bool) 
 			continue // an unset hotkey is fine; that action stays refused until configured
 		}
 		if !hotkeyNames[key] {
-			return fmt.Errorf("nieznany klawisz: %s", key)
+			return fmt.Errorf("nieznany klawisz dla akcji %s: %s", action, key)
 		}
 		clean[action] = key
 	}

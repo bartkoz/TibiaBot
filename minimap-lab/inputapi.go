@@ -102,7 +102,7 @@ func (s *server) inputConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.driver.SetActionConfig(body.Keys, body.ClickAfterHotkey); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	writeJSON(w, map[string]bool{"ok": true})
