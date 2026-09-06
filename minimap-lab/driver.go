@@ -225,6 +225,14 @@ func (d *Driver) transitionLocked(in Intent) InputResult {
 		}
 		return InputResult{Status: "refused", Reason: "trwa inna akcja"}
 	}
+	// Stairs are climbed by walking onto them; no item is used. Sending a
+	// hotkey here would press whatever else is bound to it.
+	if in.Type == "stairs" {
+		return InputResult{Status: "refused", Reason: "schody pokonuje się krokiem, nie akcją"}
+	}
+	if d.ClickAfterHotkey && !d.HasTile {
+		return InputResult{Status: "refused", Reason: "brak kalibracji kratki postaci"}
+	}
 	key, ok := d.ActionKeys[in.Type]
 	if !ok || key == "" {
 		return InputResult{Status: "refused", Reason: "brak hotkeya dla akcji " + in.Type}
@@ -233,8 +241,34 @@ func (d *Driver) transitionLocked(in Intent) InputResult {
 		return d.emitterFailureLocked(err)
 	}
 	d.taps = append(d.taps, d.now())
+	if d.ClickAfterHotkey {
+		// The client needs a moment to arm the crosshair before the click.
+		time.Sleep(actionClickDelayMS * time.Millisecond)
+		// That pause is long enough for the player to alt-tab, and a click is
+		// far more destructive in a foreign window than a key tap.
+		if win, err := d.em.Focused(); err != nil || win.PID != d.target.PID {
+			d.disarmLocked("okno gry straciło focus w trakcie akcji")
+			return InputResult{Status: "disarmed", Reason: d.reason}
+		}
+		if err := d.em.Click(d.Tile[0], d.Tile[1]); err != nil {
+			return d.emitterFailureLocked(err)
+		}
+	}
 	d.inFlight = &want
 	return InputResult{Status: "emitted", Key: key}
+}
+
+// Calibrate stores the player tile as a fraction of the shared screen. The
+// panel sends normalised coordinates so Retina scaling never reaches the JS
+// side; the emitter multiplies them by the screen size in points.
+func (d *Driver) Calibrate(nx, ny float64) error {
+	if nx < 0 || nx > 1 || ny < 0 || ny > 1 {
+		return fmt.Errorf("współrzędne kratki muszą mieścić się w 0–1")
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.Tile, d.HasTile = [2]float64{nx, ny}, true
+	return nil
 }
 
 func (d *Driver) record(seq uint64, r InputResult) InputResult {

@@ -241,6 +241,109 @@ func TestDriverRefusesMissingSeq(t *testing.T) {
 	}
 }
 
+func TestDriverTransitionTapsHotkeyThenClicksPlayerTile(t *testing.T) {
+	d, em, _ := driverAt(t, time.Unix(0, 0))
+	d.ActionKeys = map[string]string{"rope": "f7"}
+	d.ClickAfterHotkey = true
+	if err := d.Calibrate(0.42, 0.31); err != nil {
+		t.Fatal(err)
+	}
+	session := d.Status().Session
+
+	got := d.Submit(Intent{Session: session, Seq: 1, Action: "transition", Type: "rope", Waypoint: 2, AgeMS: 50})
+
+	if got.Status != "emitted" {
+		t.Fatalf("got %+v", got)
+	}
+	want := []string{"tap f7 35ms", "click 0.420 0.310"}
+	if ev := em.Events(); len(ev) != 2 || ev[0] != want[0] || ev[1] != want[1] {
+		t.Fatalf("got %v, want %v", ev, want)
+	}
+}
+
+func TestDriverTransitionRefusesWithoutCalibration(t *testing.T) {
+	d, em, _ := driverAt(t, time.Unix(0, 0))
+	d.ActionKeys = map[string]string{"rope": "f7"}
+	d.ClickAfterHotkey = true
+
+	got := d.Submit(Intent{Session: d.Status().Session, Seq: 1, Action: "transition", Type: "rope", AgeMS: 50})
+
+	if got.Status != "refused" {
+		t.Fatalf("got %+v", got)
+	}
+	if len(em.Events()) != 0 {
+		t.Error("clicking an unknown screen point is worse than doing nothing")
+	}
+}
+
+func TestDriverTransitionSkipsClickWhenHotkeyUsesItself(t *testing.T) {
+	d, em, _ := driverAt(t, time.Unix(0, 0))
+	d.ActionKeys = map[string]string{"rope": "f7"}
+	d.ClickAfterHotkey = false
+
+	d.Submit(Intent{Session: d.Status().Session, Seq: 1, Action: "transition", Type: "rope", AgeMS: 50})
+
+	if ev := em.Events(); len(ev) != 1 || ev[0] != "tap f7 35ms" {
+		t.Fatalf("got %v", ev)
+	}
+}
+
+func TestDriverActionDoneUnblocksTheNextAction(t *testing.T) {
+	d, _, _ := driverAt(t, time.Unix(0, 0))
+	d.ActionKeys = map[string]string{"rope": "f7", "hole": "f8"}
+	session := d.Status().Session
+	d.Submit(Intent{Session: session, Seq: 1, Action: "transition", Type: "rope", Waypoint: 1, AgeMS: 50})
+
+	d.ActionDone()
+
+	got := d.Submit(Intent{Session: session, Seq: 2, Action: "transition", Type: "hole", Waypoint: 2, AgeMS: 50})
+	if got.Status != "emitted" {
+		t.Fatalf("got %+v", got)
+	}
+}
+
+func TestDriverRefusesStairsBecauseTheyAreWalkedNotUsed(t *testing.T) {
+	d, em, _ := driverAt(t, time.Unix(0, 0))
+	d.ActionKeys = map[string]string{"rope": "f7"}
+
+	got := d.Submit(Intent{Session: d.Status().Session, Seq: 1, Action: "transition", Type: "stairs", AgeMS: 50})
+
+	if got.Status != "refused" {
+		t.Fatalf("got %+v", got)
+	}
+	if len(em.Events()) != 0 {
+		t.Error("stairs are climbed by walking; no item is used on them")
+	}
+}
+
+func TestDriverChecksFocusAgainBeforeTheClick(t *testing.T) {
+	d, em, _ := driverAt(t, time.Unix(0, 0))
+	d.ActionKeys = map[string]string{"rope": "f7"}
+	d.ClickAfterHotkey = true
+	d.Calibrate(0.5, 0.5)
+	// The window changes during the 120 ms the client needs to arm the
+	// crosshair, so the click would land in a foreign window.
+	em.OnTap = func() { em.Window = Window{PID: 99} }
+
+	got := d.Submit(Intent{Session: d.Status().Session, Seq: 1, Action: "transition", Type: "rope", AgeMS: 50})
+
+	if got.Status != "disarmed" {
+		t.Fatalf("got %+v", got)
+	}
+	for _, ev := range em.Events() {
+		if strings.HasPrefix(ev, "click") {
+			t.Fatalf("clicked after losing focus: %v", em.Events())
+		}
+	}
+}
+
+func TestDriverCalibrateRefusesCoordinatesOutsideScreen(t *testing.T) {
+	d, _, _ := driverAt(t, time.Unix(0, 0))
+	if err := d.Calibrate(1.2, 0.5); err == nil {
+		t.Error("normalised coordinates must stay within 0-1")
+	}
+}
+
 func TestDriverEmitterFailureDisarmsWithPolishReason(t *testing.T) {
 	inner := &DryEmitter{Window: Window{PID: 42, Path: "/Applications/Tibia.app"}}
 	em := &failingEmitter{DryEmitter: inner, err: errors.New("boom")}
