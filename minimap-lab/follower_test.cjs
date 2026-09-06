@@ -332,9 +332,11 @@ test('actionTolerance można poluzować świadomie', () => {
   const f = new RouteFollower([
     {x: 100, y: 100, z: 7, type: 'stairs'},
     {x: 101, y: 100, z: 6, type: 'walk'},
-  ], {tolerance: 1, actionTolerance: 1});
+  ], {tolerance: 0, actionTolerance: 1});
 
   const out = f.step({x: 101, y: 100, z: 7}, 0);
 
+  // A tight walking tolerance paired with a loose action tolerance: only reading
+  // actionTolerance (not falling back to tolerance) can satisfy this.
   assert.equal(out.action, 'transition');
 });
