@@ -1,0 +1,200 @@
+package main
+
+import (
+	"testing"
+	"time"
+)
+
+// driverAt builds an armed driver with a controllable clock, so timeouts are
+// tested without sleeping.
+func driverAt(t *testing.T, start time.Time) (*Driver, *DryEmitter, *time.Time) {
+	t.Helper()
+	now := start
+	em := &DryEmitter{Window: Window{PID: 42, Path: "/Applications/Tibia.app"}}
+	d := NewDriver(em)
+	d.now = func() time.Time { return now }
+	if _, err := d.Arm(); err != nil {
+		t.Fatal(err)
+	}
+	return d, em, &now
+}
+
+func walk(seq uint64, session string) Intent {
+	return Intent{Session: session, Seq: seq, Action: "walk", Direction: "N", AgeMS: 100}
+}
+
+func TestDriverRefusesEverythingWhileDisarmed(t *testing.T) {
+	em := &DryEmitter{Window: Window{PID: 42}}
+	d := NewDriver(em)
+
+	got := d.Submit(walk(1, "nieistniejąca"))
+
+	if got.Status != "disarmed" {
+		t.Fatalf("got %+v", got)
+	}
+	if len(em.Events()) != 0 {
+		t.Error("a disarmed driver must not touch the system")
+	}
+}
+
+func TestDriverEmitsOneTapPerAcceptedIntent(t *testing.T) {
+	d, em, _ := driverAt(t, time.Unix(0, 0))
+
+	got := d.Submit(walk(1, d.Status().Session))
+
+	if got.Status != "emitted" || got.Key != "numpad8" {
+		t.Fatalf("got %+v", got)
+	}
+	if ev := em.Events(); len(ev) != 1 || ev[0] != "tap numpad8 35ms" {
+		t.Fatalf("got %v", ev)
+	}
+}
+
+func TestDriverRejectsForeignSessionToken(t *testing.T) {
+	d, em, _ := driverAt(t, time.Unix(0, 0))
+
+	got := d.Submit(walk(1, "podrobiony"))
+
+	if got.Status != "refused" {
+		t.Fatalf("got %+v", got)
+	}
+	if len(em.Events()) != 0 {
+		t.Error("a wrong token must not reach the system")
+	}
+}
+
+func TestDriverRepeatedSeqReturnsFirstResultWithoutPressingAgain(t *testing.T) {
+	d, em, _ := driverAt(t, time.Unix(0, 0))
+	session := d.Status().Session
+	first := d.Submit(walk(7, session))
+
+	again := d.Submit(walk(7, session))
+
+	if again != first {
+		t.Fatalf("got %+v, want %+v", again, first)
+	}
+	if len(em.Events()) != 1 {
+		t.Fatalf("a retried request pressed the key twice: %v", em.Events())
+	}
+}
+
+func TestDriverRefusesStaleObservation(t *testing.T) {
+	d, em, _ := driverAt(t, time.Unix(0, 0))
+	in := walk(1, d.Status().Session)
+	in.AgeMS = maxObservationAgeMS + 1
+
+	got := d.Submit(in)
+
+	if got.Status != "refused" || got.Reason == "" {
+		t.Fatalf("got %+v", got)
+	}
+	if len(em.Events()) != 0 {
+		t.Error("walking on a stale position is the worst possible state")
+	}
+}
+
+func TestDriverDisarmsWhenAnotherWindowTakesFocus(t *testing.T) {
+	d, em, _ := driverAt(t, time.Unix(0, 0))
+	em.Window = Window{PID: 99, Path: "/Applications/Safari.app"}
+
+	got := d.Submit(walk(1, d.Status().Session))
+
+	if got.Status != "disarmed" {
+		t.Fatalf("got %+v", got)
+	}
+	if d.Status().Armed {
+		t.Error("losing focus must disarm, not merely skip one step")
+	}
+	if len(em.Events()) != 0 {
+		t.Error("no key may be sent to a foreign window")
+	}
+}
+
+func TestDriverEnforcesTapRateWithoutBanking(t *testing.T) {
+	d, _, now := driverAt(t, time.Unix(0, 0))
+	session := d.Status().Session
+	for i := uint64(1); i <= maxTapsPerSecond; i++ {
+		if got := d.Submit(walk(i, session)); got.Status != "emitted" {
+			t.Fatalf("tap %d: %+v", i, got)
+		}
+	}
+
+	over := d.Submit(walk(99, session))
+
+	if over.Status != "refused" {
+		t.Fatalf("got %+v", over)
+	}
+	// A quiet stretch must not hand back a burst of unused budget. The clock
+	// moves in heartbeat-sized steps, or the driver would disarm instead.
+	for range 6 {
+		*now = now.Add(200 * time.Millisecond)
+		d.Beat(session)
+	}
+	for i := uint64(100); i < 100+maxTapsPerSecond; i++ {
+		if got := d.Submit(walk(i, session)); got.Status != "emitted" {
+			t.Fatalf("after idle, tap %d: %+v", i, got)
+		}
+	}
+	if got := d.Submit(walk(200, session)); got.Status != "refused" {
+		t.Fatalf("idle time banked extra taps: %+v", got)
+	}
+}
+
+func TestDriverExpiresWhenHeartbeatStops(t *testing.T) {
+	d, _, now := driverAt(t, time.Unix(0, 0))
+	session := d.Status().Session
+
+	*now = now.Add(time.Duration(heartbeatTimeoutMS+1) * time.Millisecond)
+
+	if got := d.Submit(walk(1, session)); got.Status != "disarmed" {
+		t.Fatalf("got %+v", got)
+	}
+}
+
+func TestDriverHeartbeatKeepsTheSessionAlive(t *testing.T) {
+	d, _, now := driverAt(t, time.Unix(0, 0))
+	session := d.Status().Session
+
+	for range 5 {
+		*now = now.Add(200 * time.Millisecond)
+		d.Beat(session)
+	}
+
+	if got := d.Submit(walk(1, session)); got.Status != "emitted" {
+		t.Fatalf("got %+v", got)
+	}
+}
+
+func TestDriverRunsOneActionAtATime(t *testing.T) {
+	d, em, _ := driverAt(t, time.Unix(0, 0))
+	d.ActionKeys = map[string]string{"rope": "f7"}
+	session := d.Status().Session
+	rope := Intent{Session: session, Seq: 1, Action: "transition", Type: "rope", Waypoint: 3, AgeMS: 50}
+	if got := d.Submit(rope); got.Status != "emitted" {
+		t.Fatalf("got %+v", got)
+	}
+	before := len(em.Events())
+
+	// The follower repeats 'transition' on every reading until the floor
+	// changes; the second one must not press the hotkey again.
+	rope.Seq = 2
+	got := d.Submit(rope)
+
+	if got.Status != "in_progress" {
+		t.Fatalf("got %+v", got)
+	}
+	if len(em.Events()) != before {
+		t.Fatalf("repeated transition pressed the hotkey again: %v", em.Events())
+	}
+}
+
+func TestDriverDisarmReleasesHeldKeys(t *testing.T) {
+	d, em, _ := driverAt(t, time.Unix(0, 0))
+	em.Window = Window{PID: 99}
+
+	d.Submit(walk(1, d.Status().Session))
+
+	if em.Released() != 1 {
+		t.Error("disarming must release keys even though emitting is otherwise forbidden")
+	}
+}
