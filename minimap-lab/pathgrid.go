@@ -41,6 +41,50 @@ func (g *PathGrid) ClosesCorner(x, y int) bool {
 	return g.Blocked(x, y) || g.overlay.Tile(x, y) != KindNone
 }
 
+// nearestWalkableRadius is how far a goal may be nudged. Two tiles covers the
+// tracker drifting by a tile or two - the common case behind a waypoint that
+// sits in a wall. Anything further means the waypoint was recorded from a
+// position the locator got wrong outright, and guessing a destination for it
+// would send the bot somewhere nobody asked for.
+const nearestWalkableRadius = 2
+
+// NearestWalkable finds a tile the bot can actually stand on, closest to the
+// one asked for. A waypoint recorded a tile off a wall is the normal case; the
+// user meant the doorway, not the door frame.
+func (g *PathGrid) NearestWalkable(x, y int) (int, int, bool) {
+	if !g.Blocked(x, y) {
+		return x, y, true
+	}
+	for r := 1; r <= nearestWalkableRadius; r++ {
+		for dy := -r; dy <= r; dy++ {
+			for dx := -r; dx <= r; dx++ {
+				// Only the ring at distance r; the inside was covered already.
+				if abs(dx) != r && abs(dy) != r {
+					continue
+				}
+				if !g.Blocked(x+dx, y+dy) {
+					return x + dx, y + dy, true
+				}
+			}
+		}
+	}
+	return x, y, false
+}
+
+// GoalRefusal explains why a tile cannot be a destination. The three causes
+// need three different reactions from the user, so one message for all of them
+// is no help at all.
+func (g *PathGrid) GoalRefusal(x, y int) string {
+	switch {
+	case !g.base.Covered(x, y):
+		return "Waypoint leży poza obszarem, dla którego są dane mapy (brak danych). Dograj kafle minimapy albo popraw punkt."
+	case g.overlay.Tile(x, y) == KindPerm:
+		return "Waypoint leży na kratce nauczonej jako nieprzechodnia. Skasuj tę blokadę w podglądzie przechodności, jeśli jest błędna."
+	default:
+		return "Waypoint leży na kratce nieprzechodniej według danych mapy - i nic w promieniu dwóch kratek nie jest przechodnie. Punkt prawdopodobnie zapisał się z błędnie odczytanej pozycji; nagraj go ponownie."
+	}
+}
+
 func (g *PathGrid) EdgeBlocked(fx, fy, tx, ty int) bool {
 	return g.overlay.Edge(fx, fy, tx, ty)
 }

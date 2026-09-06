@@ -106,9 +106,29 @@ func (s *server) path(w http.ResponseWriter, r *http.Request) {
 	// revision comes from the same call, so it describes the overlay the route
 	// was actually computed on rather than whatever arrived while it ran.
 	overlay, revision := s.blocks.SnapshotAt(area, from.Z)
+	pg := NewPathGrid(grid.limitTo(area), overlay)
+	// A waypoint recorded a tile or two off - the tracker drifted, or the
+	// position was read wrong - would otherwise kill the whole route. Aim at
+	// the nearest tile the bot can stand on instead, and say so.
+	//
+	// Checked only once the start is sound: a character standing on ground the
+	// map calls impassable is the more useful thing to report, and findPath
+	// says so on its own.
+	goalX, goalY := to.X, to.Y
+	ok := true
+	if !pg.Blocked(from.X, from.Y) {
+		goalX, goalY, ok = pg.NearestWalkable(to.X, to.Y)
+	}
+	if !ok {
+		writeJSON(w, PathResult{Status: "blocked_goal", Steps: [][2]int{},
+			Reason: pg.GoalRefusal(to.X, to.Y), OverlayRevision: revision,
+			ElapsedMS: float64(time.Since(started).Microseconds()) / 1000})
+		return
+	}
 	// Every reachable tile is closed at most once, so the area itself bounds
 	// the work; no arbitrary iteration constant is needed.
-	result := findPath(ctx, NewPathGrid(grid.limitTo(area), overlay), [2]int{from.X, from.Y}, [2]int{to.X, to.Y}, area.Dx()*area.Dy())
+	result := findPath(ctx, pg, [2]int{from.X, from.Y}, [2]int{goalX, goalY}, area.Dx()*area.Dy())
+	result.GoalMoved = goalX != to.X || goalY != to.Y
 	result.OverlayRevision = revision
 	if result.Steps == nil {
 		result.Steps = [][2]int{}

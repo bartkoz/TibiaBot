@@ -22,6 +22,10 @@ type PathResult struct {
 	// OverlayRevision lets the panel tell a route computed before its latest
 	// observation from one computed after it.
 	OverlayRevision uint64 `json:"overlay_revision"`
+	// GoalMoved says the route aims at a tile next to the waypoint, because the
+	// waypoint itself cannot be stood on. The panel says so rather than letting
+	// the route quietly end somewhere else.
+	GoalMoved bool `json:"goal_moved,omitempty"`
 }
 
 type step struct {

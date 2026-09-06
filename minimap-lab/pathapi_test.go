@@ -251,3 +251,83 @@ func TestClearingAPermanentBlockReachesTheDisk(t *testing.T) {
 		t.Fatalf("tile kind %v after reload; the revocation never reached the disk", k)
 	}
 }
+
+func TestGoalOneTileOffAWallIsNudgedOntoIt(t *testing.T) {
+	// A waypoint recorded a tile off - the tracker drifted by one - must not
+	// kill the whole route. The nearest walkable tile is what the user meant.
+	s := pathServer(t, costTile(100, map[[2]int]uint8{{50, 50}: blockedCost}))
+	s.blocks = NewBlockStore(time.Now)
+
+	r := decodePath(t, postPath(t, s, `{"from":{"x":32800,"y":32040,"z":7},"to":{"x":32818,"y":32050,"z":7}}`))
+	if !r.Found {
+		t.Fatalf("status %s (%s); a goal one tile off a wall must still produce a route", r.Status, r.Reason)
+	}
+	if !r.GoalMoved {
+		t.Fatal("the reply does not say the goal was moved, so the panel cannot explain it")
+	}
+	last := r.Steps[len(r.Steps)-1]
+	if last == [2]int{32818, 32050} {
+		t.Fatal("route ends on the impassable tile")
+	}
+	if abs(last[0]-32818) > 2 || abs(last[1]-32050) > 2 {
+		t.Fatalf("route ends at %v, too far from the waypoint", last)
+	}
+}
+
+func TestGoalDeepInsideWaterIsRefusedWithAClearReason(t *testing.T) {
+	// A waypoint recorded from a mislocated position lands in the middle of
+	// water. Nudging it somewhere random would be worse than saying so: nothing
+	// walkable is anywhere near.
+	pix := map[[2]int]uint8{}
+	for dx := -4; dx <= 4; dx++ {
+		for dy := -4; dy <= 4; dy++ {
+			pix[[2]int{50 + dx, 50 + dy}] = blockedCost
+		}
+	}
+	s := pathServer(t, costTile(100, pix))
+	s.blocks = NewBlockStore(time.Now)
+
+	r := decodePath(t, postPath(t, s, `{"from":{"x":32800,"y":32040,"z":7},"to":{"x":32818,"y":32050,"z":7}}`))
+	if r.Found {
+		t.Fatal("a waypoint deep inside impassable terrain must not produce a route")
+	}
+	if r.Status != "blocked_goal" {
+		t.Fatalf("status %q, want blocked_goal", r.Status)
+	}
+	if !strings.Contains(r.Reason, "danych mapy") {
+		t.Fatalf("reason %q does not name what is actually wrong", r.Reason)
+	}
+}
+
+func TestGoalOnALearnedBlockSaysSo(t *testing.T) {
+	// Same refusal, different cause, different advice: this one the user can
+	// clear from the preview.
+	s := pathServer(t, costTile(100, nil))
+	s.blocks = NewBlockStore(time.Now)
+	s.blocks.Observe(Observation{From: Position{32818, 32051, 7}, To: Position{32818, 32050, 7},
+		Outcome: "no_motion", StillFrames: 3, LastFrameAgeMS: 100, MovedSince: true})
+	s.blocks.tiles[tileKey{32818, 32050, 7}].Kind = KindPerm
+
+	r := decodePath(t, postPath(t, s, `{"from":{"x":32800,"y":32040,"z":7},"to":{"x":32818,"y":32050,"z":7}}`))
+	// A learned block is a hypothesis, not terrain: the route still gets made,
+	// aimed one tile off, so a wrong lesson cannot strand the whole route.
+	if !r.Found {
+		t.Fatalf("status %s (%s)", r.Status, r.Reason)
+	}
+	if !r.GoalMoved {
+		t.Fatal("the goal was not moved off the learned block")
+	}
+}
+
+func TestGoalWithNoMapDataSaysThat(t *testing.T) {
+	s := pathServer(t, costTile(100, nil))
+	s.blocks = NewBlockStore(time.Now)
+	// Far outside the single chunk: no PNG covers it at all.
+	r := decodePath(t, postPath(t, s, `{"from":{"x":32800,"y":32040,"z":7},"to":{"x":33500,"y":32040,"z":7},"margin":0}`))
+	if r.Found {
+		t.Fatal("a waypoint with no map data must not produce a route")
+	}
+	if !strings.Contains(r.Reason, "brak danych") {
+		t.Fatalf("reason %q does not say the map data is missing", r.Reason)
+	}
+}
