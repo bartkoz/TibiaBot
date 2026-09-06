@@ -88,8 +88,10 @@ func TestGridDoesNotEvictThePlannerCache(t *testing.T) {
 	if planner == nil {
 		t.Fatal("the route query left no planner cache to protect")
 	}
-	getGrid(t, s, "x=32800&y=32050&z=7&r=32")
-	if s.costCache != planner {
+	// A window the planner's cache cannot serve: another floor entirely. With a
+	// shared cache this reload would evict the route data.
+	getGrid(t, s, "x=32800&y=32050&z=6&r=32")
+	if s.costCache != planner || s.costFloor != 7 {
 		t.Fatal("the preview replaced the planner's cached floor; the two would evict each other every reading")
 	}
 }
