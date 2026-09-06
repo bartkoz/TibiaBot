@@ -443,3 +443,65 @@ test('blokada celu wygasa po swoim czasie', () => {
   assert.equal(ex.intentFor(out, 20000), null);
   assert.notEqual(ex.intentFor(out, 200000), null);
 });
+
+test('wygaśnięcie blokady daje botowi nową szansę, nie zatrzymanie', () => {
+  // The failure that ends the first episode leaves cycles at 2. If the lapse
+  // of the block does not clear that count, the very next attempt - the one
+  // that would teach the permanent block - trips maxFailedCycles and stops the
+  // bot for good, exactly when it was about to learn something useful.
+  const ex = new StepExecutor({stepTimeoutMS: 1800, blockedTTL: 60000});
+  failedStep(ex);
+  failedStep(ex, {start: 3000});
+  assert.equal(ex.state().blocked, true);
+
+  const out = walk('N', [100, 99]);
+  ex.intentFor(out, 100000); // past blockedTTL: the block lapses
+  failedStep(ex, {start: 110000});
+
+  assert.equal(ex.state().stopped, false,
+    'bot zatrzymał się w chwili, w której uczył się blokady trwałej');
+});
+
+test('spóźnione wejście kasuje licznik nieudanych cykli', () => {
+  // A late arrival is proof the step worked. Three unrelated lag spikes in a
+  // session must not add up to a permanent stop.
+  const ex = new StepExecutor({stepTimeoutMS: 1800, lateArrivalMS: 2000});
+  failedStep(ex);
+  ex.observe(at(100, 99), 2100, 2170);
+  assert.equal(ex.state().cycles, 0, 'krok, który się jednak udał, nadal liczy się jako porażka');
+});
+
+test('obserwacja niesie informację, czy postać w międzyczasie chodziła', () => {
+  const ex = new StepExecutor({stepTimeoutMS: 1800});
+  // Standing in front of the same obstacle the whole time: no proof of terrain.
+  assert.equal(failedStep(ex).moved_since, false);
+
+  // A successful step, then another failure: now the bot did go somewhere.
+  ex.observe(at(100, 100), 4000, 4000);
+  ex.intentFor(walk('N', [100, 99]), 4010);
+  ex.emitted(4020, ex.state().stepId);
+  ex.observe(at(100, 99), 4100, 4110);
+  assert.equal(failedStep(ex, {from: at(100, 99), target: [100, 98], start: 5000}).moved_since, true);
+});
+
+test('spóźnione wejście niesie kratkę startową, nie tylko docelową', () => {
+  // The server needs from to drop the edge a failed diagonal blocked; to alone
+  // does not identify an edge.
+  const ex = new StepExecutor({stepTimeoutMS: 1800, lateArrivalMS: 2000});
+  failedStep(ex);
+  ex.observe(at(100, 99), 2100, 2170);
+  const obs = ex.takeObservation();
+  assert.deepEqual(obs.from, {x: 100, y: 100, z: 7});
+  assert.deepEqual(obs.to, {x: 100, y: 99, z: 7});
+});
+
+test('wejście oceniane jest po czasie klatki, nie po czasie jej przetworzenia', () => {
+  // The frame documents an arrival 1900 ms after the timeout - inside the
+  // window - but reaches the panel 900 ms later. Judging by the processing
+  // time would throw away a genuine revocation.
+  const ex = new StepExecutor({stepTimeoutMS: 1800, lateArrivalMS: 2000});
+  failedStep(ex);
+  const failedAt = 1870;
+  ex.observe(at(100, 99), failedAt + 1900, failedAt + 2800);
+  assert.equal(ex.takeObservation()?.outcome, 'entered');
+});

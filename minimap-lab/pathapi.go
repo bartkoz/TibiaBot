@@ -96,14 +96,20 @@ func (s *server) path(w http.ResponseWriter, r *http.Request) {
 	}
 	// Presence beats any learned hypothesis: a character standing on a tile we
 	// marked unreachable is proof the mark is simply wrong.
-	s.blocks.Clear(from)
+	if s.blocks.Clear(from) {
+		// A revoked permanent block has to reach the file too, or a restart
+		// brings it back and cuts this route again.
+		s.blocks.Flush()
+	}
 	// One snapshot for the whole search: A* assumes the cost of a closed vertex
-	// never changes, so the graph must not shift under it mid-search.
-	overlay := s.blocks.Snapshot(area, from.Z)
+	// never changes, so the graph must not shift under it mid-search. The
+	// revision comes from the same call, so it describes the overlay the route
+	// was actually computed on rather than whatever arrived while it ran.
+	overlay, revision := s.blocks.SnapshotAt(area, from.Z)
 	// Every reachable tile is closed at most once, so the area itself bounds
 	// the work; no arbitrary iteration constant is needed.
 	result := findPath(ctx, NewPathGrid(grid.limitTo(area), overlay), [2]int{from.X, from.Y}, [2]int{to.X, to.Y}, area.Dx()*area.Dy())
-	result.OverlayRevision = s.blocks.Revision()
+	result.OverlayRevision = revision
 	if result.Steps == nil {
 		result.Steps = [][2]int{}
 	}

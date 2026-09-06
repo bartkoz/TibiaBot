@@ -74,3 +74,33 @@ test('nieudane usunięcie nie udaje sukcesu', async () => {
   const c = new BlocksClient({fetch: async () => { throw new Error('sieć'); }});
   assert.equal(await c.remove(1, 2, 7), false);
 });
+
+test('raporty idą po kolei, nigdy równolegle', async () => {
+  // A failure and its revocation are reported from separate ticks. If the
+  // revocation overtakes the failure on the wire, the server clears a block
+  // that does not exist yet and then creates it - marking a tile the character
+  // is standing on as unreachable.
+  const order = [];
+  const c = new BlocksClient({fetch: async (url, init) => {
+    const body = JSON.parse(init.body);
+    order.push(`start:${body.outcome}`);
+    await new Promise(r => setTimeout(r, body.outcome === 'no_motion' ? 20 : 1));
+    order.push(`end:${body.outcome}`);
+    return okJSON({result: 'temp', reason: ''});
+  }});
+  await Promise.all([
+    c.report({outcome: 'no_motion'}),
+    c.report({outcome: 'entered'}),
+  ]);
+  assert.deepEqual(order, ['start:no_motion', 'end:no_motion', 'start:entered', 'end:entered']);
+});
+
+test('błąd jednego raportu nie blokuje kolejnych', async () => {
+  let calls = 0;
+  const c = new BlocksClient({fetch: async () => {
+    if (++calls === 1) throw new Error('sieć');
+    return okJSON({result: 'temp', reason: ''});
+  }});
+  assert.equal(await c.report({outcome: 'no_motion'}), null);
+  assert.notEqual(await c.report({outcome: 'entered'}), null);
+});

@@ -32,6 +32,15 @@ func (g *PathGrid) Cost(x, y int) float64 {
 	return c
 }
 
+// ClosesCorner is stricter than Blocked: a creature or a piece of furniture at
+// a corner makes the game refuse the diagonal squeeze exactly as a wall does,
+// even though a fresh block is only a cost penalty when walked onto directly.
+// Letting the search squeeze past one would have the bot emit a step the game
+// rejects, then blame the edge for it.
+func (g *PathGrid) ClosesCorner(x, y int) bool {
+	return g.Blocked(x, y) || g.overlay.Tile(x, y) != KindNone
+}
+
 func (g *PathGrid) EdgeBlocked(fx, fy, tx, ty int) bool {
 	return g.overlay.Edge(fx, fy, tx, ty)
 }

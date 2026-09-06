@@ -59,6 +59,11 @@ function app({respond, respondPath, respondInput, latency=3, storage={}, inputAv
       }
       if (url.startsWith('/api/blocks')) {
         blockRequests.push(options ? JSON.parse(options.body) : url);
+        if (!options) {
+          const q = new URL(url, 'http://x').searchParams;
+          return {ok:true, async json() {return [{x:Number(q.get('x')), y:Number(q.get('y')), z:Number(q.get('z')),
+            kind:'perm', episodes:2, expires_in_ms:0}];}};
+        }
         return {ok:true, async json() {return {result:'temp', reason:'Pierwszy epizod; blokada tymczasowa.', cleared:true};}};
       }
       if (url === '/api/path') {
@@ -1067,4 +1072,44 @@ test('kliknięcie kratki bez blokady niczego nie kasuje', async () => {
 
   assert.equal(a.blockRequests.filter(r => r && r.x !== undefined).length, 0);
   assert.match(a.get('blocks-status').textContent, /brak nauczonej blokady/);
+});
+
+test('kasowanie celuje w piętro z podglądu, nie w bieżące', async () => {
+  // The character walks downstairs while the last drawn window still shows the
+  // old floor. A click must delete the block the picture shows.
+  const side = 65;
+  const cells = new Uint8Array(side * side);
+  cells[10 * side + 20] = 8;
+  const a = app({gridCells: cells});
+  await new Promise(setImmediate); await a.get('share').onclick();
+  a.get('live').checked = true;
+  a.get('grid-preview-on').checked = true;
+  await a.get('locate').onclick();
+  for (let i = 0; i < 3; i++) { await a.tick(); await new Promise(setImmediate); }
+
+  const canvas = a.get('grid-canvas');
+  canvas.width = canvas.height = 320;
+  await canvas.listeners.click({target: canvas, clientX: 20 / side * 320 + 1, clientY: 10 / side * 320 + 1});
+
+  const deletes = a.blockRequests.filter(r => r && r.x !== undefined);
+  assert.equal(deletes.length, 1);
+  assert.equal(deletes[0].z, 7, 'usunięto blokadę na piętrze innym niż pokazane w podglądzie');
+});
+
+test('komunikat po skasowaniu mówi, co dokładnie zniknęło', async () => {
+  const side = 65;
+  const cells = new Uint8Array(side * side);
+  cells[10 * side + 20] = 8;
+  const a = app({gridCells: cells});
+  await new Promise(setImmediate); await a.get('share').onclick();
+  a.get('live').checked = true;
+  a.get('grid-preview-on').checked = true;
+  await a.get('locate').onclick();
+  for (let i = 0; i < 3; i++) { await a.tick(); await new Promise(setImmediate); }
+
+  const canvas = a.get('grid-canvas');
+  canvas.width = canvas.height = 320;
+  await canvas.listeners.click({target: canvas, clientX: 20 / side * 320 + 1, clientY: 10 / side * 320 + 1});
+
+  assert.match(a.get('blocks-status').textContent, /trwałą \(2 epizody\)/);
 });

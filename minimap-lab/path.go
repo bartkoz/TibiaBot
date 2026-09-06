@@ -97,8 +97,8 @@ func findPath(ctx context.Context, grid *PathGrid, from, to [2]int, maxIteration
 			// A diagonal step through a closed corner is impossible in game:
 			// walking alongside one wall is fine, squeezing between two is not.
 			if s.dx != 0 && s.dy != 0 &&
-				grid.Blocked(cur.at[0]+s.dx, cur.at[1]) &&
-				grid.Blocked(cur.at[0], cur.at[1]+s.dy) {
+				grid.ClosesCorner(cur.at[0]+s.dx, cur.at[1]) &&
+				grid.ClosesCorner(cur.at[0], cur.at[1]+s.dy) {
 				continue
 			}
 			g := best[cur.at] + s.weight*grid.Cost(next[0], next[1])/100

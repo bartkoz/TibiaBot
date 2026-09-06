@@ -7,6 +7,10 @@ import (
 
 // Bits of one preview tile. Missing data and a wall are separate on purpose:
 // merged, every unvisited area would look like solid rock.
+// previewMargin is how much extra terrain the preview cache holds around the
+// requested window, in tiles.
+const previewMargin = 64
+
 const (
 	gridBlocked = 1 << iota
 	gridMissing
@@ -28,7 +32,10 @@ func (s *server) grid(w http.ResponseWriter, r *http.Request) {
 	s.previewMu.Lock()
 	defer s.previewMu.Unlock()
 	if s.previewCache == nil || s.previewFloor != z || !area.In(s.previewCache.bounds) {
-		g, err := loadCostArea(s.dir, z, area)
+		// Loaded with a margin: the window follows the character tile by tile,
+		// and a cache holding exactly the current window would be thrown away
+		// and re-decoded on every single step taken near a chunk edge.
+		g, err := loadCostArea(s.dir, z, area.Inset(-previewMargin))
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
@@ -36,7 +43,7 @@ func (s *server) grid(w http.ResponseWriter, r *http.Request) {
 		s.previewCache, s.previewFloor = g, z
 	}
 	grid := s.previewCache
-	overlay := s.blocks.Snapshot(area, z)
+	overlay, revision := s.blocks.SnapshotAt(area, z)
 
 	side := 2*radius + 1
 	out := make([]byte, side*side)
@@ -60,6 +67,6 @@ func (s *server) grid(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("X-Grid-Origin", fmt.Sprintf("%d,%d", area.Min.X, area.Min.Y))
-	w.Header().Set("X-Grid-Revision", fmt.Sprintf("%d", s.blocks.Revision()))
+	w.Header().Set("X-Grid-Revision", fmt.Sprintf("%d", revision))
 	w.Write(out)
 }

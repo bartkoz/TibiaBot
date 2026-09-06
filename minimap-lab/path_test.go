@@ -427,3 +427,51 @@ func TestBaseGridIsNotMutatedByOverlay(t *testing.T) {
 		}
 	}
 }
+
+func TestTemporaryBlockAlsoClosesADiagonalCorner(t *testing.T) {
+	// A creature standing at a corner makes the game refuse the squeeze just as
+	// a wall would. Treating a fresh block as passable there would have the bot
+	// emit a step the game rejects, then blame the edge for it.
+	g := NewPathGrid(gridFrom([]string{
+		"...",
+		"#..",
+		"...",
+	}), overlayOf([]string{
+		"...",
+		"...",
+		".T.",
+	}))
+	r := findPath(context.Background(), g, at(0, 2), at(1, 1), 1000)
+	for i := 1; i < len(r.Steps); i++ {
+		if r.Steps[i-1] == at(0, 2) && r.Steps[i] == at(1, 1) {
+			t.Fatal("route cut a corner closed by a fresh learned block")
+		}
+	}
+}
+
+func TestTemporaryPenaltyOutweighsALongDetour(t *testing.T) {
+	// A wall with two gaps: the near one holds a fresh block, the far one is
+	// eleven tiles away. Going around costs about twenty extra steps, so a
+	// penalty worth only a few steps would send the bot straight into the
+	// obstacle and leave it stuck there.
+	terrain := []string{
+		"...............",
+		"#####.####.####",
+		"...............",
+	}
+	blocks := []string{
+		"...............",
+		".....T.........",
+		"...............",
+	}
+	g := NewPathGrid(gridFrom(terrain), overlayOf(blocks))
+	r := findPath(context.Background(), g, at(5, 0), at(5, 2), 10000)
+	if !r.Found {
+		t.Fatalf("status %s (%s)", r.Status, r.Reason)
+	}
+	for _, s := range r.Steps {
+		if s == at(5, 1) {
+			t.Fatal("A* preferred a fresh block over a detour far cheaper than the penalty")
+		}
+	}
+}

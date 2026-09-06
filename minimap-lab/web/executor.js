@@ -36,7 +36,10 @@ class StepExecutor {
     this.stepTimeoutMS = options.stepTimeoutMS ?? 1800;
     // How long after a timeout an arrival still counts as "that was lag, not
     // a wall" and revokes what the failure taught.
-    this.lateArrivalMS = options.lateArrivalMS ?? 600;
+    // Generous on purpose. Under heavy paralysis or on slow ground a step can
+    // run several seconds; revoking a lesson that turned out wrong costs
+    // nothing, while keeping a false block costs a permanently avoided tile.
+    this.lateArrivalMS = options.lateArrivalMS ?? 2000;
     // A blocked target is a suspicion with a shelf life, not a verdict. It
     // matches the server's temporary-block TTL.
     this.blockedTTL = options.blockedTTL ?? 60000;
@@ -66,6 +69,11 @@ class StepExecutor {
     this.recentFailure = null;
     // When blocked was set, so it can lapse instead of lasting all session.
     this.blockedAt = null;
+    // Whether any step has succeeded since the last failed one. The server
+    // needs it to tell "the bot went around and came back" from "the bot has
+    // been standing in front of the same player for a minute" - only the first
+    // is evidence of terrain.
+    this.movedSinceFailure = false;
   }
   state() {
     return {
@@ -107,10 +115,16 @@ class StepExecutor {
         outcome: 'no_motion',
         still_frames: p.stillFrames,
         last_frame_age_ms: Math.round(now - p.lastFrameAt),
+        moved_since: this.movedSinceFailure,
       };
+      this.movedSinceFailure = false;
     }
     if (p.kind === 'walk' && p.from) {
-      this.recentFailure = {to: {x: p.target[0], y: p.target[1], z: p.from.z}, at: now};
+      this.recentFailure = {
+        from: {x: p.from.x, y: p.from.y, z: p.from.z},
+        to: {x: p.target[0], y: p.target[1], z: p.from.z},
+        at: now,
+      };
     }
     this.pending = null;
     this.cycles++;
@@ -153,7 +167,12 @@ class StepExecutor {
       // executor would refuse it for the rest of the session even after the
       // obstacle walked away.
       if (this.blockedAt !== null && now - this.blockedAt >= this.blockedTTL) {
+        // A lapsed block starts a fresh attempt, not the continuation of the
+        // failed series that produced it. Carrying the cycle count over would
+        // stop the bot on its very next try - the one that would have taught
+        // the permanent block.
         this.clearBlocked();
+        this.cycles = 0;
       } else {
         if (!out) return null;
         if (sameTarget(targetFromOut(out), this.blockedTarget)) return null;
@@ -276,12 +295,21 @@ class StepExecutor {
   // whatever the failure taught is revoked and the target gets another chance.
   noteLateArrival(position, capturedAt, now) {
     const late = this.recentFailure;
-    if (!late || now - late.at > this.lateArrivalMS) return;
+    // Judged by when the frame was captured, not when it was processed: a slow
+    // match must not turn a genuine arrival into a missed deadline.
+    if (!late || capturedAt - late.at > this.lateArrivalMS) return;
     if (position.x !== late.to.x || position.y !== late.to.y || position.z !== late.to.z) return;
-    this.observation = {from: {...late.to}, to: {...late.to}, outcome: 'entered',
+    // from is the tile the failed step started on, so the server can also drop
+    // the edge a failed diagonal blocked - to alone does not identify it.
+    this.observation = {from: {...late.from}, to: {...late.to}, outcome: 'entered',
       still_frames: 1, last_frame_age_ms: Math.round(now - capturedAt)};
     this.recentFailure = null;
+    // The step worked after all, so it is progress, not a failure: the whole
+    // escalation it caused is rolled back. Without clearing cycles, three
+    // unrelated lag spikes in a session would add up to a permanent stop.
     this.retries = 0;
+    this.cycles = 0;
+    this.movedSinceFailure = true;
     if (this.blocked && this.blockedTarget &&
         this.blockedTarget.x === late.to.x && this.blockedTarget.y === late.to.y) {
       this.clearBlocked();
@@ -294,6 +322,7 @@ class StepExecutor {
   }
   done() {
     this.pending = null;
+    this.movedSinceFailure = true;
     this.retries = 0;
     this.cycles = 0;
     this.recentFailure = null;

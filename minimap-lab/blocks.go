@@ -31,7 +31,11 @@ const (
 	// tempPenalty is added to the tile cost while a temporary block holds. A
 	// penalty rather than a wall, so a player standing in a one-tile doorway
 	// makes the bot wait and retry instead of declaring the route impossible.
-	tempPenalty = 500
+	//
+	// 2000 is worth about twenty ordinary steps: enough that any realistic way
+	// around a shop counter wins, while a detour longer than that - which in
+	// practice means there is no way around - still lets the route through.
+	tempPenalty = 2000
 	// minStillFrames and maxFrameAgeMS are the evidence a bump must carry. One
 	// stale frame is not proof that the character stayed put.
 	minStillFrames = 3
@@ -55,6 +59,12 @@ type Observation struct {
 	Outcome        string   `json:"outcome"`
 	StillFrames    int      `json:"still_frames"`
 	LastFrameAgeMS int      `json:"last_frame_age_ms"`
+	// MovedSince says whether any step succeeded since the previous failure.
+	// It is what separates "the bot walked away, came back and hit the same
+	// tile again" - two encounters, which is what terrain looks like - from
+	// "the bot has been standing in front of the same idle player for a
+	// minute". Only the first may promote a block to permanent.
+	MovedSince bool `json:"moved_since"`
 }
 
 // Decision is the server's answer. Result is ignored, temp, promoted or
@@ -80,7 +90,9 @@ type BlockStore struct {
 	mu    sync.RWMutex
 	now   func() time.Time
 	tiles map[tileKey]*Blockage
-	edges map[edgeKey]*Blockage
+	// Edges carry an expiry and nothing else: they never promote, never reach
+	// the disk and have no episodes to count.
+	edges map[edgeKey]time.Time
 	rev   uint64
 	// path and dirty back the on-disk file of permanent blocks. dirty is set
 	// only by changes worth persisting, so a burst of temporary blocks never
@@ -112,7 +124,7 @@ func (o *Overlay) Edge(fx, fy, tx, ty int) bool {
 }
 
 func NewBlockStore(now func() time.Time) *BlockStore {
-	return &BlockStore{now: now, tiles: map[tileKey]*Blockage{}, edges: map[edgeKey]*Blockage{}}
+	return &BlockStore{now: now, tiles: map[tileKey]*Blockage{}, edges: map[edgeKey]time.Time{}}
 }
 
 func (s *BlockStore) Revision() uint64 {
@@ -132,7 +144,15 @@ func (s *BlockStore) Observe(obs Observation) Decision {
 
 	switch obs.Outcome {
 	case "entered":
-		if s.clearLocked(tileKey{obs.To.X, obs.To.Y, obs.To.Z}) {
+		cleared := s.clearLocked(tileKey{obs.To.X, obs.To.Y, obs.To.Z})
+		// A failed diagonal blocks the edge rather than the tile, so walking it
+		// has to lift that edge - clearing the tile alone would leave the
+		// crossing refused for the rest of its TTL.
+		if k := (edgeKey{obs.From.X, obs.From.Y, obs.To.X, obs.To.Y, obs.From.Z}); !s.edges[k].IsZero() {
+			delete(s.edges, k)
+			cleared = true
+		}
+		if cleared {
 			s.rev++
 			return Decision{Result: "cleared", Reason: "Postać weszła na kratkę; blokada usunięta."}
 		}
@@ -164,8 +184,7 @@ func (s *BlockStore) Observe(obs Observation) Decision {
 	// own map, so a diagonal only ever blocks the edge it failed on.
 	if dx == 1 && dy == 1 {
 		k := edgeKey{obs.From.X, obs.From.Y, obs.To.X, obs.To.Y, obs.From.Z}
-		s.edges[k] = &Blockage{Kind: KindTemp, Episodes: 1, First: now,
-			Expires: now.Add(edgeTTL), Forget: now.Add(forgetAfter)}
+		s.edges[k] = now.Add(edgeTTL)
 		s.rev++
 		return Decision{Result: "temp", Reason: "Skos nieprzejezdny; zablokowano samo przejście."}
 	}
@@ -186,21 +205,28 @@ func (s *BlockStore) Observe(obs Observation) Decision {
 	// seen again (a retry, a recomputed route, a resent report), not a second
 	// independent one.
 	if now.Before(b.Expires) {
+		// Extend it. Without this a bump at 58s and another at 61s would count
+		// as two episodes, even though the obstacle never left.
+		b.Expires = now.Add(tempTTL)
 		b.Forget = now.Add(forgetAfter)
 		return Decision{Result: "temp", Reason: "Ten sam epizod; blokada tymczasowa przedłużona."}
 	}
+	// Time apart is not enough. An obstacle that simply stayed put - an idle
+	// player in a doorway - would otherwise be promoted to a permanent wall by
+	// the mere passage of a minute, and permanent blocks never expire.
+	if !obs.MovedSince {
+		b.Expires = now.Add(tempTTL)
+		b.Forget = now.Add(forgetAfter)
+		s.rev++
+		return Decision{Result: "temp",
+			Reason: "Ta sama przeszkoda bez chodzenia w międzyczasie; blokada tymczasowa odnowiona."}
+	}
 	b.Episodes++
 	b.Forget = now.Add(forgetAfter)
-	if b.Episodes >= 2 {
-		b.Kind, b.Expires = KindPerm, time.Time{}
-		s.dirty = true
-		s.rev++
-		return Decision{Result: "promoted", Reason: "Drugi niezależny epizod; blokada trwała."}
-	}
-	b.Kind = KindTemp
-	b.Expires = now.Add(tempTTL)
+	b.Kind, b.Expires = KindPerm, time.Time{}
+	s.dirty = true
 	s.rev++
-	return Decision{Result: "temp", Reason: "Kolejny epizod; blokada tymczasowa."}
+	return Decision{Result: "promoted", Reason: "Drugi niezależny epizod; blokada trwała."}
 }
 
 // Clear removes whatever is known about a tile. Reported presence beats any
@@ -231,9 +257,19 @@ func (s *BlockStore) clearLocked(k tileKey) bool {
 	return true
 }
 
+// Snapshot is SnapshotAt without the revision, for callers that only need the
+// overlay itself.
 func (s *BlockStore) Snapshot(area image.Rectangle, z int) *Overlay {
+	o, _ := s.SnapshotAt(area, z)
+	return o
+}
+
+// SnapshotAt returns the overlay together with the revision it was taken at,
+// both under one lock: read separately, the revision could describe a state
+// the overlay never had.
+func (s *BlockStore) SnapshotAt(area image.Rectangle, z int) (*Overlay, uint64) {
 	if s == nil {
-		return nil
+		return nil, 0
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -254,7 +290,7 @@ func (s *BlockStore) Snapshot(area image.Rectangle, z int) *Overlay {
 		}
 		o.edges[[4]int{k[0], k[1], k[2], k[3]}] = true
 	}
-	return o
+	return o, s.rev
 }
 
 // sweepLocked drops expired blocks and forgotten records. Expiry and
@@ -275,8 +311,8 @@ func (s *BlockStore) sweepLocked(now time.Time) {
 			s.rev++
 		}
 	}
-	for k, b := range s.edges {
-		if now.After(b.Forget) || !now.Before(b.Expires) {
+	for k, expires := range s.edges {
+		if !now.Before(expires) {
 			delete(s.edges, k)
 			s.rev++
 		}
@@ -340,15 +376,28 @@ func (s *BlockStore) Load() error {
 // a rename, so a crash mid-write cannot leave a half-written file behind. Only
 // permanent blocks are written: a temporary one is a guess with a minute to
 // live and has no business outliving the process.
+// Save serialises under the lock and writes outside it. Holding the mutex
+// across fsync and rename would stall every route query and preview request
+// for the duration of a disk write.
 func (s *BlockStore) Save() error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.saveLocked()
+	path, data, err := s.encodeLocked()
+	s.mu.Unlock()
+	if err != nil || path == "" {
+		return err
+	}
+	if err := writeFileAtomic(path, data); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	s.dirty = false
+	s.mu.Unlock()
+	return nil
 }
 
-func (s *BlockStore) saveLocked() error {
+func (s *BlockStore) encodeLocked() (string, []byte, error) {
 	if s.path == "" {
-		return nil
+		return "", nil, nil
 	}
 	f := blocksFile{Version: blocksFileVersion, Tiles: []storedTile{}}
 	for k, b := range s.tiles {
@@ -370,9 +419,15 @@ func (s *BlockStore) saveLocked() error {
 	})
 	data, err := json.MarshalIndent(f, "", "  ")
 	if err != nil {
-		return err
+		return "", nil, err
 	}
-	tmp, err := os.CreateTemp(filepath.Dir(s.path), ".blocks-*.tmp")
+	return s.path, data, nil
+}
+
+// writeFileAtomic goes through a temporary in the same directory followed by a
+// rename, so an interrupted write cannot leave a half-written file behind.
+func writeFileAtomic(path string, data []byte) error {
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".blocks-*.tmp")
 	if err != nil {
 		return err
 	}
@@ -389,11 +444,7 @@ func (s *BlockStore) saveLocked() error {
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	if err := os.Rename(name, s.path); err != nil {
-		return err
-	}
-	s.dirty = false
-	return nil
+	return os.Rename(name, path)
 }
 
 // Flush writes the file if a permanent block changed since the last write. The
@@ -404,11 +455,12 @@ func (s *BlockStore) Flush() {
 		return
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	if !s.dirty {
+	dirty := s.dirty
+	s.mu.Unlock()
+	if !dirty {
 		return
 	}
-	if err := s.saveLocked(); err != nil {
+	if err := s.Save(); err != nil {
 		log.Printf("Nie udało się zapisać blokad: %v", err)
 	}
 }

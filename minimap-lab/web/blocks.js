@@ -11,11 +11,23 @@ class BlocksClient {
     this.windowInFlight = false;
     this.lastTile = null;
     this.lastAt = null;
+    // Reports are chained, never sent in parallel. A failure and the arrival
+    // that revokes it are reported from separate ticks; if the revocation
+    // overtook the failure on the wire, the server would clear a block that
+    // does not exist yet and then create it - marking as unreachable the very
+    // tile the character just walked onto.
+    this.reportChain = Promise.resolve();
   }
   // A failed report is not worth retrying: the same failure will be reported
   // again on the next attempt at the same tile, and a queue of stale
   // observations would teach the map about a situation long gone.
-  async report(observation) {
+  report(observation) {
+    const sent = this.reportChain.then(() => this.sendReport(observation));
+    // The chain must survive a failed report; only the caller sees the error.
+    this.reportChain = sent.catch(() => {});
+    return sent;
+  }
+  async sendReport(observation) {
     try {
       const r = await this.fetch('/api/blocks/observe', {
         method: 'POST', headers: {'Content-Type': 'application/json'},
@@ -24,6 +36,15 @@ class BlocksClient {
       if (!r.ok) return null;
       return await r.json();
     } catch { return null; }
+  }
+  // list is what the panel uses to say what it just deleted: the raw preview
+  // window carries only the kind bits, not the episode count or the countdown.
+  async list(x, y, z, r) {
+    try {
+      const res = await this.fetch(`/api/blocks?x=${x}&y=${y}&z=${z}&r=${r}`);
+      if (!res.ok) return [];
+      return await res.json();
+    } catch { return []; }
   }
   async remove(x, y, z) {
     try {
@@ -54,7 +75,10 @@ class BlocksClient {
       const cells = new Uint8Array(await res.arrayBuffer());
       this.lastTile = `${x},${y},${z}`;
       this.lastAt = this.now();
-      return {origin, revision, cells};
+      // z travels with the window: the click handler must delete a block on the
+      // floor the picture shows, not on whatever floor the character has since
+      // walked to.
+      return {origin, z, revision, cells};
     } catch {
       return null;
     } finally {

@@ -22,9 +22,12 @@ func newTestStore() (*BlockStore, *clock) {
 }
 
 // bump is a qualified straight step that failed: the evidence the panel is
-// required to supply before anything is learned.
+// required to supply before anything is learned. MovedSince is true, the
+// ordinary case of a bot that walks between encounters; the tests about an
+// obstacle that never moved set it to false explicitly.
 func bump(from, to Position) Observation {
-	return Observation{From: from, To: to, Outcome: "no_motion", StillFrames: 3, LastFrameAgeMS: 140}
+	return Observation{From: from, To: to, Outcome: "no_motion",
+		StillFrames: 3, LastFrameAgeMS: 140, MovedSince: true}
 }
 
 func TestFirstBumpMakesTemporaryBlock(t *testing.T) {
@@ -324,5 +327,61 @@ func TestFlushWritesOnlyAfterAPersistentChange(t *testing.T) {
 	s.Flush()
 	if _, err := os.Stat(path); err == nil {
 		t.Fatal("a temporary block rewrote the file; only permanent changes belong on disk")
+	}
+}
+
+func TestStandingObstacleNeverPromotes(t *testing.T) {
+	// A player idling in a doorway fails the bot, waits out the TTL and fails
+	// it again - with no walking in between. Time alone must not turn that into
+	// a permanent wall, or one AFK character permanently deletes a corridor.
+	s, c := newTestStore()
+	for i := 0; i < 5; i++ {
+		obs := bump(Position{100, 100, 7}, Position{100, 99, 7})
+		obs.MovedSince = false
+		if d := s.Observe(obs); d.Result != "temp" {
+			t.Fatalf("attempt %d: result %q (%s), want temp", i, d.Result, d.Reason)
+		}
+		c.advance(61 * time.Second)
+	}
+}
+
+func TestEpisodeAfterWalkingPromotes(t *testing.T) {
+	// The bot bumped, went around, came back and bumped again: two separate
+	// encounters with the same tile, which is what terrain looks like.
+	s, c := newTestStore()
+	s.Observe(bump(Position{100, 100, 7}, Position{100, 99, 7}))
+	c.advance(61 * time.Second)
+	if d := s.Observe(bump(Position{100, 100, 7}, Position{100, 99, 7})); d.Result != "promoted" {
+		t.Fatalf("result %q (%s), want promoted", d.Result, d.Reason)
+	}
+}
+
+func TestRepeatWithinTTLExtendsIt(t *testing.T) {
+	// Bumping again at 58s must push the deadline out. Without that, a bump at
+	// 61s counts as a second episode even though the obstacle never left.
+	s, c := newTestStore()
+	s.Observe(bump(Position{100, 100, 7}, Position{100, 99, 7}))
+	c.advance(58 * time.Second)
+	s.Observe(bump(Position{100, 100, 7}, Position{100, 99, 7}))
+	c.advance(5 * time.Second) // 63s from the first bump, but only 5s from the second
+	o := s.Snapshot(image.Rect(90, 90, 110, 110), 7)
+	if got := o.Tile(100, 99); got != KindTemp {
+		t.Fatalf("tile kind %v; the repeat did not extend the block", got)
+	}
+}
+
+func TestEnteredClearsADiagonalEdge(t *testing.T) {
+	s, _ := newTestStore()
+	s.Observe(bump(Position{100, 100, 7}, Position{101, 99, 7}))
+	if !s.Snapshot(image.Rect(90, 90, 110, 110), 7).Edge(100, 100, 101, 99) {
+		t.Fatal("the diagonal bump did not block its edge")
+	}
+	d := s.Observe(Observation{From: Position{100, 100, 7}, To: Position{101, 99, 7},
+		Outcome: "entered", StillFrames: 1, LastFrameAgeMS: 50})
+	if d.Result != "cleared" {
+		t.Fatalf("result %q (%s), want cleared", d.Result, d.Reason)
+	}
+	if s.Snapshot(image.Rect(90, 90, 110, 110), 7).Edge(100, 100, 101, 99) {
+		t.Fatal("walking the diagonal did not lift the edge block")
 	}
 }

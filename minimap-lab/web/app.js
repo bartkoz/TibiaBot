@@ -751,6 +751,12 @@ try {
 }
 routeStatus();
 
+function describeBlock(b) {
+  if (!b) return 'nauczoną';
+  const episodes = `${b.episodes} ${b.episodes === 1 ? 'epizod' : 'epizody'}`;
+  if (b.kind === 'perm') return `trwałą (${episodes})`;
+  return `tymczasową (${episodes}, zostało ${Math.round(b.expires_in_ms / 1000)} s)`;
+}
 // Clicking a tile in the preview revokes what the executor learned about it.
 // The character walking onto it does the same thing on the server side; this
 // is the manual override for a block that is simply wrong.
@@ -767,14 +773,13 @@ $('grid-canvas').addEventListener('click', async event => {
     $('blocks-status').textContent = `${x}, ${y}: brak nauczonej blokady.`;
     return;
   }
-  const z = lastPosition?.z;
-  if (z === undefined) {
-    $('blocks-status').textContent = 'Nieznane piętro — uruchom śledzenie, zanim skasujesz blokadę.';
-    return;
-  }
-  const cleared = await blocksClient.remove(x, y, z);
+  // Read the details before deleting them, so the panel can say what it just
+  // removed rather than only that something is gone.
+  const details = (await blocksClient.list(x, y, gridWindow.z, 1))
+    .find(b => b.x === x && b.y === y);
+  const cleared = await blocksClient.remove(x, y, gridWindow.z);
   $('blocks-status').textContent = cleared
-    ? `${x}, ${y}: blokada usunięta.`
+    ? `${x}, ${y}: usunięto blokadę ${describeBlock(details)}.`
     : `${x}, ${y}: nie udało się usunąć blokady.`;
   if (cleared) follower?.dropPath();
 });

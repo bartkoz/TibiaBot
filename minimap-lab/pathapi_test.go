@@ -6,6 +6,7 @@ import (
 	"image"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -222,5 +223,31 @@ func TestPathWorksWithoutABlockStore(t *testing.T) {
 	r := decodePath(t, postPath(t, s, `{"from":{"x":32800,"y":32050,"z":7},"to":{"x":32800,"y":32054,"z":7}}`))
 	if !r.Found {
 		t.Fatalf("route not found: %s", r.Reason)
+	}
+}
+
+func TestClearingAPermanentBlockReachesTheDisk(t *testing.T) {
+	// Walking onto a permanently blocked tile revokes it. If that never reaches
+	// blocks.json, a restart resurrects the block and cuts the route again.
+	s := pathServer(t, costTile(100, nil))
+	path := filepath.Join(t.TempDir(), "blocks.json")
+	s.blocks = NewBlockStore(time.Now)
+	s.blocks.SetPath(path)
+	s.blocks.Observe(Observation{From: Position{32800, 32051, 7}, To: Position{32800, 32050, 7},
+		Outcome: "no_motion", StillFrames: 3, LastFrameAgeMS: 100, MovedSince: true})
+	s.blocks.tiles[tileKey{32800, 32050, 7}].Kind = KindPerm
+	if err := s.blocks.Save(); err != nil {
+		t.Fatal(err)
+	}
+
+	decodePath(t, postPath(t, s, `{"from":{"x":32800,"y":32050,"z":7},"to":{"x":32800,"y":32054,"z":7}}`))
+
+	fresh := NewBlockStore(time.Now)
+	fresh.SetPath(path)
+	if err := fresh.Load(); err != nil {
+		t.Fatal(err)
+	}
+	if k := fresh.Snapshot(image.Rect(32790, 32040, 32810, 32060), 7).Tile(32800, 32050); k != KindNone {
+		t.Fatalf("tile kind %v after reload; the revocation never reached the disk", k)
 	}
 }
