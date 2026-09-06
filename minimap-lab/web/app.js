@@ -503,7 +503,12 @@ function normalisedPoint(event, element) {
 function renderInputStatus(state = {}) {
   const armed = inputClient.armed;
   $('input-arm').disabled = armed;
-  for (const id of ['input-disarm', 'input-calibrate', 'input-walk', 'input-actions']) $(id).disabled = !armed;
+  for (const id of ['input-disarm', 'input-calibrate']) $(id).disabled = !armed;
+  // input-walk and input-actions stay tickable regardless of armed state: the
+  // intent to walk automatically must be expressible before arming, so it is
+  // already in place - with the game already focused - the instant arming
+  // completes. Ticking them while disarmed does nothing on its own; the
+  // !inputClient.armed guard in followStep is what keeps that inert.
   if (!armed) {
     // Every way of stopping clears half-finished step state, so re-arming
     // never resumes a step whose confirmation was never seen.
@@ -592,7 +597,9 @@ const HOTKEY_TYPES = ['rope', 'ladder', 'hole', 'shovel'];
 const HOTKEY_STORAGE_KEY = 'minimap-lab-hotkeys';
 function hotkeyConfig() {
   const keys = {};
-  for (const type of HOTKEY_TYPES) keys[type] = $(`hotkey-${type}`).value.trim();
+  // input.go's hotkeyNames only knows lowercase names; "F7" is the natural
+  // way to type a function key, so it must still be accepted.
+  for (const type of HOTKEY_TYPES) keys[type] = $(`hotkey-${type}`).value.trim().toLowerCase();
   return {keys, clickAfterHotkey: !$('input-own-tile').checked};
 }
 function saveHotkeyConfig() {
@@ -602,7 +609,14 @@ function saveHotkeyConfig() {
 function sendHotkeyConfig() {
   if (!inputClient.armed) return;
   const {keys, clickAfterHotkey} = hotkeyConfig();
-  inputClient.config(keys, clickAfterHotkey);
+  // The config is all-or-nothing server-side: one typo in any of the four
+  // fields voids the other three and the driver keeps its previous (empty)
+  // map. Without surfacing this, the only clue was "brak hotkeya dla akcji
+  // ..." flashing between heartbeats - so show the reason, which already
+  // names the rejected field.
+  inputClient.config(keys, clickAfterHotkey).then(({ok, reason}) => {
+    if (!ok) $('input-status').textContent = `Konfiguracja klawiszy odrzucona: ${reason || 'nieznany błąd'}`;
+  });
 }
 for (const type of HOTKEY_TYPES) {
   $(`hotkey-${type}`).addEventListener('input', () => { saveHotkeyConfig(); sendHotkeyConfig(); });
@@ -621,7 +635,7 @@ $('input-walk').addEventListener('change', () => { if (!$('input-walk').checked)
 fetch('/api/input/status').then(r => r.json()).then(state => {
   if (state.available === false) return;
   $('input-arm').disabled = false;
-  $('input-status').textContent = 'Gotowe do uzbrojenia. Uzbrój, gdy klient gry jest oknem aktywnym.';
+  $('input-status').textContent = 'Gotowe do uzbrojenia. Kliknij „Uzbrój” i przełącz się na okno gry podczas odliczania.';
 }).catch(() => {});
 
 try {

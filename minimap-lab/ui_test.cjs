@@ -5,7 +5,7 @@ const vm = require('node:vm');
 
 // Exercise UI event flows and submitted options, with only browser drawing and
 // media permission APIs stubbed. The Go tests verify the actual image matcher.
-function app({respond, respondPath, respondInput, latency=3, storage={}} = {}) {
+function app({respond, respondPath, respondInput, latency=3, storage={}, inputAvailable=false} = {}) {
   const elements = new Map(), requests = [], pathRequests = [], sendRequests = [];
   let clock = 100, timerID = 0;
   const timers = new Map();
@@ -39,7 +39,7 @@ function app({respond, respondPath, respondInput, latency=3, storage={}} = {}) {
       if (url === '/api/info') return {async json() {return {floors:[7,8],maps:'maps',message:''};}};
       // No test arms a session, so control simply reports itself unavailable,
       // the same reply the Go server gives when started without -input.
-      if (url === '/api/input/status') return {async json() {return {available:false, platform:'test'};}};
+      if (url === '/api/input/status') return {async json() {return {available:inputAvailable, platform:'test'};}};
       if (url === '/api/input') {
         const body = JSON.parse(options.body); sendRequests.push(body);
         const result = respondInput?.(body, sendRequests.length) || {status:'emitted', key:'numpad6'};
@@ -225,6 +225,37 @@ test('a stale frame produces a non-zero observation age, not the time spent sinc
   assert.equal(a.sendRequests.length, 1, 'expected exactly one intent sent for the walk step');
   assert.ok(a.sendRequests[0].observation_age_ms >= 40,
     `age must track the real capture-to-send gap (~50ms), got ${a.sendRequests[0].observation_age_ms}`);
+});
+
+test('executor.observe dostaje prawdziwy czas przechwycenia klatki, nie czas bieżący', async () => {
+  // Pins the panel/executor seam of C2: the observation_age_ms assertion
+  // above only checks the age sent to the driver. It would stay green even
+  // if followStep passed `now` in place of capturedAt into
+  // executor.observe(position, capturedAt, now) - which would silently
+  // disable executor.js's "a frame captured before the key was pressed is
+  // not proof" guard, since capturedAt would then never be earlier than the
+  // emission time it gets compared against.
+  const a = app({latency: 50});
+  await new Promise(setImmediate); await a.get('share').onclick();
+  await a.loadRoute(routeFile({x:32970, y:32100, z:7}));
+  a.get('route-follow').checked = true; a.get('live').checked = true;
+  a.get('input-walk').checked = true;
+  a.inputClient.armed = true; a.inputClient.session = 'test-session';
+
+  const observeCalls = [];
+  const realObserve = a.executor.observe.bind(a.executor);
+  a.executor.observe = (position, capturedAt, now) => {
+    observeCalls.push({capturedAt, now});
+    return realObserve(position, capturedAt, now);
+  };
+
+  await a.get('locate').onclick();
+
+  assert.ok(observeCalls.length > 0, 'expected at least one executor.observe() call');
+  for (const {capturedAt, now} of observeCalls) {
+    assert.ok(now - capturedAt >= 40,
+      `capturedAt must be the real frame-capture time, not now (got now-capturedAt=${now - capturedAt})`);
+  }
 });
 
 test('a newly blocked target forces the follower to drop its cached path', async () => {
@@ -546,7 +577,7 @@ test('zmiana klawisza akcji zapisuje konfigurację i wysyła ją do wykonawcy', 
   await new Promise(setImmediate);
   a.inputClient.armed = true;
   const configCalls = [];
-  a.inputClient.config = async (keys, clickAfterHotkey) => { configCalls.push({keys, clickAfterHotkey}); return true; };
+  a.inputClient.config = async (keys, clickAfterHotkey) => { configCalls.push({keys, clickAfterHotkey}); return {ok: true}; };
 
   a.get('hotkey-rope').value = 'f7';
   a.get('hotkey-rope').listeners.input();
@@ -558,11 +589,43 @@ test('zmiana klawisza akcji zapisuje konfigurację i wysyła ją do wykonawcy', 
   assert.equal(saved.keys.rope, 'f7', 'the hotkey must also be persisted to localStorage');
 });
 
+test('klawisz akcji wpisany wielkimi literami jest wysyłany małymi', async () => {
+  // Important: the natural way to write a function key is "F7", but
+  // hotkeyNames on the Go side only knows lowercase names - the panel
+  // trimmed but never lowercased, so the obvious spelling was rejected.
+  const a = app();
+  await new Promise(setImmediate);
+  a.inputClient.armed = true;
+  const configCalls = [];
+  a.inputClient.config = async (keys, clickAfterHotkey) => { configCalls.push({keys, clickAfterHotkey}); return {ok: true}; };
+
+  a.get('hotkey-rope').value = 'F7';
+  a.get('hotkey-rope').listeners.input();
+
+  assert.equal(configCalls[0].keys.rope, 'f7');
+});
+
+test('odrzucona konfiguracja klawiszy pokazuje powód wskazujący pole', async () => {
+  // Important: sendHotkeyConfig used to discard the ok/reason from
+  // inputClient.config entirely, so a rejected (all-or-nothing) config left
+  // the status line reading "Uzbrojono:" as if nothing had happened.
+  const a = app();
+  await new Promise(setImmediate);
+  a.inputClient.armed = true;
+  a.inputClient.config = async () => ({ok: false, reason: 'nieznany klawisz dla akcji rope: control'});
+
+  a.get('hotkey-rope').value = 'control';
+  a.get('hotkey-rope').listeners.input();
+  await new Promise(setImmediate);
+
+  assert.match(a.get('input-status').textContent, /rope/);
+});
+
 test('konfiguracja klawiszy nie jest wysyłana, dopóki wykonawca jest rozbrojony', async () => {
   const a = app();
   await new Promise(setImmediate);
   const configCalls = [];
-  a.inputClient.config = async (keys, clickAfterHotkey) => { configCalls.push({keys, clickAfterHotkey}); return true; };
+  a.inputClient.config = async (keys, clickAfterHotkey) => { configCalls.push({keys, clickAfterHotkey}); return {ok: true}; };
 
   a.get('hotkey-rope').value = 'f7';
   a.get('hotkey-rope').listeners.input();
@@ -586,7 +649,7 @@ test('uzbrojenie po odliczeniu wysyła wcześniej wpisane klawisze akcji', async
   a.get('hotkey-rope').value = 'f7';
   const configCalls = [];
   a.inputClient.arm = async () => { a.inputClient.armed = true; return {armed: true, target: {path: '/Applications/Tibia.app'}}; };
-  a.inputClient.config = async (keys, clickAfterHotkey) => { configCalls.push({keys, clickAfterHotkey}); return true; };
+  a.inputClient.config = async (keys, clickAfterHotkey) => { configCalls.push({keys, clickAfterHotkey}); return {ok: true}; };
 
   a.get('input-arm').click();
   for (let i = 0; i < 5; i++) await a.tick();
@@ -594,6 +657,81 @@ test('uzbrojenie po odliczeniu wysyła wcześniej wpisane klawisze akcji', async
 
   assert.equal(configCalls.length, 1, 'the configured hotkeys must be sent right after arming');
   assert.equal(configCalls[0].keys.rope, 'f7');
+});
+
+test('chodzenie i akcje pięter pozostają dostępne do zaznaczenia, gdy sterowanie jest rozbrojone', async () => {
+  // Critical: input-walk used to be disabled while disarmed, so the only way
+  // to tick it was to come back to the browser AFTER arming - stealing focus
+  // from the game and disarming on the very next tick, which then unticked
+  // the box again. An endless loop that never lets a live test start.
+  const a = app();
+  await new Promise(setImmediate);
+
+  // Simulate a full arm -> disarm cycle: even after having been armed once,
+  // the checkboxes that express intent must stay tickable while disarmed.
+  a.inputClient.armed = true;
+  a.inputClient.onState({armed: true, target: {path: '/Applications/Tibia.app'}});
+  a.inputClient.armed = false;
+  a.inputClient.onState({armed: false, reason: 'zatrzymane z panelu'});
+
+  assert.equal(a.get('input-walk').disabled, false, 'walking must be tickable before/after arming, not only while armed');
+  assert.equal(a.get('input-actions').disabled, false, 'floor actions must be tickable before/after arming, not only while armed');
+});
+
+test('zaznaczenie chodzenia automatycznego przed uzbrojeniem uruchamia automatykę od razu po uzbrojeniu', async () => {
+  const a = app();
+  await new Promise(setImmediate); await a.get('share').onclick();
+  await a.loadRoute(routeFile({x:32970, y:32100, z:7}));
+  a.get('route-follow').checked = true;
+  a.get('live').checked = true;
+
+  // Ticked while still disarmed - the game is the focused window right now,
+  // and must stay that way; nothing here should require touching the browser.
+  a.get('input-walk').checked = true;
+
+  a.inputClient.arm = async () => {
+    a.inputClient.armed = true; a.inputClient.session = 'test-session';
+    return {armed: true, target: {path: '/Applications/Tibia.app'}};
+  };
+  a.get('input-arm').click();
+  for (let i = 0; i < 5; i++) await a.tick(); // the 5s countdown
+  await new Promise(setImmediate);
+
+  await a.get('locate').onclick();
+  await a.tick();
+  await new Promise(setImmediate);
+
+  assert.ok(a.sendRequests.length > 0,
+    'automation must start once arming completes, without the user touching the checkbox again');
+});
+
+test('rozbrojenie z serwera nadal odznacza chodzenie automatyczne', async () => {
+  // The safety half of the fix: a real disarm must still untick input-walk,
+  // so a disarmed panel never silently resumes walking on the next arm.
+  const a = app({respondInput: () => ({status: 'disarmed', reason: 'okno gry straciło focus'})});
+  await new Promise(setImmediate); await a.get('share').onclick();
+  await a.loadRoute(routeFile({x:32970,y:32100,z:7}));
+  a.get('route-follow').checked = true; a.get('live').checked = true;
+  a.get('input-walk').checked = true;
+  a.inputClient.armed = true; a.inputClient.session = 'test-session';
+
+  await a.get('locate').onclick();
+  await a.tick();
+  await new Promise(setImmediate);
+
+  assert.equal(a.get('input-walk').checked, false, 'a real disarm must still clear the walk checkbox');
+});
+
+test('podpowiedź startowa opisuje odliczanie, nie kliknięcie na aktywnym oknie gry', async () => {
+  // Minor: the pre-countdown instruction ("uzbrój, gdy klient gry jest oknem
+  // aktywnym") contradicted the countdown - it told the user to focus the
+  // game *before* clicking Uzbrój, when the whole point of the countdown is
+  // to let them do that *after* clicking it.
+  const a = app({inputAvailable: true});
+  await new Promise(setImmediate);
+
+  assert.doesNotMatch(a.get('input-status').textContent, /gdy klient gry jest oknem aktywnym/);
+  assert.match(a.get('input-status').textContent, /odliczani|kliknij.*uzbrój/i);
 });
 
 test('floor actions unticked still lets the character walk onto stairs', async () => {
@@ -652,6 +790,7 @@ test('a changed capture resolution while armed leaves the panel showing disarmed
   await new Promise(setImmediate); await a.get('share').onclick();
   a.get('live').checked = true;
   a.inputClient.armed = true; a.inputClient.session = 'test-session';
+  a.get('input-walk').checked = true;
   await a.get('locate').onclick();
   a.get('video').videoWidth = 200; // the capture source changed resolution mid-stream
   await a.tick();
@@ -659,8 +798,12 @@ test('a changed capture resolution while armed leaves the panel showing disarmed
   assert.equal(a.get('input-arm').disabled, false, 'arm is available again');
   assert.equal(a.get('input-disarm').disabled, true);
   assert.equal(a.get('input-calibrate').disabled, true);
-  assert.equal(a.get('input-walk').disabled, true);
-  assert.equal(a.get('input-actions').disabled, true);
+  // input-walk and input-actions stay enabled even while disarmed, so the
+  // user can re-express the intent to walk before arming again; this real
+  // disarm must still untick input-walk itself, so it never silently resumes.
+  assert.equal(a.get('input-walk').disabled, false);
+  assert.equal(a.get('input-actions').disabled, false);
+  assert.equal(a.get('input-walk').checked, false, 'a real disarm must still untick walking');
 });
 
 test('a calibration click does not invalidate live tracking, but a normal pointerdown still does', async () => {
