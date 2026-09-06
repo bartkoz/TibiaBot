@@ -274,9 +274,9 @@ test('a newly blocked target forces the follower to drop its cached path', async
   await a.get('locate').onclick();
 
   // The mocked position never advances (always 32958,32077), so every walk
-  // attempt times out. Drive enough ticks (~100ms each) to clear two
-  // stepTimeoutMS (1200ms) failures and reach the eventual stop.
-  for (let i = 0; i < 40; i++) { await a.tick(); await new Promise(setImmediate); }
+  // attempt times out. Drive enough ticks (~100ms each) to clear three
+  // stepTimeoutMS (1800ms) failures and reach the eventual stop.
+  for (let i = 0; i < 70; i++) { await a.tick(); await new Promise(setImmediate); }
 
   assert.ok(a.pathRequests.length > 1,
     `a newly blocked target must trigger a fresh path request, got ${a.pathRequests.length} request(s)`);
