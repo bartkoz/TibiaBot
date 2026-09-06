@@ -229,7 +229,7 @@ git commit -m "feat: add Emitter interface, direction mapping and dry emitter"
 
 **Interfaces:**
 - Consumes: `Emitter`, `Window`, `keyForDirection`, `DryEmitter` z Task 1
-- Produces: `type Driver struct` z polem `now func() time.Time`, `func NewDriver(e Emitter) *Driver`, `func (*Driver) Arm() (ArmState, error)`, `func (*Driver) Disarm(reason string)`, `func (*Driver) Status() ArmState`, `func (*Driver) Beat(session string) ArmState`, `func (*Driver) ActionDone()`, `func (*Driver) Submit(in Intent) Result`, typy `Intent`, `Result`, `ArmState`, stałe `holdMS`, `maxObservationAgeMS`, `heartbeatTimeoutMS`, `maxTapsPerSecond`, `actionClickDelayMS`
+- Produces: `type Driver struct` z polem `now func() time.Time`, `func NewDriver(e Emitter) *Driver`, `func (*Driver) Arm() (ArmState, error)`, `func (*Driver) Disarm(reason string)`, `func (*Driver) Status() ArmState`, `func (*Driver) Beat(session string) ArmState`, `func (*Driver) ActionDone()`, `func (*Driver) Submit(in Intent) InputResult`, typy `Intent`, `InputResult`, `ArmState`, stałe `holdMS`, `maxObservationAgeMS`, `heartbeatTimeoutMS`, `maxTapsPerSecond`, `actionClickDelayMS`
 
 - [ ] **Step 1: Write the failing test**
 
@@ -237,7 +237,6 @@ git commit -m "feat: add Emitter interface, direction mapping and dry emitter"
 package main
 
 import (
-	"strings"
 	"testing"
 	"time"
 )
@@ -476,7 +475,9 @@ type Intent struct {
 	AgeMS     int    `json:"observation_age_ms"`
 }
 
-type Result struct {
+// InputResult is named apart from matcher.go's Result, which is the
+// minimap match result and predates this feature.
+type InputResult struct {
 	Status string `json:"status"` // emitted, in_progress, refused, disarmed
 	Reason string `json:"reason,omitempty"`
 	Key    string `json:"key,omitempty"`
@@ -507,7 +508,7 @@ type Driver struct {
 
 	taps       []time.Time
 	lastSeq    uint64
-	lastResult Result
+	lastResult InputResult
 	inFlight   *action
 
 	// Hotkeys used for floor transitions, filled from the panel config.
@@ -543,7 +544,7 @@ func (d *Driver) Arm() (ArmState, error) {
 	}
 	d.armed, d.session, d.target = true, hex.EncodeToString(buf), win
 	d.reason, d.lastBeat = "", d.now()
-	d.taps, d.lastSeq, d.lastResult, d.inFlight = nil, 0, Result{}, nil
+	d.taps, d.lastSeq, d.lastResult, d.inFlight = nil, 0, InputResult{}, nil
 	return d.state(), nil
 }
 
@@ -595,24 +596,24 @@ func (d *Driver) ActionDone() {
 	d.inFlight = nil
 }
 
-func (d *Driver) Submit(in Intent) Result {
+func (d *Driver) Submit(in Intent) InputResult {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if !d.armed {
-		return Result{Status: "disarmed", Reason: "wykonawca jest rozbrojony"}
+		return InputResult{Status: "disarmed", Reason: "wykonawca jest rozbrojony"}
 	}
 	if in.Session != d.session {
-		return Result{Status: "refused", Reason: "nieprawidłowy token sesji"}
+		return InputResult{Status: "refused", Reason: "nieprawidłowy token sesji"}
 	}
 	if d.expiredLocked() {
 		d.disarmLocked("panel przestał odpowiadać")
-		return Result{Status: "disarmed", Reason: d.reason}
+		return InputResult{Status: "disarmed", Reason: d.reason}
 	}
 	if in.Seq != 0 && in.Seq == d.lastSeq {
 		return d.lastResult
 	}
 	if in.AgeMS < 0 || in.AgeMS > maxObservationAgeMS {
-		return d.record(in.Seq, Result{Status: "refused",
+		return d.record(in.Seq, InputResult{Status: "refused",
 			Reason: fmt.Sprintf("pozycja starsza niż %d ms", maxObservationAgeMS)})
 	}
 	// Focus is checked as late as possible. It still is not atomic with the
@@ -620,10 +621,10 @@ func (d *Driver) Submit(in Intent) Result {
 	win, err := d.em.Focused()
 	if err != nil || win.PID != d.target.PID {
 		d.disarmLocked("okno gry straciło focus")
-		return Result{Status: "disarmed", Reason: d.reason}
+		return InputResult{Status: "disarmed", Reason: d.reason}
 	}
 	if !d.allowTapLocked() {
-		return d.record(in.Seq, Result{Status: "refused", Reason: "limit klawiszy na sekundę"})
+		return d.record(in.Seq, InputResult{Status: "refused", Reason: "limit klawiszy na sekundę"})
 	}
 	switch in.Action {
 	case "walk":
@@ -631,48 +632,48 @@ func (d *Driver) Submit(in Intent) Result {
 	case "transition":
 		return d.record(in.Seq, d.transitionLocked(in))
 	default:
-		return d.record(in.Seq, Result{Status: "refused", Reason: "nieznana akcja"})
+		return d.record(in.Seq, InputResult{Status: "refused", Reason: "nieznana akcja"})
 	}
 }
 
-func (d *Driver) walkLocked(in Intent) Result {
+func (d *Driver) walkLocked(in Intent) InputResult {
 	if d.inFlight != nil {
-		return Result{Status: "in_progress", Reason: "trwa akcja zmiany piętra"}
+		return InputResult{Status: "in_progress", Reason: "trwa akcja zmiany piętra"}
 	}
 	key, ok := keyForDirection(in.Direction)
 	if !ok {
-		return Result{Status: "refused", Reason: "nieznany kierunek"}
+		return InputResult{Status: "refused", Reason: "nieznany kierunek"}
 	}
 	if err := d.em.TapKey(key, holdMS); err != nil {
 		d.disarmLocked(err.Error())
-		return Result{Status: "disarmed", Reason: err.Error()}
+		return InputResult{Status: "disarmed", Reason: err.Error()}
 	}
 	d.taps = append(d.taps, d.now())
-	return Result{Status: "emitted", Key: key}
+	return InputResult{Status: "emitted", Key: key}
 }
 
-func (d *Driver) transitionLocked(in Intent) Result {
+func (d *Driver) transitionLocked(in Intent) InputResult {
 	want := action{waypoint: in.Waypoint, kind: in.Type}
 	if d.inFlight != nil {
 		if *d.inFlight == want {
-			return Result{Status: "in_progress", Reason: "akcja już trwa"}
+			return InputResult{Status: "in_progress", Reason: "akcja już trwa"}
 		}
-		return Result{Status: "refused", Reason: "trwa inna akcja"}
+		return InputResult{Status: "refused", Reason: "trwa inna akcja"}
 	}
 	key, ok := d.ActionKeys[in.Type]
 	if !ok || key == "" {
-		return Result{Status: "refused", Reason: "brak hotkeya dla akcji " + in.Type}
+		return InputResult{Status: "refused", Reason: "brak hotkeya dla akcji " + in.Type}
 	}
 	if err := d.em.TapKey(key, holdMS); err != nil {
 		d.disarmLocked(err.Error())
-		return Result{Status: "disarmed", Reason: err.Error()}
+		return InputResult{Status: "disarmed", Reason: err.Error()}
 	}
 	d.taps = append(d.taps, d.now())
 	d.inFlight = &want
-	return Result{Status: "emitted", Key: key}
+	return InputResult{Status: "emitted", Key: key}
 }
 
-func (d *Driver) record(seq uint64, r Result) Result {
+func (d *Driver) record(seq uint64, r InputResult) InputResult {
 	d.lastSeq, d.lastResult = seq, r
 	return r
 }
@@ -721,6 +722,9 @@ git commit -m "feat: add input driver with arming, focus gate and rate limit"
 - Produces: `func (*Driver) Calibrate(nx, ny float64) error`
 
 - [ ] **Step 1: Write the failing test**
+
+Ten task dokłada test sprawdzający, że po utracie focusu nie padnie kliknięcie,
+więc do importów `driver_test.go` dochodzi `"strings"`:
 
 ```go
 func TestDriverTransitionTapsHotkeyThenClicksPlayerTile(t *testing.T) {
@@ -857,10 +861,10 @@ W `transitionLocked`, zaraz po sprawdzeniu `d.inFlight`, przed pobraniem hotkeya
 	// Stairs are climbed by walking onto them; no item is used. Sending a
 	// hotkey here would press whatever else is bound to it.
 	if in.Type == "stairs" {
-		return Result{Status: "refused", Reason: "schody pokonuje się krokiem, nie akcją"}
+		return InputResult{Status: "refused", Reason: "schody pokonuje się krokiem, nie akcją"}
 	}
 	if d.ClickAfterHotkey && !d.HasTile {
-		return Result{Status: "refused", Reason: "brak kalibracji kratki postaci"}
+		return InputResult{Status: "refused", Reason: "brak kalibracji kratki postaci"}
 	}
 ```
 
@@ -874,11 +878,11 @@ oraz po `d.taps = append(d.taps, d.now())`, przed `d.inFlight = &want`:
 		// far more destructive in a foreign window than a key tap.
 		if win, err := d.em.Focused(); err != nil || win.PID != d.target.PID {
 			d.disarmLocked("okno gry straciło focus w trakcie akcji")
-			return Result{Status: "disarmed", Reason: d.reason}
+			return InputResult{Status: "disarmed", Reason: d.reason}
 		}
 		if err := d.em.Click(d.Tile[0], d.Tile[1]); err != nil {
 			d.disarmLocked(err.Error())
-			return Result{Status: "disarmed", Reason: err.Error()}
+			return InputResult{Status: "disarmed", Reason: err.Error()}
 		}
 	}
 ```
@@ -906,7 +910,7 @@ git commit -m "feat: add hotkey-then-click sequence for floor transitions"
 - Test: `minimap-lab/inputapi_test.go`
 
 **Interfaces:**
-- Consumes: `Driver`, `Intent`, `Result`, `ArmState`, `DryEmitter`
+- Consumes: `Driver`, `Intent`, `InputResult`, `ArmState`, `DryEmitter`
 - Produces: `func selectEmitter(mode string) (Emitter, error)`, pole `server.driver *Driver`, trasy `POST /api/arm`, `POST /api/disarm`, `POST /api/input`, `POST /api/input/calibrate`, `POST /api/input/done`, `GET /api/input/status`
 
 - [ ] **Step 1: Write the failing test**
@@ -957,7 +961,7 @@ func TestInputAPIWalksAfterArming(t *testing.T) {
 
 	w := postInput(t, s, "/api/input", `{"session":"`+session+`","seq":1,"action":"walk","direction":"E","observation_age_ms":80}`)
 
-	var got Result
+	var got InputResult
 	json.Unmarshal(w.Body.Bytes(), &got)
 	if w.Code != http.StatusOK || got.Status != "emitted" || got.Key != "numpad6" {
 		t.Fatalf("%d %+v", w.Code, got)
@@ -973,7 +977,7 @@ func TestInputAPIRefusesWithoutSessionToken(t *testing.T) {
 
 	w := postInput(t, s, "/api/input", `{"seq":1,"action":"walk","direction":"E","observation_age_ms":80}`)
 
-	var got Result
+	var got InputResult
 	json.Unmarshal(w.Body.Bytes(), &got)
 	if got.Status != "refused" {
 		t.Fatalf("%d %+v", w.Code, got)
@@ -1037,7 +1041,7 @@ func TestInputAPIDisarmStops(t *testing.T) {
 	postInput(t, s, "/api/disarm", `{"session":"`+session+`"}`)
 
 	w := postInput(t, s, "/api/input", `{"session":"`+session+`","seq":1,"action":"walk","direction":"E","observation_age_ms":80}`)
-	var got Result
+	var got InputResult
 	json.Unmarshal(w.Body.Bytes(), &got)
 	if got.Status != "disarmed" {
 		t.Fatalf("got %+v", got)
