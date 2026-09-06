@@ -65,7 +65,7 @@ func TestFindPathWalksOpenGroundDiagonally(t *testing.T) {
 		".....",
 	})
 
-	r := findPath(context.Background(), g, at(0, 0), at(3, 2), 10000)
+	r := findPath(context.Background(), NewPathGrid(g, nil), at(0, 0), at(3, 2), 10000)
 
 	assertWalk(t, r, at(0, 0), at(3, 2))
 	// Octile movement reaches (3,2) in three steps, not five.
@@ -82,7 +82,7 @@ func TestFindPathRoundsAWall(t *testing.T) {
 		".....",
 	})
 
-	r := findPath(context.Background(), g, at(0, 0), at(4, 0), 10000)
+	r := findPath(context.Background(), NewPathGrid(g, nil), at(0, 0), at(4, 0), 10000)
 
 	assertWalk(t, r, at(0, 0), at(4, 0))
 	for _, s := range r.Steps {
@@ -101,7 +101,7 @@ func TestFindPathReportsUnreachableGoal(t *testing.T) {
 		".....",
 	})
 
-	r := findPath(context.Background(), g, at(0, 0), at(2, 2), 10000)
+	r := findPath(context.Background(), NewPathGrid(g, nil), at(0, 0), at(2, 2), 10000)
 
 	if r.Found || r.Status != "no_route" {
 		t.Fatalf("expected no_route, got %+v", r)
@@ -118,7 +118,7 @@ func TestFindPathRefusesToCutAClosedCorner(t *testing.T) {
 		"#.",
 	})
 
-	r := findPath(context.Background(), g, at(1, 0), at(0, 1), 10000)
+	r := findPath(context.Background(), NewPathGrid(g, nil), at(1, 0), at(0, 1), 10000)
 
 	if r.Found {
 		t.Fatalf("expected no path through a closed corner, got %v", r.Steps)
@@ -133,7 +133,7 @@ func TestFindPathWalksDiagonallyAlongASingleWall(t *testing.T) {
 		"...",
 	})
 
-	r := findPath(context.Background(), g, at(0, 0), at(2, 1), 10000)
+	r := findPath(context.Background(), NewPathGrid(g, nil), at(0, 0), at(2, 1), 10000)
 
 	assertWalk(t, r, at(0, 0), at(2, 1))
 }
@@ -145,7 +145,7 @@ func TestFindPathPrefersCheapGroundOverTheDirectLine(t *testing.T) {
 		".....",
 	})
 
-	r := findPath(context.Background(), g, at(0, 0), at(4, 0), 10000)
+	r := findPath(context.Background(), NewPathGrid(g, nil), at(0, 0), at(4, 0), 10000)
 
 	assertWalk(t, r, at(0, 0), at(4, 0))
 	for _, s := range r.Steps {
@@ -158,7 +158,7 @@ func TestFindPathPrefersCheapGroundOverTheDirectLine(t *testing.T) {
 func TestFindPathRejectsBlockedStart(t *testing.T) {
 	g := gridFrom([]string{"#.."})
 
-	r := findPath(context.Background(), g, at(0, 0), at(2, 0), 10000)
+	r := findPath(context.Background(), NewPathGrid(g, nil), at(0, 0), at(2, 0), 10000)
 
 	if r.Found || r.Status != "blocked_start" || r.Reason == "" {
 		t.Fatalf("blocked start must be reported: %+v", r)
@@ -168,7 +168,7 @@ func TestFindPathRejectsBlockedStart(t *testing.T) {
 func TestFindPathRejectsBlockedGoal(t *testing.T) {
 	g := gridFrom([]string{"..#"})
 
-	r := findPath(context.Background(), g, at(0, 0), at(2, 0), 10000)
+	r := findPath(context.Background(), NewPathGrid(g, nil), at(0, 0), at(2, 0), 10000)
 
 	if r.Found || r.Status != "blocked_goal" || r.Reason == "" {
 		t.Fatalf("blocked goal must be reported: %+v", r)
@@ -182,7 +182,7 @@ func TestFindPathStopsAtTheIterationLimit(t *testing.T) {
 	}
 	g := gridFrom(rows)
 
-	r := findPath(context.Background(), g, at(0, 0), at(39, 39), 5)
+	r := findPath(context.Background(), NewPathGrid(g, nil), at(0, 0), at(39, 39), 5)
 
 	if r.Found || r.Status != "limit" {
 		t.Fatalf("expected the search to stop at the limit: %+v", r)
@@ -201,7 +201,7 @@ func TestFindPathHonoursACancelledContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	r := findPath(ctx, g, at(0, 0), at(39, 39), 100000)
+	r := findPath(ctx, NewPathGrid(g, nil), at(0, 0), at(39, 39), 100000)
 
 	if r.Found || r.Status != "cancelled" || r.Reason == "" {
 		t.Fatalf("cancelled search must be reported: %+v", r)
@@ -211,7 +211,7 @@ func TestFindPathHonoursACancelledContext(t *testing.T) {
 func TestFindPathReturnsTheStartingTileWhenAlreadyThere(t *testing.T) {
 	g := gridFrom([]string{"..."})
 
-	r := findPath(context.Background(), g, at(1, 0), at(1, 0), 10000)
+	r := findPath(context.Background(), NewPathGrid(g, nil), at(1, 0), at(1, 0), 10000)
 
 	if !r.Found || r.Status != "ok" || len(r.Steps) != 1 || r.Steps[0] != at(1, 0) || r.Tiles != 0 {
 		t.Fatalf("standing on the goal: %+v", r)
@@ -264,7 +264,7 @@ func TestFindPathIsOptimalOnGroundCheaperThanOneStep(t *testing.T) {
 		if g.At(from[0], from[1]) == blockedCost || g.At(to[0], to[1]) == blockedCost {
 			continue
 		}
-		r := findPath(context.Background(), g, from, to, 100000)
+		r := findPath(context.Background(), NewPathGrid(g, nil), from, to, 100000)
 		want := dijkstra(g, from, to)
 		if !r.Found {
 			if want != 0 {
@@ -298,9 +298,132 @@ func TestFindPathBudgetCountsExpansionsNotHeapPops(t *testing.T) {
 		if g.At(from[0], from[1]) == blockedCost || g.At(to[0], to[1]) == blockedCost {
 			continue
 		}
-		r := findPath(context.Background(), g, from, to, g.area.Dx()*g.area.Dy())
+		r := findPath(context.Background(), NewPathGrid(g, nil), from, to, g.area.Dx()*g.area.Dy())
 		if r.Status == "limit" && dijkstra(g, from, to) > 0 {
 			t.Fatalf("attempt %d: reachable route refused with an area-sized budget\n%s", attempt, strings.Join(rows, "\n"))
+		}
+	}
+}
+
+// overlayOf builds an Overlay for the ASCII grids used across these tests,
+// where 'T' marks a temporary block and 'P' a permanent one.
+func overlayOf(rows []string) *Overlay {
+	o := &Overlay{tiles: map[[2]int]Kind{}, edges: map[[4]int]bool{}}
+	for y, row := range rows {
+		for x, c := range row {
+			switch c {
+			case 'T':
+				o.tiles[[2]int{1000 + x, 1000 + y}] = KindTemp
+			case 'P':
+				o.tiles[[2]int{1000 + x, 1000 + y}] = KindPerm
+			}
+		}
+	}
+	return o
+}
+
+func TestPermanentBlockIsImpassable(t *testing.T) {
+	g := NewPathGrid(gridFrom([]string{"....", "....", "...."}), overlayOf([]string{
+		"....",
+		".P..",
+		"....",
+	}))
+	r := findPath(context.Background(), g, at(1, 0), at(1, 2), 1000)
+	assertWalk(t, r, at(1, 0), at(1, 2))
+	for _, s := range r.Steps {
+		if s == at(1, 1) {
+			t.Fatal("route runs through a permanent block")
+		}
+	}
+}
+
+func TestTemporaryBlockIsAvoidedWhenThereIsAWayAround(t *testing.T) {
+	g := NewPathGrid(gridFrom([]string{"....", "....", "...."}), overlayOf([]string{
+		"....",
+		".T..",
+		"....",
+	}))
+	r := findPath(context.Background(), g, at(1, 0), at(1, 2), 1000)
+	assertWalk(t, r, at(1, 0), at(1, 2))
+	for _, s := range r.Steps {
+		if s == at(1, 1) {
+			t.Fatal("route runs through a temporary block even though a detour exists")
+		}
+	}
+}
+
+func TestTemporaryBlockStillPassableWhenThereIsNoWayAround(t *testing.T) {
+	// A one-tile doorway in a wall. A player standing in it must not turn the
+	// route into "no route" - the bot should wait and retry, not give up.
+	g := NewPathGrid(gridFrom([]string{
+		"#.#",
+		"#.#",
+		"#.#",
+	}), overlayOf([]string{
+		"...",
+		".T.",
+		"...",
+	}))
+	r := findPath(context.Background(), g, at(1, 0), at(1, 2), 1000)
+	if !r.Found {
+		t.Fatalf("status %s (%s); a temporary block must be a penalty, not a wall", r.Status, r.Reason)
+	}
+	assertWalk(t, r, at(1, 0), at(1, 2))
+}
+
+func TestPermanentBlockClosesADiagonalCorner(t *testing.T) {
+	// Walking NE from (0,2) to (1,1) squeezes between (1,2) and (0,1). With
+	// both blocked the game refuses the step, and so must the search - even
+	// when one of the two is a learned block rather than map data.
+	g := NewPathGrid(gridFrom([]string{
+		"...",
+		"#..",
+		"...",
+	}), overlayOf([]string{
+		"...",
+		"...",
+		".P.",
+	}))
+	r := findPath(context.Background(), g, at(0, 2), at(1, 1), 1000)
+	for i := 1; i < len(r.Steps); i++ {
+		if r.Steps[i-1] == at(0, 2) && r.Steps[i] == at(1, 1) {
+			t.Fatal("route cut a corner closed by a learned block")
+		}
+	}
+}
+
+func TestBlockedEdgeIsNotWalked(t *testing.T) {
+	o := &Overlay{tiles: map[[2]int]Kind{}, edges: map[[4]int]bool{
+		{1000, 1002, 1001, 1001}: true,
+	}}
+	g := NewPathGrid(gridFrom([]string{"...", "...", "..."}), o)
+	r := findPath(context.Background(), g, at(0, 2), at(1, 1), 1000)
+	if !r.Found {
+		t.Fatalf("status %s; blocking one edge must not block the destination", r.Status)
+	}
+	for i := 1; i < len(r.Steps); i++ {
+		if r.Steps[i-1] == at(0, 2) && r.Steps[i] == at(1, 1) {
+			t.Fatal("route used an edge known to fail")
+		}
+	}
+}
+
+func TestEmptyOverlayChangesNothing(t *testing.T) {
+	rows := []string{"....", ".##.", "...."}
+	plain := findPath(context.Background(), NewPathGrid(gridFrom(rows), nil), at(0, 0), at(3, 2), 10000)
+	empty := findPath(context.Background(), NewPathGrid(gridFrom(rows), overlayOf([]string{"....", "....", "...."})), at(0, 0), at(3, 2), 10000)
+	if plain.Cost != empty.Cost || len(plain.Steps) != len(empty.Steps) {
+		t.Fatalf("an empty overlay changed the route: %v vs %v", plain, empty)
+	}
+}
+
+func TestBaseGridIsNotMutatedByOverlay(t *testing.T) {
+	base := gridFrom([]string{"....", "....", "...."})
+	before := append([]uint8(nil), base.pix...)
+	findPath(context.Background(), NewPathGrid(base, overlayOf([]string{"....", ".P..", "...."})), at(0, 0), at(3, 2), 10000)
+	for i := range before {
+		if base.pix[i] != before[i] {
+			t.Fatalf("the shared cost grid was modified at index %d; the floor cache is now poisoned", i)
 		}
 	}
 }

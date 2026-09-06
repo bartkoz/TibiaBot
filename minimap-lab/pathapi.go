@@ -96,7 +96,7 @@ func (s *server) path(w http.ResponseWriter, r *http.Request) {
 	}
 	// Every reachable tile is closed at most once, so the area itself bounds
 	// the work; no arbitrary iteration constant is needed.
-	result := findPath(ctx, grid.limitTo(area), [2]int{from.X, from.Y}, [2]int{to.X, to.Y}, area.Dx()*area.Dy())
+	result := findPath(ctx, NewPathGrid(grid.limitTo(area), nil), [2]int{from.X, from.Y}, [2]int{to.X, to.Y}, area.Dx()*area.Dy())
 	if result.Steps == nil {
 		result.Steps = [][2]int{}
 	}

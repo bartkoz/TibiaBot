@@ -32,7 +32,7 @@ func realCostGrid(t *testing.T, centre [2]int, radius int) *CostGrid {
 func TestRealMapRouteStaysOnWalkableGround(t *testing.T) {
 	grid := realCostGrid(t, realOpenGround, 70)
 
-	r := findPath(context.Background(), grid, realOpenGround, realOpenGoal, 500000)
+	r := findPath(context.Background(), NewPathGrid(grid, nil), realOpenGround, realOpenGoal, 500000)
 
 	if !r.Found {
 		t.Fatalf("no route across open ground: %+v", r)
@@ -78,7 +78,7 @@ func TestRealMapRefusesAWallAsAWaypoint(t *testing.T) {
 		t.Fatal("expected a blocked tile near the enclosed fixture position")
 	}
 
-	r := findPath(context.Background(), grid, realEnclosed, wall, 200000)
+	r := findPath(context.Background(), NewPathGrid(grid, nil), realEnclosed, wall, 200000)
 
 	if r.Found || r.Status != "blocked_goal" {
 		t.Fatalf("a wall is not a waypoint: %+v", r)
@@ -100,7 +100,7 @@ func TestRealMapReportsAnUnreachableWaypoint(t *testing.T) {
 		t.Skip("no walkable tile outside the courtyard in range")
 	}
 
-	r := findPath(context.Background(), grid, realEnclosed, outside, 500000)
+	r := findPath(context.Background(), NewPathGrid(grid, nil), realEnclosed, outside, 500000)
 
 	if r.Found {
 		t.Skipf("tile %v turned out to be reachable; nothing to assert", outside)

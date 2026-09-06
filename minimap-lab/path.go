@@ -39,11 +39,11 @@ func octile(ax, ay, bx, by int) float64 {
 
 // findPath runs A* over the cost grid. The returned steps include the starting
 // tile, so Tiles is one less than their count.
-func findPath(ctx context.Context, grid *CostGrid, from, to [2]int, maxIterations int) PathResult {
-	if grid.At(from[0], from[1]) == blockedCost {
+func findPath(ctx context.Context, grid *PathGrid, from, to [2]int, maxIterations int) PathResult {
+	if grid.Blocked(from[0], from[1]) {
 		return PathResult{Status: "blocked_start", Reason: "Pozycja startowa jest nieprzechodnia lub poza wczytanym obszarem."}
 	}
-	if grid.At(to[0], to[1]) == blockedCost {
+	if grid.Blocked(to[0], to[1]) {
 		return PathResult{Status: "blocked_goal", Reason: "Waypoint leży na kratce nieprzechodniej lub poza wczytanym obszarem."}
 	}
 	if from == to {
@@ -52,10 +52,7 @@ func findPath(ctx context.Context, grid *CostGrid, from, to [2]int, maxIteration
 	// Ground can cost less than one unit per step, so the straight-line estimate
 	// is scaled by the cheapest tile around; otherwise it overestimates and A*
 	// stops returning the cheapest route.
-	floor := float64(grid.cheapest) / 100
-	if !grid.walkable || floor > 1 {
-		floor = 1
-	}
+	floor := grid.Cheapest()
 	estimate := func(x, y int) float64 { return floor * octile(x, y, to[0], to[1]) }
 	open := &pathQueue{}
 	heap.Init(open)
@@ -86,18 +83,22 @@ func findPath(ctx context.Context, grid *CostGrid, from, to [2]int, maxIteration
 			if closed[next] {
 				continue
 			}
-			cost := grid.At(next[0], next[1])
-			if cost == blockedCost {
+			if grid.Blocked(next[0], next[1]) {
+				continue
+			}
+			// An edge learned to fail is refused on its own: the target tile may
+			// be perfectly walkable from another side.
+			if grid.EdgeBlocked(cur.at[0], cur.at[1], next[0], next[1]) {
 				continue
 			}
 			// A diagonal step through a closed corner is impossible in game:
 			// walking alongside one wall is fine, squeezing between two is not.
 			if s.dx != 0 && s.dy != 0 &&
-				grid.At(cur.at[0]+s.dx, cur.at[1]) == blockedCost &&
-				grid.At(cur.at[0], cur.at[1]+s.dy) == blockedCost {
+				grid.Blocked(cur.at[0]+s.dx, cur.at[1]) &&
+				grid.Blocked(cur.at[0], cur.at[1]+s.dy) {
 				continue
 			}
-			g := best[cur.at] + s.weight*float64(cost)/100
+			g := best[cur.at] + s.weight*grid.Cost(next[0], next[1])/100
 			if seen, ok := best[next]; ok && seen <= g {
 				continue
 			}
