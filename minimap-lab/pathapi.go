@@ -8,6 +8,9 @@ import (
 	"io"
 	"net/http"
 	"time"
+
+	"minimap-lab/internal/mapdata"
+	"minimap-lab/internal/nav"
 )
 
 const (
@@ -33,11 +36,11 @@ type pathRequest struct {
 	Margin int      `json:"margin,omitempty"`
 }
 
-func (t *tileRef) position() (Position, bool) {
+func (t *tileRef) position() (mapdata.Position, bool) {
 	if t == nil || t.X == nil || t.Y == nil || t.Z == nil {
-		return Position{}, false
+		return mapdata.Position{}, false
 	}
-	p := Position{*t.X, *t.Y, *t.Z}
+	p := mapdata.Position{X: *t.X, Y: *t.Y, Z: *t.Z}
 	return p, p.X >= 0 && p.X <= 65535 && p.Y >= 0 && p.Y <= 65535 && p.Z >= 0 && p.Z <= 15
 }
 
@@ -64,7 +67,7 @@ func (s *server) path(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if from.Z != to.Z {
-		writeJSON(w, PathResult{Status: "different_floor", Steps: [][2]int{},
+		writeJSON(w, nav.PathResult{Status: "different_floor", Steps: [][2]int{},
 			Reason: "Waypoint leży na innym piętrze. Użyj przejścia i poczekaj na potwierdzenie nowego Z."})
 		return
 	}
@@ -106,13 +109,13 @@ func (s *server) path(w http.ResponseWriter, r *http.Request) {
 	// revision comes from the same call, so it describes the overlay the route
 	// was actually computed on rather than whatever arrived while it ran.
 	overlay, revision := s.blocks.SnapshotAt(area, from.Z)
-	pg := NewPathGrid(grid.limitTo(area), overlay)
+	pg := nav.NewPathGrid(grid.LimitTo(area), overlay)
 	// A waypoint recorded a tile or two off - the tracker drifted, or the
 	// position was read wrong - would otherwise kill the whole route. Aim at
 	// the nearest tile the bot can stand on instead, and say so.
 	//
 	// Checked only once the start is sound: a character standing on ground the
-	// map calls impassable is the more useful thing to report, and findPath
+	// map calls impassable is the more useful thing to report, and nav.FindPath
 	// says so on its own.
 	goalX, goalY := to.X, to.Y
 	ok := true
@@ -120,14 +123,14 @@ func (s *server) path(w http.ResponseWriter, r *http.Request) {
 		goalX, goalY, ok = pg.NearestWalkable(to.X, to.Y)
 	}
 	if !ok {
-		writeJSON(w, PathResult{Status: "blocked_goal", Steps: [][2]int{},
+		writeJSON(w, nav.PathResult{Status: "blocked_goal", Steps: [][2]int{},
 			Reason: pg.GoalRefusal(to.X, to.Y), OverlayRevision: revision,
 			ElapsedMS: float64(time.Since(started).Microseconds()) / 1000})
 		return
 	}
 	// Every reachable tile is closed at most once, so the area itself bounds
 	// the work; no arbitrary iteration constant is needed.
-	result := findPath(ctx, pg, [2]int{from.X, from.Y}, [2]int{goalX, goalY}, area.Dx()*area.Dy())
+	result := nav.FindPath(ctx, pg, [2]int{from.X, from.Y}, [2]int{goalX, goalY}, area.Dx()*area.Dy())
 	result.GoalMoved = goalX != to.X || goalY != to.Y
 	result.OverlayRevision = revision
 	if result.Steps == nil {
@@ -138,11 +141,11 @@ func (s *server) path(w http.ResponseWriter, r *http.Request) {
 }
 
 // costGrid keeps one decoded floor of walking costs. Called under costMu.
-func (s *server) costGrid(floor int, area image.Rectangle) (*CostGrid, error) {
-	if s.costCache != nil && s.costFloor == floor && area.In(s.costCache.bounds) {
+func (s *server) costGrid(floor int, area image.Rectangle) (*mapdata.CostGrid, error) {
+	if s.costCache != nil && s.costFloor == floor && area.In(s.costCache.Bounds()) {
 		return s.costCache, nil
 	}
-	grid, err := loadCostArea(s.dir, floor, area)
+	grid, err := mapdata.LoadCostArea(s.dir, floor, area)
 	if err != nil {
 		return nil, err
 	}

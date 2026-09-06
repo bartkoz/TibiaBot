@@ -60,8 +60,8 @@ Pętla odejmuje czas obliczeń od okresu 100/200 ms i nigdy nie kolejkuje równo
 Benchmarki na zapisanym prawdziwym wycinku:
 
 ```sh
-go test -run '^$' -bench 'Benchmark(HTTP)?TrackActualCapture' -benchtime=2s -benchmem
-node --test ui_test.cjs tracker_test.cjs route_test.cjs recorder_test.cjs follower_test.cjs blocks_test.cjs
+go test ./... -run '^$' -bench 'Benchmark(HTTP)?TrackActualCapture' -benchtime=2s -benchmem
+node --test webtests/*.cjs
 ```
 
 Benchmark HTTP obejmuje dekodowanie PNG, obsługę żądania i odpowiedź JSON wewnątrz procesu. Nie obejmuje przeglądarki ani sieci; rzeczywisty czas całego odczytu pokazuje panel.
@@ -257,8 +257,29 @@ Zapisz wynik każdego punktu w opisie commita — to jedyna weryfikacja emiteró
 
 ```sh
 go test ./...
-node --test ui_test.cjs tracker_test.cjs route_test.cjs recorder_test.cjs follower_test.cjs executor_test.cjs input_client_test.cjs blocks_test.cjs
+node --test webtests/*.cjs
 ```
+
+## Układ katalogów
+
+```
+main.go          flagi i start; server.go — struktura serwera i tablica tras
+locateapi.go     /api/info, /api/locate, wybór atlasu lokalnego i przejścia Z
+pathapi.go  gridapi.go  blocksapi.go  inputapi.go
+web/             panel przeglądarkowy, wkompilowany przez //go:embed web/*
+webtests/        testy panelu: node --test webtests/*.cjs
+testdata/        wycinki referencyjne dzielone przez wszystkie pakiety
+internal/
+  mapdata/       atlas i siatka kosztów z paczki map, typ Position, mapa demo
+  locate/        dopasowywanie obrazu minimapy do atlasu
+  nav/           A*, siatka przechodniości i nauczone blokady
+  input/         emitery klawiatury i myszy oraz uzbrajany wykonawca
+  testenv/       ścieżki i fixture'y wspólne dla testów wszystkich pakietów
+```
+
+Zależności biegną w jedną stronę: `main → {locate, nav, input, mapdata}`, `locate → mapdata`, `nav → mapdata`, a `input` nie zależy od niczego w projekcie. Uchwyty HTTP są metodami na `server`, więc muszą leżeć w jednym pakiecie z nim — i to samo trzyma `web/` w korzeniu, bo wzorce `//go:embed` są względne wobec pakietu i nie mogą wychodzić w górę przez `..`.
+
+Testy panelu leżą w `webtests/`, a nie w `web/`, właśnie z powodu tego wzorca: w `web/` trafiłyby do binarki i serwer zacząłby je wystawiać po HTTP.
 
 ## Jak działa
 
@@ -306,13 +327,13 @@ Warstwa blokad testowana jest osobno, na wstrzykniętym zegarze: czas życia wpi
 
 Testy obejmują znane współrzędne, przesunięcie, skalę i maskę, brak dopasowania, niejednoznaczność, brak map, granicę kafli i żądania HTTP. Wyszukiwanie trasy sprawdzane jest osobno: odczyt kosztów z palety (konwersja do skali szarości zamieniłaby blokadę 255 na teren przechodni), brakujące kafle, granica kafli, obejście ściany, zakaz przecinania zamkniętego rogu, wybór tańszego terenu, zablokowany start i cel, limit kroków, anulowanie oraz walidacja `/api/path` wraz z dowodem, że zapytanie o trasę nie czeka na zamek śledzenia. Optymalność sprawdzana jest przez porównanie z Dijkstrą na dwustu losowych siatkach mieszanego terenu. Testy nie wymagają gry.
 
-Dodatkowy test na mapach obecnych w repozytorium: `MINIMAP_REAL_MAP_TEST=1 go test -run TestLocalMapIntegration -v`. Porównuje wycinek atlasu ze znaną pozycją `(32369,32241,7)`; nadal nie jest to test zrzutu z klienta gry.
+Dodatkowy test na mapach obecnych w repozytorium: `MINIMAP_REAL_MAP_TEST=1 go test ./internal/locate/ -run TestLocalMapIntegration -v`. Porównuje wycinek atlasu ze znaną pozycją `(32369,32241,7)`; nadal nie jest to test zrzutu z klienta gry.
 
-Test prawdziwego wycinka z przechwytywania: `MINIMAP_REAL_MAP_TEST=1 go test -run TestActualCaptureAgainstWholeFloor -v`. Dla zapisanej minimapy z Venore znajduje wskazany punkt `(32958,32077,7)` przy skali 1 i wyniku około 86,5%. Zwykłe `go test ./...` sprawdza też ten obraz na mniejszym atlasie oraz jego wariant powiększony 2×. `node --test ui_test.cjs` sprawdza przepływ demo → screenshot/udostępnianie, przywracanie kalibracji oraz wczytanie trasy, nagrywanie i podążanie; nie wymaga zainstalowanej przeglądarki. `route_test.cjs`, `recorder_test.cjs` i `follower_test.cjs` obejmują format pliku, nagrywanie z parowaniem punktów przejścia oraz stan podążania.
+Test prawdziwego wycinka z przechwytywania: `MINIMAP_REAL_MAP_TEST=1 go test ./internal/locate/ -run TestActualCaptureAgainstWholeFloor -v`. Dla zapisanej minimapy z Venore znajduje wskazany punkt `(32958,32077,7)` przy skali 1 i wyniku około 86,5%. Zwykłe `go test ./...` sprawdza też ten obraz na mniejszym atlasie oraz jego wariant powiększony 2×. `node --test webtests/ui_test.cjs` sprawdza przepływ demo → screenshot/udostępnianie, przywracanie kalibracji oraz wczytanie trasy, nagrywanie i podążanie; nie wymaga zainstalowanej przeglądarki. `webtests/route_test.cjs`, `webtests/recorder_test.cjs` i `webtests/follower_test.cjs` obejmują format pliku, nagrywanie z parowaniem punktów przejścia oraz stan podążania.
 
-Testy trasy na mapach z repozytorium: `MINIMAP_REAL_MAP_TEST=1 go test -run TestRealMap -v`. Prowadzą 63-kratkową trasę przez największy spójny obszar powierzchni Venore i sprawdzają, że każdy krok stoi na terenie przechodnim, sąsiaduje z poprzednim i nie przecina zamkniętego rogu. Sprawdzają też, że ściana jako waypoint zwraca `blocked_goal`, a teren odgrodzony murem — `no_route`.
+Testy trasy na mapach z repozytorium: `MINIMAP_REAL_MAP_TEST=1 go test ./internal/nav/ -run TestRealMap -v`. Prowadzą 63-kratkową trasę przez największy spójny obszar powierzchni Venore i sprawdzają, że każdy krok stoi na terenie przechodnim, sąsiaduje z poprzednim i nie przecina zamkniętego rogu. Sprawdzają też, że ściana jako waypoint zwraca `blocked_goal`, a teren odgrodzony murem — `no_route`.
 
-Test lokalnego przejścia na rzeczywistych mapach: `MINIMAP_REAL_MAP_TEST=1 go test -run TestFloorTransitionRealAtlas -v`. Używa zapisanego wycinka oraz zasymulowanej ostatniej pozycji na Z=8; szuka właściwego Z=7 w pobliżu XY. Nie wymaga nagrania prawdziwego przejścia. Przy pierwszej próbie z wczytaniem kafli zmierzono około 36 ms na tym Macu. `go test -run '^$' -bench BenchmarkAdjacentFloorCold -benchtime=2s` mierzy osobno wyszukiwanie i wczytywanie małego atlasu z fixture.
+Test lokalnego przejścia na rzeczywistych mapach: `MINIMAP_REAL_MAP_TEST=1 go test . -run TestFloorTransitionRealAtlas -v`. Używa zapisanego wycinka oraz zasymulowanej ostatniej pozycji na Z=8; szuka właściwego Z=7 w pobliżu XY. Nie wymaga nagrania prawdziwego przejścia. Przy pierwszej próbie z wczytaniem kafli zmierzono około 36 ms na tym Macu. `go test . -run '^$' -bench BenchmarkAdjacentFloorCold -benchtime=2s` mierzy osobno wyszukiwanie i wczytywanie małego atlasu z fixture.
 
 ## Diagnostyka
 

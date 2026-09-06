@@ -3,6 +3,9 @@ package main
 import (
 	"fmt"
 	"net/http"
+
+	"minimap-lab/internal/mapdata"
+	"minimap-lab/internal/nav"
 )
 
 // Bits of one preview tile. Missing data and a wall are separate on purpose:
@@ -31,11 +34,11 @@ func (s *server) grid(w http.ResponseWriter, r *http.Request) {
 	area := rectAround(x, y, radius)
 	s.previewMu.Lock()
 	defer s.previewMu.Unlock()
-	if s.previewCache == nil || s.previewFloor != z || !area.In(s.previewCache.bounds) {
+	if s.previewCache == nil || s.previewFloor != z || !area.In(s.previewCache.Bounds()) {
 		// Loaded with a margin: the window follows the character tile by tile,
 		// and a cache holding exactly the current window would be thrown away
 		// and re-decoded on every single step taken near a chunk edge.
-		g, err := loadCostArea(s.dir, z, area.Inset(-previewMargin))
+		g, err := mapdata.LoadCostArea(s.dir, z, area.Inset(-previewMargin))
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
@@ -53,13 +56,13 @@ func (s *server) grid(w http.ResponseWriter, r *http.Request) {
 			var b byte
 			if !grid.Covered(wx, wy) {
 				b |= gridMissing
-			} else if grid.At(wx, wy) == blockedCost {
+			} else if grid.At(wx, wy) == mapdata.BlockedCost {
 				b |= gridBlocked
 			}
 			switch overlay.Tile(wx, wy) {
-			case KindTemp:
+			case nav.KindTemp:
 				b |= gridTemp
-			case KindPerm:
+			case nav.KindPerm:
 				b |= gridPerm
 			}
 			out[row*side+col] = b

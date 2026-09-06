@@ -5,6 +5,10 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"minimap-lab/internal/mapdata"
+	"minimap-lab/internal/nav"
+	"minimap-lab/internal/testenv"
 )
 
 func getGrid(t testing.TB, s *server, query string) (*httptest.ResponseRecorder, []byte) {
@@ -16,8 +20,8 @@ func getGrid(t testing.TB, s *server, query string) (*httptest.ResponseRecorder,
 }
 
 func TestGridWindowHasOneBytePerTile(t *testing.T) {
-	s := pathServer(t, costTile(100, nil))
-	s.blocks = NewBlockStore(time.Now)
+	s := pathServer(t, testenv.CostTile(100, nil))
+	s.blocks = nav.NewBlockStore(time.Now)
 
 	w, body := getGrid(t, s, "x=32800&y=32050&z=7&r=32")
 	if w.Code != http.StatusOK {
@@ -36,8 +40,8 @@ func TestGridWindowHasOneBytePerTile(t *testing.T) {
 
 func TestGridDistinguishesWallFromMissingData(t *testing.T) {
 	// The single chunk starts at (32768,32000); tiles left of it have no file.
-	s := pathServer(t, costTile(100, map[[2]int]uint8{{0, 50}: 255}))
-	s.blocks = NewBlockStore(time.Now)
+	s := pathServer(t, testenv.CostTile(100, map[[2]int]uint8{{0, 50}: 255}))
+	s.blocks = nav.NewBlockStore(time.Now)
 
 	_, body := getGrid(t, s, "x=32768&y=32050&z=7&r=4")
 	side := 9
@@ -55,9 +59,9 @@ func TestGridDistinguishesWallFromMissingData(t *testing.T) {
 }
 
 func TestGridShowsLearnedBlocks(t *testing.T) {
-	s := pathServer(t, costTile(100, nil))
-	s.blocks = NewBlockStore(time.Now)
-	s.blocks.Observe(Observation{From: Position{32800, 32051, 7}, To: Position{32800, 32050, 7},
+	s := pathServer(t, testenv.CostTile(100, nil))
+	s.blocks = nav.NewBlockStore(time.Now)
+	s.blocks.Observe(nav.Observation{From: mapdata.Position{X: 32800, Y: 32051, Z: 7}, To: mapdata.Position{X: 32800, Y: 32050, Z: 7},
 		Outcome: "no_motion", StillFrames: 3, LastFrameAgeMS: 100})
 
 	_, body := getGrid(t, s, "x=32800&y=32050&z=7&r=4")
@@ -71,8 +75,8 @@ func TestGridShowsLearnedBlocks(t *testing.T) {
 }
 
 func TestGridRefusesAnOutOfRangeRadius(t *testing.T) {
-	s := pathServer(t, costTile(100, nil))
-	s.blocks = NewBlockStore(time.Now)
+	s := pathServer(t, testenv.CostTile(100, nil))
+	s.blocks = nav.NewBlockStore(time.Now)
 	for _, q := range []string{"x=32800&y=32050&z=7&r=999", "x=32800&y=32050&z=7&r=0"} {
 		if w, _ := getGrid(t, s, q); w.Code != http.StatusBadRequest {
 			t.Fatalf("%s: status %d, want 400", q, w.Code)
@@ -81,8 +85,8 @@ func TestGridRefusesAnOutOfRangeRadius(t *testing.T) {
 }
 
 func TestGridDoesNotEvictThePlannerCache(t *testing.T) {
-	s := pathServer(t, costTile(100, nil))
-	s.blocks = NewBlockStore(time.Now)
+	s := pathServer(t, testenv.CostTile(100, nil))
+	s.blocks = nav.NewBlockStore(time.Now)
 	decodePath(t, postPath(t, s, `{"from":{"x":32800,"y":32050,"z":7},"to":{"x":32800,"y":32054,"z":7}}`))
 	planner := s.costCache
 	if planner == nil {

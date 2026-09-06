@@ -10,13 +10,17 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"minimap-lab/internal/mapdata"
+	"minimap-lab/internal/nav"
+	"minimap-lab/internal/testenv"
 )
 
 func pathServer(t testing.TB, tiles ...*image.Paletted) *server {
 	t.Helper()
 	dir := t.TempDir()
 	for i, im := range tiles {
-		writeCostTile(t, dir, 32768+256*i, 32000, 7, im)
+		testenv.WriteCostTile(t, dir, 32768+256*i, 32000, 7, im)
 	}
 	return &server{dir: dir, gate: make(chan struct{}, 1)}
 }
@@ -30,12 +34,12 @@ func postPath(t testing.TB, s *server, body string) *httptest.ResponseRecorder {
 	return w
 }
 
-func decodePath(t testing.TB, w *httptest.ResponseRecorder) PathResult {
+func decodePath(t testing.TB, w *httptest.ResponseRecorder) nav.PathResult {
 	t.Helper()
 	if w.Code != http.StatusOK {
 		t.Fatalf("status %d: %s", w.Code, w.Body.String())
 	}
-	var r PathResult
+	var r nav.PathResult
 	if err := json.Unmarshal(w.Body.Bytes(), &r); err != nil {
 		t.Fatal(err)
 	}
@@ -43,7 +47,7 @@ func decodePath(t testing.TB, w *httptest.ResponseRecorder) PathResult {
 }
 
 func TestPathAPIReturnsARoute(t *testing.T) {
-	s := pathServer(t, costTile(100, nil))
+	s := pathServer(t, testenv.CostTile(100, nil))
 
 	w := postPath(t, s, `{"from":{"x":32800,"y":32050,"z":7},"to":{"x":32806,"y":32050,"z":7}}`)
 
@@ -57,7 +61,7 @@ func TestPathAPIReturnsARoute(t *testing.T) {
 }
 
 func TestPathAPIRefusesRoutesBetweenFloors(t *testing.T) {
-	s := pathServer(t, costTile(100, nil))
+	s := pathServer(t, testenv.CostTile(100, nil))
 
 	w := postPath(t, s, `{"from":{"x":32800,"y":32050,"z":7},"to":{"x":32806,"y":32050,"z":8}}`)
 
@@ -68,7 +72,7 @@ func TestPathAPIRefusesRoutesBetweenFloors(t *testing.T) {
 }
 
 func TestPathAPIRejectsMalformedInput(t *testing.T) {
-	s := pathServer(t, costTile(100, nil))
+	s := pathServer(t, testenv.CostTile(100, nil))
 	for name, body := range map[string]string{
 		"not json":               `{`,
 		"empty object":           `{}`,
@@ -106,7 +110,7 @@ func TestPathAPIReportsMissingMapData(t *testing.T) {
 }
 
 func TestPathAPIDoesNotBlockTracking(t *testing.T) {
-	s := pathServer(t, costTile(100, nil))
+	s := pathServer(t, testenv.CostTile(100, nil))
 	// Holding the locate gate must not delay or fail a route query.
 	s.gate <- struct{}{}
 	defer func() { <-s.gate }()
@@ -123,9 +127,9 @@ func TestPathAPIWidensTheSearchAreaWithMargin(t *testing.T) {
 	// bounding box between the two points.
 	edits := map[[2]int]uint8{}
 	for y := 40; y <= 60; y++ {
-		edits[[2]int{35, y}] = blockedCost
+		edits[[2]int{35, y}] = mapdata.BlockedCost
 	}
-	s := pathServer(t, costTile(100, edits))
+	s := pathServer(t, testenv.CostTile(100, edits))
 	body := `{"from":{"x":32800,"y":32050,"z":7},"to":{"x":32806,"y":32050,"z":7},"margin":%d}`
 
 	tight := decodePath(t, postPath(t, s, strings.Replace(body, "%d", "1", 1)))
@@ -140,7 +144,7 @@ func TestPathAPIWidensTheSearchAreaWithMargin(t *testing.T) {
 }
 
 func TestPathAPIRefusesAnAreaTooLargeToLoad(t *testing.T) {
-	s := pathServer(t, costTile(100, nil))
+	s := pathServer(t, testenv.CostTile(100, nil))
 
 	// Valid coordinates that span the whole map would allocate gigabytes.
 	w := postPath(t, s, `{"from":{"x":0,"y":0,"z":7},"to":{"x":65535,"y":65535,"z":7}}`)
@@ -151,7 +155,7 @@ func TestPathAPIRefusesAnAreaTooLargeToLoad(t *testing.T) {
 }
 
 func TestPathAPIStopsWorkForAnAbandonedRequest(t *testing.T) {
-	s := pathServer(t, costTile(100, nil))
+	s := pathServer(t, testenv.CostTile(100, nil))
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	r := httptest.NewRequest("POST", "http://127.0.0.1:8095/api/path",
@@ -162,7 +166,7 @@ func TestPathAPIStopsWorkForAnAbandonedRequest(t *testing.T) {
 	s.routes().ServeHTTP(w, r)
 
 	if w.Code == http.StatusOK {
-		var result PathResult
+		var result nav.PathResult
 		if err := json.Unmarshal(w.Body.Bytes(), &result); err == nil && result.Found {
 			t.Fatal("an abandoned request should not produce a route")
 		}
@@ -173,8 +177,9 @@ func TestPathAPIStopsWorkForAnAbandonedRequest(t *testing.T) {
 }
 
 func TestPathAvoidsLearnedBlock(t *testing.T) {
-	s := pathServer(t, costTile(100, nil))
-	s.blocks = NewBlockStore(time.Now)
+	s := pathServer(t, testenv.CostTile(100, nil))
+	clock := newTestClock()
+	s.blocks = nav.NewBlockStore(clock.now)
 
 	body := `{"from":{"x":32800,"y":32050,"z":7},"to":{"x":32800,"y":32054,"z":7},"margin":8}`
 	before := decodePath(t, postPath(t, s, body))
@@ -184,10 +189,8 @@ func TestPathAvoidsLearnedBlock(t *testing.T) {
 
 	// Learn the tile straight ahead twice, so it becomes permanent and the
 	// route has to go around it.
-	obs := Observation{From: Position{32800, 32051, 7}, To: Position{32800, 32052, 7},
-		Outcome: "no_motion", StillFrames: 3, LastFrameAgeMS: 100}
-	s.blocks.Observe(obs)
-	s.blocks.tiles[tileKey{32800, 32052, 7}].Kind = KindPerm
+	learnPermanentBlock(t, clock, s.blocks,
+		mapdata.Position{X: 32800, Y: 32051, Z: 7}, mapdata.Position{X: 32800, Y: 32052, Z: 7})
 
 	after := decodePath(t, postPath(t, s, body))
 	if !after.Found {
@@ -204,14 +207,14 @@ func TestPathAvoidsLearnedBlock(t *testing.T) {
 }
 
 func TestStandingOnABlockClearsIt(t *testing.T) {
-	s := pathServer(t, costTile(100, nil))
-	s.blocks = NewBlockStore(time.Now)
-	s.blocks.Observe(Observation{From: Position{32800, 32051, 7}, To: Position{32800, 32050, 7},
+	s := pathServer(t, testenv.CostTile(100, nil))
+	s.blocks = nav.NewBlockStore(time.Now)
+	s.blocks.Observe(nav.Observation{From: mapdata.Position{X: 32800, Y: 32051, Z: 7}, To: mapdata.Position{X: 32800, Y: 32050, Z: 7},
 		Outcome: "no_motion", StillFrames: 3, LastFrameAgeMS: 100})
 
 	decodePath(t, postPath(t, s, `{"from":{"x":32800,"y":32050,"z":7},"to":{"x":32800,"y":32054,"z":7}}`))
 
-	if k := s.blocks.Snapshot(image.Rect(32790, 32040, 32810, 32060), 7).Tile(32800, 32050); k != KindNone {
+	if k := s.blocks.Snapshot(image.Rect(32790, 32040, 32810, 32060), 7).Tile(32800, 32050); k != nav.KindNone {
 		t.Fatalf("tile kind %v; the character is standing there, which beats any learned guess", k)
 	}
 }
@@ -219,7 +222,7 @@ func TestStandingOnABlockClearsIt(t *testing.T) {
 func TestPathWorksWithoutABlockStore(t *testing.T) {
 	// Every existing test builds a server with no store; that must keep working
 	// rather than panicking on a nil map.
-	s := pathServer(t, costTile(100, nil))
+	s := pathServer(t, testenv.CostTile(100, nil))
 	r := decodePath(t, postPath(t, s, `{"from":{"x":32800,"y":32050,"z":7},"to":{"x":32800,"y":32054,"z":7}}`))
 	if !r.Found {
 		t.Fatalf("route not found: %s", r.Reason)
@@ -229,25 +232,25 @@ func TestPathWorksWithoutABlockStore(t *testing.T) {
 func TestClearingAPermanentBlockReachesTheDisk(t *testing.T) {
 	// Walking onto a permanently blocked tile revokes it. If that never reaches
 	// blocks.json, a restart resurrects the block and cuts the route again.
-	s := pathServer(t, costTile(100, nil))
+	s := pathServer(t, testenv.CostTile(100, nil))
 	path := filepath.Join(t.TempDir(), "blocks.json")
-	s.blocks = NewBlockStore(time.Now)
+	clock := newTestClock()
+	s.blocks = nav.NewBlockStore(clock.now)
 	s.blocks.SetPath(path)
-	s.blocks.Observe(Observation{From: Position{32800, 32051, 7}, To: Position{32800, 32050, 7},
-		Outcome: "no_motion", StillFrames: 3, LastFrameAgeMS: 100, MovedSince: true})
-	s.blocks.tiles[tileKey{32800, 32050, 7}].Kind = KindPerm
+	learnPermanentBlock(t, clock, s.blocks,
+		mapdata.Position{X: 32800, Y: 32051, Z: 7}, mapdata.Position{X: 32800, Y: 32050, Z: 7})
 	if err := s.blocks.Save(); err != nil {
 		t.Fatal(err)
 	}
 
 	decodePath(t, postPath(t, s, `{"from":{"x":32800,"y":32050,"z":7},"to":{"x":32800,"y":32054,"z":7}}`))
 
-	fresh := NewBlockStore(time.Now)
+	fresh := nav.NewBlockStore(time.Now)
 	fresh.SetPath(path)
 	if err := fresh.Load(); err != nil {
 		t.Fatal(err)
 	}
-	if k := fresh.Snapshot(image.Rect(32790, 32040, 32810, 32060), 7).Tile(32800, 32050); k != KindNone {
+	if k := fresh.Snapshot(image.Rect(32790, 32040, 32810, 32060), 7).Tile(32800, 32050); k != nav.KindNone {
 		t.Fatalf("tile kind %v after reload; the revocation never reached the disk", k)
 	}
 }
@@ -255,8 +258,8 @@ func TestClearingAPermanentBlockReachesTheDisk(t *testing.T) {
 func TestGoalOneTileOffAWallIsNudgedOntoIt(t *testing.T) {
 	// A waypoint recorded a tile off - the tracker drifted by one - must not
 	// kill the whole route. The nearest walkable tile is what the user meant.
-	s := pathServer(t, costTile(100, map[[2]int]uint8{{50, 50}: blockedCost}))
-	s.blocks = NewBlockStore(time.Now)
+	s := pathServer(t, testenv.CostTile(100, map[[2]int]uint8{{50, 50}: mapdata.BlockedCost}))
+	s.blocks = nav.NewBlockStore(time.Now)
 
 	r := decodePath(t, postPath(t, s, `{"from":{"x":32800,"y":32040,"z":7},"to":{"x":32818,"y":32050,"z":7}}`))
 	if !r.Found {
@@ -281,11 +284,11 @@ func TestGoalDeepInsideWaterIsRefusedWithAClearReason(t *testing.T) {
 	pix := map[[2]int]uint8{}
 	for dx := -4; dx <= 4; dx++ {
 		for dy := -4; dy <= 4; dy++ {
-			pix[[2]int{50 + dx, 50 + dy}] = blockedCost
+			pix[[2]int{50 + dx, 50 + dy}] = mapdata.BlockedCost
 		}
 	}
-	s := pathServer(t, costTile(100, pix))
-	s.blocks = NewBlockStore(time.Now)
+	s := pathServer(t, testenv.CostTile(100, pix))
+	s.blocks = nav.NewBlockStore(time.Now)
 
 	r := decodePath(t, postPath(t, s, `{"from":{"x":32800,"y":32040,"z":7},"to":{"x":32818,"y":32050,"z":7}}`))
 	if r.Found {
@@ -302,11 +305,11 @@ func TestGoalDeepInsideWaterIsRefusedWithAClearReason(t *testing.T) {
 func TestGoalOnALearnedBlockSaysSo(t *testing.T) {
 	// Same refusal, different cause, different advice: this one the user can
 	// clear from the preview.
-	s := pathServer(t, costTile(100, nil))
-	s.blocks = NewBlockStore(time.Now)
-	s.blocks.Observe(Observation{From: Position{32818, 32051, 7}, To: Position{32818, 32050, 7},
-		Outcome: "no_motion", StillFrames: 3, LastFrameAgeMS: 100, MovedSince: true})
-	s.blocks.tiles[tileKey{32818, 32050, 7}].Kind = KindPerm
+	s := pathServer(t, testenv.CostTile(100, nil))
+	clock := newTestClock()
+	s.blocks = nav.NewBlockStore(clock.now)
+	learnPermanentBlock(t, clock, s.blocks,
+		mapdata.Position{X: 32818, Y: 32051, Z: 7}, mapdata.Position{X: 32818, Y: 32050, Z: 7})
 
 	r := decodePath(t, postPath(t, s, `{"from":{"x":32800,"y":32040,"z":7},"to":{"x":32818,"y":32050,"z":7}}`))
 	// A learned block is a hypothesis, not terrain: the route still gets made,
@@ -320,8 +323,8 @@ func TestGoalOnALearnedBlockSaysSo(t *testing.T) {
 }
 
 func TestGoalWithNoMapDataSaysThat(t *testing.T) {
-	s := pathServer(t, costTile(100, nil))
-	s.blocks = NewBlockStore(time.Now)
+	s := pathServer(t, testenv.CostTile(100, nil))
+	s.blocks = nav.NewBlockStore(time.Now)
 	// Far outside the single chunk: no PNG covers it at all.
 	r := decodePath(t, postPath(t, s, `{"from":{"x":32800,"y":32040,"z":7},"to":{"x":33500,"y":32040,"z":7},"margin":0}`))
 	if r.Found {

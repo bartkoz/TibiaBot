@@ -7,10 +7,14 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"minimap-lab/internal/mapdata"
+	"minimap-lab/internal/nav"
+	"minimap-lab/internal/testenv"
 )
 
 func newBlocksServer() *server {
-	return &server{gate: make(chan struct{}, 1), blocks: NewBlockStore(time.Now)}
+	return &server{gate: make(chan struct{}, 1), blocks: nav.NewBlockStore(time.Now)}
 }
 
 func callBlocks(t testing.TB, s *server, method, path, body string) *httptest.ResponseRecorder {
@@ -39,7 +43,7 @@ func decodeInto(t testing.TB, w *httptest.ResponseRecorder, out any) {
 
 func TestObserveEndpointLearnsABlock(t *testing.T) {
 	s := newBlocksServer()
-	var d Decision
+	var d nav.Decision
 	decodeInto(t, callBlocks(t, s, "POST", "/api/blocks/observe",
 		`{"from":{"x":100,"y":100,"z":7},"to":{"x":100,"y":99,"z":7},"outcome":"no_motion","still_frames":3,"last_frame_age_ms":120}`), &d)
 	if d.Result != "temp" {
@@ -49,7 +53,7 @@ func TestObserveEndpointLearnsABlock(t *testing.T) {
 
 func TestObserveEndpointExplainsARefusal(t *testing.T) {
 	s := newBlocksServer()
-	var d Decision
+	var d nav.Decision
 	decodeInto(t, callBlocks(t, s, "POST", "/api/blocks/observe",
 		`{"from":{"x":100,"y":100,"z":7},"to":{"x":100,"y":99,"z":7},"outcome":"no_motion","still_frames":1,"last_frame_age_ms":120}`), &d)
 	if d.Result != "ignored" {
@@ -69,10 +73,10 @@ func TestObserveEndpointRefusesMalformedBody(t *testing.T) {
 
 func TestListEndpointReportsLearnedBlocks(t *testing.T) {
 	s := newBlocksServer()
-	s.blocks.Observe(Observation{From: Position{100, 100, 7}, To: Position{100, 99, 7},
+	s.blocks.Observe(nav.Observation{From: mapdata.Position{X: 100, Y: 100, Z: 7}, To: mapdata.Position{X: 100, Y: 99, Z: 7},
 		Outcome: "no_motion", StillFrames: 3, LastFrameAgeMS: 100})
 
-	var list []BlockInfo
+	var list []nav.BlockInfo
 	decodeInto(t, callBlocks(t, s, "GET", "/api/blocks?x=100&y=100&z=7&r=10", ""), &list)
 	if len(list) != 1 || list[0].X != 100 || list[0].Y != 99 || list[0].Kind != "temp" {
 		t.Fatalf("list %+v, want one temporary block at (100,99)", list)
@@ -93,7 +97,7 @@ func TestListEndpointRefusesABadWindow(t *testing.T) {
 
 func TestDeleteEndpointRemovesABlock(t *testing.T) {
 	s := newBlocksServer()
-	s.blocks.Observe(Observation{From: Position{100, 100, 7}, To: Position{100, 99, 7},
+	s.blocks.Observe(nav.Observation{From: mapdata.Position{X: 100, Y: 100, Z: 7}, To: mapdata.Position{X: 100, Y: 99, Z: 7},
 		Outcome: "no_motion", StillFrames: 3, LastFrameAgeMS: 100})
 
 	var res map[string]bool
@@ -101,8 +105,8 @@ func TestDeleteEndpointRemovesABlock(t *testing.T) {
 	if !res["cleared"] {
 		t.Fatal("delete reported nothing was cleared")
 	}
-	if k := s.blocks.Snapshot(rectAround(100, 99, 10), 7).Tile(100, 99); k != KindNone {
-		t.Fatalf("tile kind %v after delete, want KindNone", k)
+	if k := s.blocks.Snapshot(rectAround(100, 99, 10), 7).Tile(100, 99); k != nav.KindNone {
+		t.Fatalf("tile kind %v after delete, want nav.KindNone", k)
 	}
 }
 
@@ -119,10 +123,10 @@ func TestObserveIgnoredWhenTheCharacterStandsOnImpassableGround(t *testing.T) {
 	// "failed to enter" is somewhere else entirely - learning from it writes a
 	// permanent block into open ground, which is exactly how three of them
 	// appeared in a real run.
-	s := pathServer(t, costTile(100, map[[2]int]uint8{{50, 51}: blockedCost}))
-	s.blocks = NewBlockStore(time.Now)
+	s := pathServer(t, testenv.CostTile(100, map[[2]int]uint8{{50, 51}: mapdata.BlockedCost}))
+	s.blocks = nav.NewBlockStore(time.Now)
 
-	var d Decision
+	var d nav.Decision
 	decodeInto(t, callBlocks(t, s, "POST", "/api/blocks/observe",
 		`{"from":{"x":32818,"y":32051,"z":7},"to":{"x":32818,"y":32050,"z":7},"outcome":"no_motion","still_frames":3,"last_frame_age_ms":120,"moved_since":true}`), &d)
 
@@ -132,16 +136,16 @@ func TestObserveIgnoredWhenTheCharacterStandsOnImpassableGround(t *testing.T) {
 	if !strings.Contains(strings.ToLower(d.Reason), "pozycja postaci") {
 		t.Fatalf("reason %q does not name the unreliable position", d.Reason)
 	}
-	if k := s.blocks.Snapshot(rectAround(32818, 32050, 4), 7).Tile(32818, 32050); k != KindNone {
+	if k := s.blocks.Snapshot(rectAround(32818, 32050, 4), 7).Tile(32818, 32050); k != nav.KindNone {
 		t.Fatalf("tile kind %v; nothing may be learned from an unreliable position", k)
 	}
 }
 
 func TestObserveStillWorksFromSolidGround(t *testing.T) {
-	s := pathServer(t, costTile(100, nil))
-	s.blocks = NewBlockStore(time.Now)
+	s := pathServer(t, testenv.CostTile(100, nil))
+	s.blocks = nav.NewBlockStore(time.Now)
 
-	var d Decision
+	var d nav.Decision
 	decodeInto(t, callBlocks(t, s, "POST", "/api/blocks/observe",
 		`{"from":{"x":32818,"y":32051,"z":7},"to":{"x":32818,"y":32050,"z":7},"outcome":"no_motion","still_frames":3,"last_frame_age_ms":120,"moved_since":true}`), &d)
 	if d.Result != "temp" {
@@ -157,12 +161,12 @@ func TestEnteredIsAcceptedEvenWithoutMapData(t *testing.T) {
 	// The reporting position is impassable in the map data - the same thing
 	// that makes a no_motion report untrustworthy - so this only passes if
 	// revocations are genuinely exempt from that check.
-	s := pathServer(t, costTile(100, map[[2]int]uint8{{50, 51}: blockedCost}))
-	s.blocks = NewBlockStore(time.Now)
-	s.blocks.Observe(Observation{From: Position{32818, 32051, 7}, To: Position{32818, 32050, 7},
+	s := pathServer(t, testenv.CostTile(100, map[[2]int]uint8{{50, 51}: mapdata.BlockedCost}))
+	s.blocks = nav.NewBlockStore(time.Now)
+	s.blocks.Observe(nav.Observation{From: mapdata.Position{X: 32818, Y: 32051, Z: 7}, To: mapdata.Position{X: 32818, Y: 32050, Z: 7},
 		Outcome: "no_motion", StillFrames: 3, LastFrameAgeMS: 100, MovedSince: true})
 
-	var d Decision
+	var d nav.Decision
 	decodeInto(t, callBlocks(t, s, "POST", "/api/blocks/observe",
 		`{"from":{"x":32818,"y":32051,"z":7},"to":{"x":32818,"y":32050,"z":7},"outcome":"entered","still_frames":1,"last_frame_age_ms":50}`), &d)
 	if d.Result != "cleared" {
@@ -174,10 +178,10 @@ func TestObserveWorksWhereTheMapHasNoData(t *testing.T) {
 	// Missing map data must not gate learning. The pack is thin in places, and
 	// refusing to learn there would leave the bot helpless exactly where it has
 	// the least information to begin with.
-	s := pathServer(t, costTile(100, nil))
-	s.blocks = NewBlockStore(time.Now)
+	s := pathServer(t, testenv.CostTile(100, nil))
+	s.blocks = nav.NewBlockStore(time.Now)
 
-	var d Decision
+	var d nav.Decision
 	decodeInto(t, callBlocks(t, s, "POST", "/api/blocks/observe",
 		`{"from":{"x":33500,"y":32051,"z":7},"to":{"x":33500,"y":32050,"z":7},"outcome":"no_motion","still_frames":3,"last_frame_age_ms":120,"moved_since":true}`), &d)
 	if d.Result != "temp" {

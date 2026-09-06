@@ -5,21 +5,14 @@ import (
 	"image"
 	"net/http"
 	"strconv"
-	"time"
+
+	"minimap-lab/internal/mapdata"
+	"minimap-lab/internal/nav"
 )
 
 // maxBlocksRadius keeps one listing bounded. The panel never asks for more
 // than its own preview window.
 const maxBlocksRadius = 64
-
-type BlockInfo struct {
-	X           int    `json:"x"`
-	Y           int    `json:"y"`
-	Z           int    `json:"z"`
-	Kind        string `json:"kind"`
-	Episodes    int    `json:"episodes"`
-	ExpiresInMS int    `json:"expires_in_ms"`
-}
 
 // rectAround is the square window shared by the blocks listing and the grid
 // preview, so both agree on what "radius" means.
@@ -32,7 +25,7 @@ func (s *server) observeBlock(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusServiceUnavailable, "Magazyn blokad nie jest włączony.")
 		return
 	}
-	var obs Observation
+	var obs nav.Observation
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&obs); err != nil {
 		http.Error(w, "Nieprawidłowe żądanie JSON", http.StatusBadRequest)
 		return
@@ -47,7 +40,7 @@ func (s *server) observeBlock(w http.ResponseWriter, r *http.Request) {
 	// refusing them would let a wrong permanent block survive exactly where the
 	// map data is poor.
 	if obs.Outcome != "entered" && !s.standable(obs.From) {
-		writeJSON(w, Decision{Result: "ignored", Revision: s.blocks.Revision(),
+		writeJSON(w, nav.Decision{Result: "ignored", Revision: s.blocks.Revision(),
 			Reason: "Pozycja postaci wypada na kratce nieprzechodniej, więc odczyt jest niewiarygodny; nic nie zapisano."})
 		return
 	}
@@ -78,7 +71,7 @@ func (s *server) deleteBlock(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusServiceUnavailable, "Magazyn blokad nie jest włączony.")
 		return
 	}
-	var p Position
+	var p mapdata.Position
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<10)).Decode(&p); err != nil {
 		http.Error(w, "Nieprawidłowe żądanie JSON", http.StatusBadRequest)
 		return
@@ -94,12 +87,12 @@ func (s *server) deleteBlock(w http.ResponseWriter, r *http.Request) {
 // tile. Missing data counts as standable: absence of evidence is not evidence
 // of a bad reading, and refusing to learn anywhere the pack is thin would be
 // worse than the false positives this guards against.
-func (s *server) standable(p Position) bool {
+func (s *server) standable(p mapdata.Position) bool {
 	area := rectAround(p.X, p.Y, 1)
 	s.previewMu.Lock()
 	defer s.previewMu.Unlock()
-	if s.previewCache == nil || s.previewFloor != p.Z || !area.In(s.previewCache.bounds) {
-		g, err := loadCostArea(s.dir, p.Z, area.Inset(-previewMargin))
+	if s.previewCache == nil || s.previewFloor != p.Z || !area.In(s.previewCache.Bounds()) {
+		g, err := mapdata.LoadCostArea(s.dir, p.Z, area.Inset(-previewMargin))
 		if err != nil {
 			return true // cannot tell; do not block learning on a read error
 		}
@@ -108,7 +101,7 @@ func (s *server) standable(p Position) bool {
 	if !s.previewCache.Covered(p.X, p.Y) {
 		return true
 	}
-	return s.previewCache.At(p.X, p.Y) != blockedCost
+	return s.previewCache.At(p.X, p.Y) != mapdata.BlockedCost
 }
 
 // windowParams parses the x/y/z/r query shared by the listing and the preview.
@@ -125,28 +118,4 @@ func windowParams(r *http.Request) (x, y, z, radius int, ok bool) {
 		return 0, 0, 0, 0, false
 	}
 	return x, y, z, radius, true
-}
-
-// List reports the learned blockages inside an area, for the panel's own view.
-func (s *BlockStore) List(area image.Rectangle, z int) []BlockInfo {
-	if s == nil {
-		return []BlockInfo{}
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	now := s.now()
-	s.sweepLocked(now)
-	out := []BlockInfo{}
-	for k, b := range s.tiles {
-		if b.Kind == KindNone || k[2] != z || !image.Pt(k[0], k[1]).In(area) {
-			continue
-		}
-		info := BlockInfo{X: k[0], Y: k[1], Z: k[2], Episodes: b.Episodes, Kind: "perm"}
-		if b.Kind == KindTemp {
-			info.Kind = "temp"
-			info.ExpiresInMS = int(b.Expires.Sub(now) / time.Millisecond)
-		}
-		out = append(out, info)
-	}
-	return out
 }

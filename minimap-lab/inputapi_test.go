@@ -6,12 +6,14 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"minimap-lab/internal/input"
 )
 
-func inputServer(t testing.TB) (*server, *DryEmitter) {
+func inputServer(t testing.TB) (*server, *input.DryEmitter) {
 	t.Helper()
-	em := &DryEmitter{Window: Window{PID: 42, Path: "/Applications/Tibia.app"}}
-	s := &server{dir: t.TempDir(), gate: make(chan struct{}, 1), driver: NewDriver(em, defaultMaxObservationAgeMS)}
+	em := &input.DryEmitter{Window: input.Window{PID: 42, Path: "/Applications/Tibia.app"}}
+	s := &server{dir: t.TempDir(), gate: make(chan struct{}, 1), driver: input.NewDriver(em, input.DefaultMaxObservationAgeMS)}
 	return s, em
 }
 
@@ -30,7 +32,7 @@ func armSession(t testing.TB, s *server) string {
 	if w.Code != http.StatusOK {
 		t.Fatalf("arm: %d %s", w.Code, w.Body.String())
 	}
-	var st ArmState
+	var st input.ArmState
 	if err := json.Unmarshal(w.Body.Bytes(), &st); err != nil {
 		t.Fatal(err)
 	}
@@ -43,7 +45,7 @@ func TestInputAPIWalksAfterArming(t *testing.T) {
 
 	w := postInput(t, s, "/api/input", `{"session":"`+session+`","seq":1,"action":"walk","direction":"E","observation_age_ms":80}`)
 
-	var got InputResult
+	var got input.Result
 	json.Unmarshal(w.Body.Bytes(), &got)
 	if w.Code != http.StatusOK || got.Status != "emitted" || got.Key != "numpad6" {
 		t.Fatalf("%d %+v", w.Code, got)
@@ -59,7 +61,7 @@ func TestInputAPIRefusesWithoutSessionToken(t *testing.T) {
 
 	w := postInput(t, s, "/api/input", `{"seq":1,"action":"walk","direction":"E","observation_age_ms":80}`)
 
-	var got InputResult
+	var got input.Result
 	json.Unmarshal(w.Body.Bytes(), &got)
 	if got.Status != "refused" {
 		t.Fatalf("%d %+v", w.Code, got)
@@ -107,7 +109,7 @@ func TestInputAPIStatusActsAsHeartbeat(t *testing.T) {
 	w := httptest.NewRecorder()
 	s.routes().ServeHTTP(w, r)
 
-	var st ArmState
+	var st input.ArmState
 	json.Unmarshal(w.Body.Bytes(), &st)
 	if w.Code != http.StatusOK || !st.Armed {
 		t.Fatalf("%d %+v", w.Code, st)
@@ -149,7 +151,7 @@ func TestInputAPIDisarmStops(t *testing.T) {
 	postInput(t, s, "/api/disarm", `{"session":"`+session+`"}`)
 
 	w := postInput(t, s, "/api/input", `{"session":"`+session+`","seq":1,"action":"walk","direction":"E","observation_age_ms":80}`)
-	var got InputResult
+	var got input.Result
 	json.Unmarshal(w.Body.Bytes(), &got)
 	if got.Status != "disarmed" {
 		t.Fatalf("got %+v", got)
@@ -227,7 +229,7 @@ func TestInputAPIConfigStoresDirections(t *testing.T) {
 	}
 	// The real proof the config took effect end to end, the same way the
 	// hotkey test above proves it via Submit rather than just the field.
-	got := s.driver.Submit(Intent{Session: session, Seq: 1, Action: "walk", Direction: "N", AgeMS: 50})
+	got := s.driver.Submit(input.Intent{Session: session, Seq: 1, Action: "walk", Direction: "N", AgeMS: 50})
 	if got.Status != "emitted" || got.Key != "w" {
 		t.Fatalf("got %+v", got)
 	}
@@ -283,7 +285,7 @@ func TestInputAPIConfigAcceptsEmptyDirection(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("%d %s", w.Code, w.Body.String())
 	}
-	got := s.driver.Submit(Intent{Session: session, Seq: 1, Action: "walk", Direction: "NE", AgeMS: 50})
+	got := s.driver.Submit(input.Intent{Session: session, Seq: 1, Action: "walk", Direction: "NE", AgeMS: 50})
 	if got.Status != "refused" || !strings.Contains(got.Reason, "NE") {
 		t.Fatalf("got %+v, want a refusal naming the unconfigured direction", got)
 	}
@@ -332,10 +334,10 @@ func TestInputAPIUnavailableWithoutEmitter(t *testing.T) {
 }
 
 func TestSelectEmitterRejectsUnknownMode(t *testing.T) {
-	if _, err := selectEmitter("wlaczone"); err == nil {
+	if _, err := input.SelectEmitter("wlaczone"); err == nil {
 		t.Error("unknown -input value must be refused at start, not silently ignored")
 	}
-	if em, err := selectEmitter("off"); err != nil || em != nil {
+	if em, err := input.SelectEmitter("off"); err != nil || em != nil {
 		t.Errorf("off must leave the panel without a driver, got %v %v", em, err)
 	}
 }

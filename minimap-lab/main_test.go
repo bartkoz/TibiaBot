@@ -9,9 +9,12 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strings"
 	"testing"
+
+	"minimap-lab/internal/locate"
+	"minimap-lab/internal/mapdata"
+	"minimap-lab/internal/testenv"
 )
 
 func TestHTTPDemoRoundTrip(t *testing.T) {
@@ -41,11 +44,11 @@ func TestHTTPDemoRoundTrip(t *testing.T) {
 	if w.Code != 200 {
 		t.Fatalf("%d: %s", w.Code, w.Body.String())
 	}
-	var result Result
+	var result locate.Result
 	if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
 		t.Fatal(err)
 	}
-	assertPosition(t, result, Position{32200, 32180, 7})
+	assertPosition(t, result, mapdata.Position{X: 32200, Y: 32180, Z: 7})
 	if !strings.Contains(w.Body.String(), "data:image/png;base64,") {
 		t.Fatal("missing reference preview")
 	}
@@ -53,10 +56,7 @@ func TestHTTPDemoRoundTrip(t *testing.T) {
 
 func trackingBody(t testing.TB, req matchRequest) ([]byte, string) {
 	t.Helper()
-	data, err := os.ReadFile("testdata/venore-capture.png")
-	if err != nil {
-		t.Fatal(err)
-	}
+	data := testenv.FixtureBytes(t, "venore-capture.png")
 	var body bytes.Buffer
 	form := multipart.NewWriter(&body)
 	part, err := form.CreateFormFile("image", "capture.png")
@@ -90,17 +90,17 @@ func replayTracking(handler http.Handler, body []byte, contentType string) *http
 func TestHTTPTracking(t *testing.T) {
 	a, _, o := actualTrackingFixture(t)
 	s := &server{dir: t.TempDir(), gate: make(chan struct{}, 1), cached: a, debugDir: t.TempDir()}
-	req := matchRequest{Options: o, Floor: 7, Near: &Position{32958, 32077, 7}, Radius: 5, NoPreview: true}
+	req := matchRequest{Options: o, Floor: 7, Near: &mapdata.Position{X: 32958, Y: 32077, Z: 7}, Radius: 5, NoPreview: true}
 	body, ct := trackingBody(t, req)
 	w := replayTracking(s.routes(), body, ct)
 	if w.Code != 200 {
 		t.Fatal(w.Body.String())
 	}
-	var result Result
+	var result locate.Result
 	if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
 		t.Fatal(err)
 	}
-	assertPosition(t, result, Position{32958, 32077, 7})
+	assertPosition(t, result, mapdata.Position{X: 32958, Y: 32077, Z: 7})
 	if result.Mode != "local" || result.SearchPositions != 121 || result.MatchMS <= 0 {
 		t.Fatalf("missing tracking metrics: %+v", result)
 	}
@@ -119,13 +119,13 @@ func TestHTTPTracking(t *testing.T) {
 }
 
 func BenchmarkHTTPTrackActualCapture(b *testing.B) {
-	ref := loadFixture(b, "venore-reference.png")
+	ref := testenv.LoadFixture(b, "venore-reference.png")
 	rgba := image.NewNRGBA(ref.Bounds())
 	draw.Draw(rgba, rgba.Bounds(), ref, ref.Bounds().Min, draw.Src)
-	a := &Atlas{rgba, image.Pt(32768, 32000), 7}
+	a := &mapdata.Atlas{Image: rgba, Origin: image.Pt(32768, 32000), Floor: 7}
 	s := &server{gate: make(chan struct{}, 1), cached: a}
 	handler := s.routes()
-	req := matchRequest{Options: Options{Zoom: 1, MarkerX: 52, MarkerY: 57, MaskRadius: 5, MinScore: .85, MinGap: .015}, Floor: 7, Near: &Position{32958, 32077, 7}, Radius: 5, NoPreview: true}
+	req := matchRequest{Options: locate.Options{Zoom: 1, MarkerX: 52, MarkerY: 57, MaskRadius: 5, MinScore: .85, MinGap: .015}, Floor: 7, Near: &mapdata.Position{X: 32958, Y: 32077, Z: 7}, Radius: 5, NoPreview: true}
 	body, ct := trackingBody(b, req)
 	b.ReportAllocs()
 	b.ResetTimer()
