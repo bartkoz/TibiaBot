@@ -2,6 +2,20 @@ const COMPASS = [['NW', 'N', 'NE'], ['W', '', 'E'], ['SW', 'S', 'SE']];
 const stepDirection = (from, to) =>
   COMPASS[Math.sign(to.y - from.y) + 1][Math.sign(to.x - from.x) + 1];
 
+// The tile identity a pending step (or an incoming follower output) is aimed
+// at, so a block can be compared against "the same target" vs "a different
+// one" regardless of whether it came from a walk or a transition.
+const targetOf = (p) => p.kind === 'walk'
+  ? {x: p.target[0], y: p.target[1], z: null}
+  : {x: p.x, y: p.y, z: p.z};
+const targetFromOut = (out) => {
+  if (!out) return null;
+  if (out.action === 'walk') return {x: out.next[0], y: out.next[1], z: null};
+  if (out.action === 'transition') return {x: out.waypoint.x, y: out.waypoint.y, z: out.waypoint.z};
+  return null;
+};
+const sameTarget = (a, b) => !!a && !!b && a.x === b.x && a.y === b.y && a.z === b.z;
+
 // Lock-step execution state, kept free of the DOM and of fetch so it can be
 // tested directly. The panel feeds it follower output and confirmed positions;
 // it answers with the one intent that may be sent right now, or null.
@@ -13,11 +27,12 @@ class StepExecutor {
     this.reset();
   }
   reset() {
-    this.pending = null; // {kind, target, z, from, viaHotkey, emittedAt}
+    this.pending = null; // {kind, target, x, y, z, from, viaHotkey, emittedAt, sentAt}
     this.last = null;
     this.retries = 0;
     this.cycles = 0;
     this.blocked = false;
+    this.blockedTarget = null;
     this.halted = false;
     this.stopped = false;
     this.actionDone = false;
@@ -27,41 +42,75 @@ class StepExecutor {
       waiting: !!this.pending, retries: this.retries, cycles: this.cycles,
       blocked: this.blocked, halted: this.halted, stopped: this.stopped,
       actionDone: this.actionDone,
+      // True while a step is pending but emitted() has not yet confirmed the
+      // key left the driver - distinct from waiting on the character to move.
+      awaitingEmit: !!this.pending && this.pending.emittedAt === null,
     };
+  }
+  // Consequence of a pending step that did not pan out, whether it timed out
+  // waiting for movement or was never confirmed as emitted at all: charge a
+  // cycle, stop the executor if that was one too many, otherwise allow one
+  // retry or, on the second failure of the same target, block it until the
+  // route changes. blocked never means "stop forever" - only cycles does.
+  failPending(p) {
+    this.pending = null;
+    this.cycles++;
+    if (this.cycles >= this.maxFailedCycles) { this.stopped = true; return; }
+    if (this.retries >= 1) {
+      this.blocked = true;
+      this.blockedTarget = targetOf(p);
+      this.retries = 0;
+      return;
+    }
+    this.retries++;
   }
   // intentFor returns what to send now, or null when the executor must wait.
   intentFor(out, now) {
     if (this.stopped || this.halted) return null;
     if (this.pending) {
-      const limit = this.pending.kind === 'transition' ? this.actionTimeoutMS : this.stepTimeoutMS;
-      // A step whose emission was never confirmed is still in flight.
-      if (this.pending.emittedAt === null) return null;
-      if (now - this.pending.emittedAt < limit) return null;
-      this.pending = null;
-      this.cycles++;
-      if (this.cycles >= this.maxFailedCycles) { this.stopped = true; return null; }
-      if (this.retries >= 1) { this.blocked = true; this.retries = 0; return null; }
-      this.retries++;
+      const p = this.pending;
+      if (p.emittedAt === null) {
+        // The key press was never confirmed (e.g. a rejected fetch). Waiting
+        // forever would freeze the executor silently, looking exactly like a
+        // legitimate wait, so give up on it too after a generous grace period.
+        if (now - p.sentAt < 2 * this.stepTimeoutMS) return null;
+        this.failPending(p);
+      } else {
+        const limit = p.kind === 'transition' ? this.actionTimeoutMS : this.stepTimeoutMS;
+        if (now - p.emittedAt < limit) return null;
+        this.failPending(p);
+      }
+      if (this.stopped) return null;
+    }
+    if (this.blocked) {
+      // blocked means "this particular target cannot be reached", not "stop
+      // forever": once the follower asks for something else, the route was
+      // recomputed and the new target deserves a fresh attempt.
+      if (!out) return null;
+      if (sameTarget(targetFromOut(out), this.blockedTarget)) return null;
+      this.blocked = false;
+      this.blockedTarget = null;
     }
     if (!out) return null;
     if (out.action === 'walk') {
       // from is where the character stood when the key was sent. Taking it
       // from the first observation after the press would make "did not move"
       // and "moved somewhere unexpected" indistinguishable.
-      this.pending = {kind: 'walk', target: out.next, from: this.last, emittedAt: null};
+      this.pending = {kind: 'walk', target: out.next, from: this.last, emittedAt: null, sentAt: now};
       return {action: 'walk', direction: out.direction};
     }
     if (out.action === 'transition') {
+      const wp = out.waypoint;
       // Stairs carry no item: the tile is on the current floor and stepping
       // onto it moves the character. The next waypoint says which way that is.
-      if (out.waypoint.type === 'stairs') {
+      if (wp.type === 'stairs') {
         if (!out.next || !this.last) return null;
-        this.pending = {kind: 'transition', z: out.waypoint.z, viaHotkey: false, emittedAt: null};
+        this.pending = {kind: 'transition', x: wp.x, y: wp.y, z: wp.z, viaHotkey: false, from: this.last, emittedAt: null, sentAt: now};
         return {action: 'walk', direction: stepDirection(this.last, out.next)};
       }
       this.actionDone = false;
-      this.pending = {kind: 'transition', z: out.waypoint.z, viaHotkey: true, emittedAt: null};
-      return {action: 'transition', type: out.waypoint.type, waypoint: out.index ?? 0};
+      this.pending = {kind: 'transition', x: wp.x, y: wp.y, z: wp.z, viaHotkey: true, from: this.last, emittedAt: null, sentAt: now};
+      return {action: 'transition', type: wp.type, waypoint: out.index ?? 0};
     }
     return null;
   }
@@ -87,7 +136,14 @@ class StepExecutor {
       if (position.z !== p.z) {
         this.done();
         if (p.viaHotkey) this.actionDone = true;
+        return;
       }
+      // Same floor: no proof yet. If the character is no longer where it
+      // stood when the key was sent, the situation changed - pushed by a
+      // creature, or the player took over - so drop the step without
+      // charging retries/cycles, exactly like an unexpected walk destination.
+      const stillThere = !p.from || (position.x === p.from.x && position.y === p.from.y);
+      if (!stillThere) { this.pending = null; }
       return;
     }
     if (position.x === p.target[0] && position.y === p.target[1]) { this.done(); return; }
@@ -104,6 +160,7 @@ class StepExecutor {
     this.retries = 0;
     this.cycles = 0;
     this.blocked = false;
+    this.blockedTarget = null;
   }
 }
 
