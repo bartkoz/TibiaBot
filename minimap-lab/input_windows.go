@@ -76,6 +76,19 @@ var windowsKeys = map[string]uint16{
 	"f7": 0x76, "f8": 0x77, "f9": 0x78, "f10": 0x79, "f11": 0x7A, "f12": 0x7B,
 }
 
+// init adds the ANSI letter keys a-z and the top-row digits 0-9. Unlike the
+// macOS physical-position codes in input_darwin.go, Windows virtual-key codes
+// for these conveniently equal their uppercase ASCII value ("a" is 0x41, "0"
+// is 0x30), so they are computed here instead of hand-listed.
+func init() {
+	for c := byte('a'); c <= 'z'; c++ {
+		windowsKeys[string(rune(c))] = uint16('A' + (c - 'a'))
+	}
+	for c := byte('0'); c <= '9'; c++ {
+		windowsKeys[string(rune(c))] = uint16(c)
+	}
+}
+
 // Arrows need the extended-key flag or the client reads them as their numpad
 // twins.
 var windowsExtended = map[string]bool{"up": true, "down": true, "left": true, "right": true}

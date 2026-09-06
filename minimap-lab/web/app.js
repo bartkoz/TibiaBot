@@ -590,17 +590,35 @@ $('screen').addEventListener('click', async event => {
     ? `Kratka postaci: ${frac.x.toFixed(3)}, ${frac.y.toFixed(3)}`
     : 'Nie udało się zapisać kalibracji.';
 });
-// Floor-action hotkeys are configured from the panel and sent to the driver
-// on arm and whenever they change. Without this, ActionKeys stays empty
-// forever, so every floor action is refused for lack of a hotkey.
+// Floor-action hotkeys and direction keys are configured from the panel and
+// sent to the driver on arm and whenever they change. Without this,
+// ActionKeys stays empty forever (every floor action refused for lack of a
+// hotkey) and DirectionKeys stays on its numpad default.
 const HOTKEY_TYPES = ['rope', 'ladder', 'hole', 'shovel'];
 const HOTKEY_STORAGE_KEY = 'minimap-lab-hotkeys';
+// Same eight compass names the follower and the driver use.
+const DIRECTIONS = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
+function directionFieldId(dir) { return `dir-${dir.toLowerCase()}`; }
+// The driver's own built-in default - shown here too so the fields already
+// match it before the user ever touches them.
+const NUMPAD_DIRECTION_PRESET = {
+  N: 'numpad8', NE: 'numpad9', E: 'numpad6', SE: 'numpad3',
+  S: 'numpad2', SW: 'numpad1', W: 'numpad4', NW: 'numpad7',
+};
+// The conventional WASD compass: the four letters around the home position,
+// plus q/e/z/c surrounding them for the diagonals.
+const WSAD_DIRECTION_PRESET = {
+  N: 'w', NE: 'e', E: 'd', SE: 'c',
+  S: 's', SW: 'z', W: 'a', NW: 'q',
+};
 function hotkeyConfig() {
   const keys = {};
   // input.go's hotkeyNames only knows lowercase names; "F7" is the natural
   // way to type a function key, so it must still be accepted.
   for (const type of HOTKEY_TYPES) keys[type] = $(`hotkey-${type}`).value.trim().toLowerCase();
-  return {keys, clickAfterHotkey: !$('input-own-tile').checked};
+  const directions = {};
+  for (const dir of DIRECTIONS) directions[dir] = $(directionFieldId(dir)).value.trim().toLowerCase();
+  return {keys, clickAfterHotkey: !$('input-own-tile').checked, directions};
 }
 function saveHotkeyConfig() {
   try { localStorage.setItem(HOTKEY_STORAGE_KEY, JSON.stringify(hotkeyConfig())); }
@@ -608,13 +626,14 @@ function saveHotkeyConfig() {
 }
 function sendHotkeyConfig() {
   if (!inputClient.armed) return;
-  const {keys, clickAfterHotkey} = hotkeyConfig();
-  // The config is all-or-nothing server-side: one typo in any of the four
-  // fields voids the other three and the driver keeps its previous (empty)
-  // map. Without surfacing this, the only clue was "brak hotkeya dla akcji
-  // ..." flashing between heartbeats - so show the reason, which already
-  // names the rejected field.
-  inputClient.config(keys, clickAfterHotkey).then(({ok, reason}) => {
+  const {keys, clickAfterHotkey, directions} = hotkeyConfig();
+  // The config is all-or-nothing server-side: one typo in any hotkey or
+  // direction field voids the whole request and the driver keeps its
+  // previous mapping. Without surfacing this, the only clue was "brak
+  // hotkeya dla akcji ..." (or, for a direction, "brak skonfigurowanego
+  // klawisza dla kierunku ...") flashing between heartbeats - so show the
+  // reason, which already names the rejected field.
+  inputClient.config(keys, clickAfterHotkey, directions).then(({ok, reason}) => {
     if (!ok) $('input-status').textContent = `Konfiguracja klawiszy odrzucona: ${reason || 'nieznany błąd'}`;
   });
 }
@@ -622,13 +641,38 @@ for (const type of HOTKEY_TYPES) {
   $(`hotkey-${type}`).addEventListener('input', () => { saveHotkeyConfig(); sendHotkeyConfig(); });
 }
 $('input-own-tile').addEventListener('change', () => { saveHotkeyConfig(); sendHotkeyConfig(); });
+for (const dir of DIRECTIONS) {
+  $(directionFieldId(dir)).addEventListener('input', () => { saveHotkeyConfig(); sendHotkeyConfig(); });
+}
+// A preset is only a starting point: it fills the eight fields, then goes
+// through the exact same save+send path as a manual edit - nothing here is
+// special-cased server-side, and the user's own edits afterward are what
+// actually gets persisted.
+function applyDirectionPreset(preset) {
+  for (const dir of DIRECTIONS) $(directionFieldId(dir)).value = preset[dir];
+  saveHotkeyConfig();
+  sendHotkeyConfig();
+}
+$('dir-preset-numpad').addEventListener('click', () => applyDirectionPreset(NUMPAD_DIRECTION_PRESET));
+$('dir-preset-wsad').addEventListener('click', () => applyDirectionPreset(WSAD_DIRECTION_PRESET));
+// Fields start on the numpad default - the same one the driver itself starts
+// with - so a numpad user needs to touch nothing.
+for (const dir of DIRECTIONS) $(directionFieldId(dir)).value = NUMPAD_DIRECTION_PRESET[dir];
 try {
   const savedHotkeys = JSON.parse(localStorage.getItem(HOTKEY_STORAGE_KEY) || 'null');
   if (savedHotkeys) {
     for (const type of HOTKEY_TYPES) if (savedHotkeys.keys?.[type]) $(`hotkey-${type}`).value = savedHotkeys.keys[type];
     $('input-own-tile').checked = !savedHotkeys.clickAfterHotkey;
+    // A direction deliberately cleared (no key for that diagonal) must still
+    // override the numpad default set above, so this checks presence in the
+    // saved object, not truthiness.
+    for (const dir of DIRECTIONS) {
+      if (savedHotkeys.directions && Object.prototype.hasOwnProperty.call(savedHotkeys.directions, dir)) {
+        $(directionFieldId(dir)).value = savedHotkeys.directions[dir];
+      }
+    }
   }
-} catch (e) { /* private mode or blocked storage */ }
+} catch (e) { /* private mode or blocked storage: fields keep the numpad default set above */ }
 $('input-walk').addEventListener('change', () => { if (!$('input-walk').checked) executor.reset(); });
 // Availability is only known once the server answers; the button starts
 // disabled so a fresh page never looks armable before this resolves.

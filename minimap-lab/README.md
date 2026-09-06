@@ -152,9 +152,17 @@ Oba checkboxy można zaznaczyć **przed uzbrojeniem**, także w trakcie odliczan
 
 ### Klawisze akcji pięter
 
-Wykonawca nie zna żadnego hotkeya, dopóki nie zostanie skonfigurowany z panelu — bez tego każda akcja piętra (lina, drabina, dziura, łopata) kończy się odmową „brak hotkeya dla akcji …”, a **Wykonuj akcje pięter** wygląda na włączony, ale nic nie robi. Cztery pola tekstowe w sekcji **5. Sterowanie** przyjmują nazwę klawisza dla każdego typu (np. `f7`); zaakceptowane nazwy to `f1`–`f12`, `up`/`down`/`left`/`right` i `numpad1`–`numpad9` (bez `numpad5`) — te same, których używają emitery macOS i Windows. Pusty klawisz zostawia daną akcję odrzucaną. Checkbox **Klawisz działa na własnej kratce (bez klikania po nim)** odpowiada temu, czy hotkey sam kończy akcję (np. lina użyta na sobie) czy wymaga kliknięcia we wskazaną wcześniej kratkę postaci (**Wskaż kratkę postaci**) — to drugie dodaje krótkie kliknięcie ~120 ms po tapnięciu klawisza.
+Wykonawca nie zna żadnego hotkeya, dopóki nie zostanie skonfigurowany z panelu — bez tego każda akcja piętra (lina, drabina, dziura, łopata) kończy się odmową „brak hotkeya dla akcji …”, a **Wykonuj akcje pięter** wygląda na włączony, ale nic nie robi. Cztery pola tekstowe w sekcji **5. Sterowanie** przyjmują nazwę klawisza dla każdego typu (np. `f7`); zaakceptowane nazwy to `f1`–`f12`, `up`/`down`/`left`/`right`, `numpad1`–`numpad9` (bez `numpad5`) oraz litery `a`–`z` i cyfry `0`–`9` — te same, których używają emitery macOS i Windows. Pusty klawisz zostawia daną akcję odrzucaną. Checkbox **Klawisz działa na własnej kratce (bez klikania po nim)** odpowiada temu, czy hotkey sam kończy akcję (np. lina użyta na sobie) czy wymaga kliknięcia we wskazaną wcześniej kratkę postaci (**Wskaż kratkę postaci**) — to drugie dodaje krótkie kliknięcie ~120 ms po tapnięciu klawisza.
 
 Konfiguracja jest zapisywana w `localStorage` (przeżywa odświeżenie karty) i wysyłana do wykonawcy przy każdym uzbrojeniu oraz przy każdej zmianie pola, o ile sesja jest aktywna — zmiana klawisza z rozbrojonym wykonawcą tylko zapisuje wartość lokalnie, wysyła ją dopiero kolejne uzbrojenie. Schody (`stairs`) nie mają tu żadnego pola: pokonuje się je krokiem, nie hotkeyem.
+
+### Klawisze kierunków
+
+Chodzenie **nie jest** przywiązane do numpada na sztywno — mapowanie ośmiu kierunków (`N`, `NE`, `E`, `SE`, `S`, `SW`, `W`, `NW`) na klawisze jest konfigurowalne z panelu, bo nie każdy ma ruch przypisany do numpada. Osiem pól w sekcji **5. Sterowanie**, ułożonych w siatkę 3×3 z pustym środkiem (jak róża wiatrów), domyślnie zawiera układ numpada (`N`→`numpad8`, `NE`→`numpad9` itd.) — bez żadnej konfiguracji chodzenie działa dokładnie tak jak wcześniej. Przyjmowane nazwy klawiszy są te same, co dla akcji pięter, plus litery i cyfry.
+
+Dwa przyciski wypełniają wszystkie osiem pól naraz: **Numpad** (wbudowany domyślny układ) i **WSAD** (`w`/`s`/`a`/`d` na głównych kierunkach, `q`/`e`/`z`/`c` na skosach dookoła nich). To tylko punkt startowy — każde pole można potem dowolnie zmienić, a to, co w nim zostanie, jest zapisywane i wysyłane; przyciski przechodzą przez dokładnie tę samą ścieżkę zapisu i wysyłki co ręczna edycja pojedynczego pola, żadnych specjalnych przypadków po stronie Go.
+
+Skos to pojedynczy klawisz, tak jak dotąd — **wykonawca nigdy nie rozkłada skosu na dwa kroki proste**, nawet jeśli klient nie ma osobnego klawisza skosu (typowe dla WSAD). Puste pole nie oznacza „pomiń” — to świadoma odmowa: próba chodzenia w tym kierunku kończy się komunikatem „brak skonfigurowanego klawisza dla kierunku …”, widocznym w panelu, zamiast cichego braku ruchu.
 
 ### Test w trybie dry, bez gry
 
@@ -170,7 +178,7 @@ W panelu: uzbrój, włącz **Chodź automatycznie** na nagranej trasie i sprawd�
 cd minimap-lab && go run . -input system
 ```
 
-Przed punktem 6 wpisz w panelu hotkey przypisany linie w kliencie gry (sekcja **Klawisze akcji pięter** wyżej) — bez tego akcja zawsze kończy się odmową.
+Przed punktem 1 sprawdź, że osiem pól **Klawisze kierunków** (wyżej) odpowiada faktycznemu ruchowi w kliencie gry — domyślny układ to numpad; klient z ruchem na literach potrzebuje np. przycisku **WSAD** i ewentualnej poprawki skosów. Przed punktem 6 wpisz w panelu hotkey przypisany linie w kliencie gry (sekcja **Klawisze akcji pięter** wyżej) — bez tego akcja zawsze kończy się odmową.
 
 Zaznacz **Chodź automatycznie** (i **Wykonuj akcje pięter**, jeśli test tego wymaga) **przed** kliknięciem „Uzbrój" — patrz **Dwa checkboxy** wyżej. Zaznaczenie ich dopiero po uzbrojeniu wymaga kliknięcia w przeglądarce, co kradnie focus grze i rozbraja wykonawcę na najbliższym kroku.
 

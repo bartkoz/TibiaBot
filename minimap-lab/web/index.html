@@ -93,6 +93,23 @@
       <label>Klawisz łopaty<input id="hotkey-shovel" type="text" maxlength="16" placeholder="np. f10"></label>
     </div>
     <label class="check"><input id="input-own-tile" type="checkbox">Klawisz działa na własnej kratce (bez klikania po nim)</label>
+    <h3>Klawisze kierunków</h3>
+    <p class="hint">Skos to pojedynczy klawisz — jeśli klient nie ma klawisza skosu, zostaw pole puste; wykonawca odmówi tego kierunku zamiast rozkładać go na dwa kroki proste. Poniższe przyciski to tylko punkt startowy — wypełniają pola, ale to, co w nich zostanie po Twojej edycji, jest zapisywane i wysyłane.</p>
+    <div class="toolbar">
+      <button id="dir-preset-numpad" type="button" class="secondary">Numpad</button>
+      <button id="dir-preset-wsad" type="button" class="secondary">WSAD</button>
+    </div>
+    <div class="compass-grid">
+      <input id="dir-nw" type="text" maxlength="16" aria-label="Klawisz kierunku północny zachód" placeholder="NW">
+      <input id="dir-n" type="text" maxlength="16" aria-label="Klawisz kierunku północ" placeholder="N">
+      <input id="dir-ne" type="text" maxlength="16" aria-label="Klawisz kierunku północny wschód" placeholder="NE">
+      <input id="dir-w" type="text" maxlength="16" aria-label="Klawisz kierunku zachód" placeholder="W">
+      <span></span>
+      <input id="dir-e" type="text" maxlength="16" aria-label="Klawisz kierunku wschód" placeholder="E">
+      <input id="dir-sw" type="text" maxlength="16" aria-label="Klawisz kierunku południowy zachód" placeholder="SW">
+      <input id="dir-s" type="text" maxlength="16" aria-label="Klawisz kierunku południe" placeholder="S">
+      <input id="dir-se" type="text" maxlength="16" aria-label="Klawisz kierunku południowy wschód" placeholder="SE">
+    </div>
     <div id="input-status" role="status" aria-live="polite">Sterowanie wyłączone. Uruchom panel z <code>-input dry</code> albo <code>-input system</code>.</div>
   </section>
   <footer><p id="maps"></p><p>Wynik dopasowania nie jest prawdopodobieństwem. Wybierz piętro startowe; dalsze przejścia Z ±1 mogą być rozpoznawane z obrazu. Pierwszy test na grze wymaga kalibracji i sprawdzenia znanego miejsca.</p></footer>

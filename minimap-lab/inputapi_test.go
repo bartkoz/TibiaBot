@@ -212,6 +212,83 @@ func TestInputAPIConfigRefusesUnknownKey(t *testing.T) {
 	}
 }
 
+func TestInputAPIConfigStoresDirections(t *testing.T) {
+	s, em := inputServer(t)
+	session := armSession(t, s)
+
+	w := postInput(t, s, "/api/input/config",
+		`{"session":"`+session+`","keys":{},"directions":{"N":"w","S":"s","W":"a","E":"d"}}`)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("%d %s", w.Code, w.Body.String())
+	}
+	if s.driver.DirectionKeys["N"] != "w" {
+		t.Fatalf("got %+v", s.driver.DirectionKeys)
+	}
+	// The real proof the config took effect end to end, the same way the
+	// hotkey test above proves it via Submit rather than just the field.
+	got := s.driver.Submit(Intent{Session: session, Seq: 1, Action: "walk", Direction: "N", AgeMS: 50})
+	if got.Status != "emitted" || got.Key != "w" {
+		t.Fatalf("got %+v", got)
+	}
+	if len(em.Events()) != 1 || em.Events()[0] != "tap w 35ms" {
+		t.Fatalf("got %v", em.Events())
+	}
+}
+
+func TestInputAPIConfigRefusesUnknownDirectionName(t *testing.T) {
+	s, _ := inputServer(t)
+	session := armSession(t, s)
+
+	w := postInput(t, s, "/api/input/config", `{"session":"`+session+`","directions":{"UP":"w"}}`)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("got %d, want 400", w.Code)
+	}
+	var body struct {
+		Reason string `json:"reason"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("response body is not JSON: %v (%q)", err, w.Body.String())
+	}
+	if !strings.Contains(body.Reason, "UP") {
+		t.Errorf("got reason %q, want it to name the rejected direction", body.Reason)
+	}
+	// The built-in numpad default must survive a refused, all-or-nothing config.
+	if s.driver.DirectionKeys["N"] != "numpad8" {
+		t.Error("a refused direction config must not clear the previous mapping")
+	}
+}
+
+func TestInputAPIConfigRefusesUnknownDirectionKey(t *testing.T) {
+	s, _ := inputServer(t)
+	session := armSession(t, s)
+
+	w := postInput(t, s, "/api/input/config", `{"session":"`+session+`","directions":{"N":"control"}}`)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("got %d, want 400", w.Code)
+	}
+}
+
+// A blank direction field is the deliberate WASD-with-no-diagonal case, not
+// an error: the config is accepted, and it is only walking in that direction
+// that later gets refused.
+func TestInputAPIConfigAcceptsEmptyDirection(t *testing.T) {
+	s, _ := inputServer(t)
+	session := armSession(t, s)
+
+	w := postInput(t, s, "/api/input/config", `{"session":"`+session+`","directions":{"NE":""}}`)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("%d %s", w.Code, w.Body.String())
+	}
+	got := s.driver.Submit(Intent{Session: session, Seq: 1, Action: "walk", Direction: "NE", AgeMS: 50})
+	if got.Status != "refused" || !strings.Contains(got.Reason, "NE") {
+		t.Fatalf("got %+v, want a refusal naming the unconfigured direction", got)
+	}
+}
+
 func TestInputAPIConfigRequiresSessionToken(t *testing.T) {
 	s, _ := inputServer(t)
 	armSession(t, s)

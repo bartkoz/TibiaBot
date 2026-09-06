@@ -659,6 +659,146 @@ test('uzbrojenie po odliczeniu wysyła wcześniej wpisane klawisze akcji', async
   assert.equal(configCalls[0].keys.rope, 'f7');
 });
 
+test('pola kierunków startują z domyślnym układem numpada', async () => {
+  const a = app();
+  await new Promise(setImmediate);
+
+  assert.equal(a.get('dir-n').value, 'numpad8');
+  assert.equal(a.get('dir-ne').value, 'numpad9');
+  assert.equal(a.get('dir-e').value, 'numpad6');
+  assert.equal(a.get('dir-se').value, 'numpad3');
+  assert.equal(a.get('dir-s').value, 'numpad2');
+  assert.equal(a.get('dir-sw').value, 'numpad1');
+  assert.equal(a.get('dir-w').value, 'numpad4');
+  assert.equal(a.get('dir-nw').value, 'numpad7');
+});
+
+test('zmiana klawisza kierunku zapisuje konfigurację i wysyła ją do wykonawcy', async () => {
+  const a = app();
+  await new Promise(setImmediate);
+  a.inputClient.armed = true;
+  const configCalls = [];
+  a.inputClient.config = async (keys, clickAfterHotkey, directions) => {
+    configCalls.push({keys, clickAfterHotkey, directions}); return {ok: true};
+  };
+
+  a.get('dir-n').value = 'w';
+  a.get('dir-n').listeners.input();
+
+  assert.equal(configCalls.length, 1, 'a direction change must be sent while armed');
+  assert.equal(configCalls[0].directions.N, 'w');
+  // The rest of the compass must still ride along at its current value -
+  // the driver replaces the whole mapping, not just the one changed field.
+  assert.equal(configCalls[0].directions.S, 'numpad2');
+  const saved = JSON.parse(a.storage.get('minimap-lab-hotkeys'));
+  assert.equal(saved.directions.N, 'w', 'the direction key must also be persisted to localStorage');
+});
+
+test('odrzucona konfiguracja kierunków pokazuje powód wskazujący pole', async () => {
+  const a = app();
+  await new Promise(setImmediate);
+  a.inputClient.armed = true;
+  a.inputClient.config = async () => ({ok: false, reason: 'brak skonfigurowanego klawisza dla kierunku NE'});
+
+  a.get('dir-ne').value = '';
+  a.get('dir-ne').listeners.input();
+  await new Promise(setImmediate);
+
+  assert.match(a.get('input-status').textContent, /NE/);
+});
+
+test('konfiguracja kierunków nie jest wysyłana, dopóki wykonawca jest rozbrojony', async () => {
+  const a = app();
+  await new Promise(setImmediate);
+  const configCalls = [];
+  a.inputClient.config = async (keys, clickAfterHotkey, directions) => {
+    configCalls.push({directions}); return {ok: true};
+  };
+
+  a.get('dir-n').value = 'w';
+  a.get('dir-n').listeners.input();
+
+  assert.equal(configCalls.length, 0, 'nothing must be sent to a driver with no active session');
+});
+
+test('zapisana wcześniej konfiguracja kierunków jest wczytywana przy starcie panelu, także pole celowo wyczyszczone', async () => {
+  const a = app({storage: {'minimap-lab-hotkeys': JSON.stringify(
+    {keys: {}, clickAfterHotkey: true, directions: {N: 'w', S: 's', W: 'a', E: 'd', NE: ''}})}});
+  await new Promise(setImmediate);
+
+  assert.equal(a.get('dir-n').value, 'w');
+  assert.equal(a.get('dir-w').value, 'a');
+  // NE was deliberately left empty (no diagonal key) and saved that way; it
+  // must not fall back to the numpad default the fields start with.
+  assert.equal(a.get('dir-ne').value, '', 'an explicitly cleared direction must stay cleared after reload');
+  // A direction absent from the saved object entirely (never touched by the
+  // user) keeps the numpad default.
+  assert.equal(a.get('dir-sw').value, 'numpad1');
+});
+
+test('przycisk Numpad wypełnia wszystkie pola kierunków i wysyła konfigurację', async () => {
+  const a = app();
+  await new Promise(setImmediate);
+  a.inputClient.armed = true;
+  const configCalls = [];
+  a.inputClient.config = async (keys, clickAfterHotkey, directions) => {
+    configCalls.push(directions); return {ok: true};
+  };
+  // Start from something else, so the preset is visibly the one that wins.
+  a.get('dir-n').value = 'w';
+
+  a.get('dir-preset-numpad').click();
+
+  assert.equal(a.get('dir-n').value, 'numpad8');
+  assert.equal(a.get('dir-nw').value, 'numpad7');
+  assert.equal(configCalls.length, 1, 'a preset click must go through the same send path as a manual edit');
+  assert.equal(configCalls[0].N, 'numpad8');
+});
+
+test('przycisk WSAD wypełnia pola kierunków konwencjonalnym układem liter', async () => {
+  const a = app();
+  await new Promise(setImmediate);
+  a.inputClient.armed = true;
+  const configCalls = [];
+  a.inputClient.config = async (keys, clickAfterHotkey, directions) => {
+    configCalls.push(directions); return {ok: true};
+  };
+
+  a.get('dir-preset-wsad').click();
+
+  assert.equal(a.get('dir-n').value, 'w');
+  assert.equal(a.get('dir-s').value, 's');
+  assert.equal(a.get('dir-w').value, 'a');
+  assert.equal(a.get('dir-e').value, 'd');
+  assert.equal(a.get('dir-nw').value, 'q');
+  assert.equal(a.get('dir-ne').value, 'e');
+  assert.equal(a.get('dir-sw').value, 'z');
+  assert.equal(a.get('dir-se').value, 'c');
+  assert.equal(configCalls.length, 1, 'the WSAD preset must be sent the same way a manual edit is');
+  assert.equal(configCalls[0].N, 'w');
+  // The user can still edit any field afterwards; the preset is only a
+  // starting point, not a locked-in choice.
+  a.get('dir-n').value = 'z';
+  a.get('dir-n').listeners.input();
+  assert.equal(configCalls.at(-1).N, 'z');
+});
+
+test('uzbrojenie po odliczeniu wysyła wcześniej wpisane klawisze kierunków', async () => {
+  const a = app();
+  await new Promise(setImmediate);
+  a.get('dir-n').value = 'w';
+  const configCalls = [];
+  a.inputClient.arm = async () => { a.inputClient.armed = true; return {armed: true, target: {path: '/Applications/Tibia.app'}}; };
+  a.inputClient.config = async (keys, clickAfterHotkey, directions) => { configCalls.push(directions); return {ok: true}; };
+
+  a.get('input-arm').click();
+  for (let i = 0; i < 5; i++) await a.tick();
+  await new Promise(setImmediate);
+
+  assert.equal(configCalls.length, 1, 'the configured direction keys must be sent right after arming');
+  assert.equal(configCalls[0].N, 'w');
+});
+
 test('chodzenie i akcje pięter pozostają dostępne do zaznaczenia, gdy sterowanie jest rozbrojone', async () => {
   // Critical: input-walk used to be disabled while disarmed, so the only way
   // to tick it was to come back to the browser AFTER arming - stealing focus

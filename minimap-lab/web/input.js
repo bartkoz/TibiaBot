@@ -81,15 +81,18 @@ class InputClient {
     const {ok} = await this.postSafe('/api/input/calibrate', {session: this.session, x: nx, y: ny});
     return ok;
   }
-  // config sends the per-type floor-action hotkeys and whether the hotkey is
-  // used on the character's own tile (no click afterwards). Without this,
-  // ActionKeys stays empty forever and every floor action is refused for
-  // lack of a hotkey. The config is all-or-nothing server-side, so the
-  // reason (naming the rejected field) is returned alongside ok, letting the
-  // caller surface it instead of leaving a silent, unexplained refusal.
-  async config(keys, clickAfterHotkey) {
+  // config sends the per-type floor-action hotkeys, whether the hotkey is
+  // used on the character's own tile (no click afterwards), and the
+  // direction->key mapping used for walking. Without this, ActionKeys stays
+  // empty forever (every floor action refused for lack of a hotkey) and
+  // DirectionKeys stays on its numpad default. The config is all-or-nothing
+  // server-side, so the reason (naming the rejected field) is returned
+  // alongside ok, letting the caller surface it instead of leaving a silent,
+  // unexplained refusal. directions defaults to {} so existing callers that
+  // only touch hotkeys keep working unchanged.
+  async config(keys, clickAfterHotkey, directions = {}) {
     const {ok, state} = await this.postSafe('/api/input/config',
-      {session: this.session, keys, click_after_hotkey: clickAfterHotkey});
+      {session: this.session, keys, click_after_hotkey: clickAfterHotkey, directions});
     return {ok, reason: state?.reason};
   }
   // The status poll is also the heartbeat: a gap longer than the driver's

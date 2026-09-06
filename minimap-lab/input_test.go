@@ -2,23 +2,23 @@ package main
 
 import "testing"
 
-func TestKeyForDirectionCoversEightDirections(t *testing.T) {
-	want := map[string]string{
-		"NW": "numpad7", "N": "numpad8", "NE": "numpad9",
-		"W": "numpad4", "E": "numpad6",
-		"SW": "numpad1", "S": "numpad2", "SE": "numpad3",
-	}
-	for dir, key := range want {
-		got, ok := keyForDirection(dir)
-		if !ok || got != key {
-			t.Errorf("%s: got %q %v, want %q", dir, got, ok, key)
+// hotkeyNames is the portable table /api/input/config validates a submitted
+// key name against; it must build (and be correct) on every platform, so its
+// coverage of the ANSI letters and top-row digits is tested here rather than
+// in a platform-tagged file.
+func TestHotkeyNamesCoversLettersAndDigits(t *testing.T) {
+	for c := byte('a'); c <= 'z'; c++ {
+		if name := string(rune(c)); !hotkeyNames[name] {
+			t.Errorf("hotkeyNames is missing letter %q", name)
 		}
 	}
-	if _, ok := keyForDirection("UP"); ok {
-		t.Error("unknown direction must be refused, not guessed")
+	for c := byte('0'); c <= '9'; c++ {
+		if name := string(rune(c)); !hotkeyNames[name] {
+			t.Errorf("hotkeyNames is missing digit %q", name)
+		}
 	}
-	if _, ok := keyForDirection(""); ok {
-		t.Error("empty direction must be refused")
+	if hotkeyNames["control"] {
+		t.Error("hotkeyNames must not accept an arbitrary unknown name")
 	}
 }
 

@@ -97,6 +97,15 @@ type Driver struct {
 	// ClickAfterHotkey is false for clients whose hotkey is set to "use on
 	// yourself"; then the sequence is the tap alone.
 	ClickAfterHotkey bool
+	// DirectionKeys maps each of the eight compass directions to the key
+	// walkLocked taps for it. Defaults to the numpad layout so a user with
+	// numpad movement in the client needs to configure nothing; a client
+	// bound to letter keys (WASD and the like) reconfigures this from the
+	// panel. Diagonals are single keys - composing them from two straight
+	// presses depends on event ordering inside the client and is unreliable,
+	// and if a client has no diagonal key at all the direction is refused
+	// outright rather than silently decomposed.
+	DirectionKeys map[string]string
 	// Tile is the player tile in normalised screen coordinates.
 	Tile    [2]float64
 	HasTile bool
@@ -107,8 +116,34 @@ type Driver struct {
 	MaxObservationAgeMS int
 }
 
+// defaultDirectionKeys is the numpad layout every driver starts with.
+var defaultDirectionKeys = map[string]string{
+	"NW": "numpad7", "N": "numpad8", "NE": "numpad9",
+	"W": "numpad4", "E": "numpad6",
+	"SW": "numpad1", "S": "numpad2", "SE": "numpad3",
+}
+
+// validDirections are the eight compass names the follower ever sends. They
+// come from defaultDirectionKeys' keys, not its values, so this stays fixed
+// even though a client may reconfigure - or blank out - any of those values.
+var validDirections = func() map[string]bool {
+	v := make(map[string]bool, len(defaultDirectionKeys))
+	for dir := range defaultDirectionKeys {
+		v[dir] = true
+	}
+	return v
+}()
+
 func NewDriver(e Emitter, maxObservationAgeMS int) *Driver {
-	return &Driver{em: e, now: time.Now, ActionKeys: map[string]string{}, MaxObservationAgeMS: maxObservationAgeMS}
+	directions := make(map[string]string, len(defaultDirectionKeys))
+	for dir, key := range defaultDirectionKeys {
+		directions[dir] = key
+	}
+	return &Driver{
+		em: e, now: time.Now,
+		ActionKeys: map[string]string{}, DirectionKeys: directions,
+		MaxObservationAgeMS: maxObservationAgeMS,
+	}
 }
 
 func (d *Driver) Arm() (ArmState, error) {
@@ -234,13 +269,31 @@ func (d *Driver) Submit(in Intent) InputResult {
 	}
 }
 
+// keyForDirection resolves a walk direction against the driver's own
+// DirectionKeys, distinguishing two different failures: a direction name
+// outside the eight the follower ever sends (a bug upstream, not a
+// configuration gap) versus a real compass direction the panel has no key
+// configured for (e.g. a WASD layout with no diagonal key at all). Silently
+// emitting nothing for the latter would look identical to a dropped request;
+// naming the direction lets the panel show the user exactly what to fill in.
+func (d *Driver) keyForDirection(dir string) (string, error) {
+	if !validDirections[dir] {
+		return "", fmt.Errorf("nieznany kierunek")
+	}
+	key := d.DirectionKeys[dir]
+	if key == "" {
+		return "", fmt.Errorf("brak skonfigurowanego klawisza dla kierunku %s", dir)
+	}
+	return key, nil
+}
+
 func (d *Driver) walkLocked(in Intent) InputResult {
 	if d.inFlight != nil {
 		return InputResult{Status: "in_progress", Reason: "trwa akcja zmiany piętra"}
 	}
-	key, ok := keyForDirection(in.Direction)
-	if !ok {
-		return InputResult{Status: "refused", Reason: "nieznany kierunek"}
+	key, err := d.keyForDirection(in.Direction)
+	if err != nil {
+		return InputResult{Status: "refused", Reason: err.Error()}
 	}
 	if err := d.em.TapKey(key, holdMS); err != nil {
 		return d.emitterFailureLocked(err)
@@ -308,14 +361,19 @@ func (d *Driver) Calibrate(nx, ny float64) error {
 // because stairs are climbed by walking onto them, not by using an item.
 var validActionTypes = map[string]bool{"rope": true, "ladder": true, "hole": true, "shovel": true}
 
-// SetActionConfig stores the hotkeys the panel configured for floor actions,
-// plus whether the hotkey is used on the character's own tile (no follow-up
-// click) or needs a click afterwards. It is the only way ActionKeys and
-// ClickAfterHotkey are ever populated outside tests: without it every floor
-// action is refused for lack of a hotkey. The whole config is validated
-// before anything is written, so a bad request never partially applies.
-func (d *Driver) SetActionConfig(keys map[string]string, clickAfterHotkey bool) error {
-	clean := make(map[string]string, len(keys))
+// SetInputConfig stores the whole panel-configurable input surface: the
+// hotkeys for floor actions, whether the hotkey is used on the character's
+// own tile (no follow-up click) or needs a click afterwards, and the
+// direction->key mapping walkLocked consults. It is the only way ActionKeys,
+// ClickAfterHotkey and DirectionKeys are ever populated outside tests:
+// without it every floor action is refused for lack of a hotkey, and walking
+// stays on the numpad default. Both keys and directions are full
+// replacements, not merges - like the panel already does for hotkeys, the
+// caller resends the whole picture on every change. Everything is validated
+// before anything is written, so a bad request never partially applies: one
+// bad key name must not silently clear an unrelated field.
+func (d *Driver) SetInputConfig(keys map[string]string, clickAfterHotkey bool, directions map[string]string) error {
+	cleanKeys := make(map[string]string, len(keys))
 	for action, key := range keys {
 		if !validActionTypes[action] {
 			return fmt.Errorf("nieznany typ akcji: %s", action)
@@ -326,12 +384,26 @@ func (d *Driver) SetActionConfig(keys map[string]string, clickAfterHotkey bool) 
 		if !hotkeyNames[key] {
 			return fmt.Errorf("nieznany klawisz dla akcji %s: %s", action, key)
 		}
-		clean[action] = key
+		cleanKeys[action] = key
+	}
+	cleanDirections := make(map[string]string, len(directions))
+	for dir, key := range directions {
+		if !validDirections[dir] {
+			return fmt.Errorf("nieznany kierunek: %s", dir)
+		}
+		if key == "" {
+			continue // an unset direction is fine; walking refuses it until configured
+		}
+		if !hotkeyNames[key] {
+			return fmt.Errorf("nieznany klawisz dla kierunku %s: %s", dir, key)
+		}
+		cleanDirections[dir] = key
 	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	d.ActionKeys = clean
+	d.ActionKeys = cleanKeys
 	d.ClickAfterHotkey = clickAfterHotkey
+	d.DirectionKeys = cleanDirections
 	return nil
 }
 

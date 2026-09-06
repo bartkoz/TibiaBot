@@ -129,11 +129,12 @@ func (s *server) inputConfig(w http.ResponseWriter, r *http.Request) {
 		Session          string            `json:"session"`
 		Keys             map[string]string `json:"keys"`
 		ClickAfterHotkey bool              `json:"click_after_hotkey"`
+		Directions       map[string]string `json:"directions"`
 	}
 	if !s.readInput(w, r, &body) || !s.sessionOK(w, body.Session) {
 		return
 	}
-	if err := s.driver.SetActionConfig(body.Keys, body.ClickAfterHotkey); err != nil {
+	if err := s.driver.SetInputConfig(body.Keys, body.ClickAfterHotkey, body.Directions); err != nil {
 		writeJSONError(w, http.StatusBadRequest, err.Error())
 		return
 	}

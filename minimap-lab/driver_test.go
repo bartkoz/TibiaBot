@@ -396,10 +396,10 @@ func TestDriverCalibrateRefusesCoordinatesOutsideScreen(t *testing.T) {
 	}
 }
 
-func TestDriverSetActionConfigStoresValidHotkeys(t *testing.T) {
+func TestDriverSetInputConfigStoresValidHotkeys(t *testing.T) {
 	d, _, _ := driverAt(t, time.Unix(0, 0))
 
-	if err := d.SetActionConfig(map[string]string{"rope": "f7", "hole": "f8"}, true); err != nil {
+	if err := d.SetInputConfig(map[string]string{"rope": "f7", "hole": "f8"}, true, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -416,17 +416,17 @@ func TestDriverSetActionConfigStoresValidHotkeys(t *testing.T) {
 	}
 }
 
-func TestDriverSetActionConfigRefusesUnknownKey(t *testing.T) {
+func TestDriverSetInputConfigRefusesUnknownKey(t *testing.T) {
 	d, _, _ := driverAt(t, time.Unix(0, 0))
 
-	err := d.SetActionConfig(map[string]string{"rope": "control"}, false)
+	err := d.SetInputConfig(map[string]string{"rope": "control"}, false, nil)
 
 	if err == nil {
 		t.Fatal("an unknown key name must be refused")
 	}
 	// The reason must name which of the four fields was rejected - a typo in
-	// one field voids all four (SetActionConfig is all-or-nothing), so the
-	// user's only way to find the field to fix is this message.
+	// one field voids the whole config (SetInputConfig is all-or-nothing), so
+	// the user's only way to find the field to fix is this message.
 	if !strings.Contains(err.Error(), "rope") {
 		t.Errorf("got %q, want it to name the rejected action", err.Error())
 	}
@@ -435,28 +435,129 @@ func TestDriverSetActionConfigRefusesUnknownKey(t *testing.T) {
 	}
 }
 
-func TestDriverSetActionConfigRefusesUnknownActionType(t *testing.T) {
+func TestDriverSetInputConfigRefusesUnknownActionType(t *testing.T) {
 	d, _, _ := driverAt(t, time.Unix(0, 0))
 
-	err := d.SetActionConfig(map[string]string{"stairs": "f7"}, false)
+	err := d.SetInputConfig(map[string]string{"stairs": "f7"}, false, nil)
 
 	if err == nil {
 		t.Fatal("stairs are walked, not hotkeyed - an action type outside rope/ladder/hole/shovel must be refused")
 	}
 }
 
-func TestDriverSetActionConfigAllowsClearingAHotkey(t *testing.T) {
+func TestDriverSetInputConfigAllowsClearingAHotkey(t *testing.T) {
 	d, _, _ := driverAt(t, time.Unix(0, 0))
-	if err := d.SetActionConfig(map[string]string{"rope": "f7"}, false); err != nil {
+	if err := d.SetInputConfig(map[string]string{"rope": "f7"}, false, nil); err != nil {
 		t.Fatal(err)
 	}
 
-	if err := d.SetActionConfig(map[string]string{"rope": ""}, false); err != nil {
+	if err := d.SetInputConfig(map[string]string{"rope": ""}, false, nil); err != nil {
 		t.Fatal(err)
 	}
 
 	if _, ok := d.ActionKeys["rope"]; ok {
 		t.Error("an empty key must clear the hotkey, not store an empty string")
+	}
+}
+
+func TestDriverDefaultsToNumpadDirectionKeys(t *testing.T) {
+	d, em, _ := driverAt(t, time.Unix(0, 0))
+
+	got := d.Submit(walk(1, d.Status().Session))
+
+	if got.Status != "emitted" || got.Key != "numpad8" {
+		t.Fatalf("got %+v, want the numpad default for N so a numpad user needs no configuration", got)
+	}
+	if ev := em.Events(); len(ev) != 1 || ev[0] != "tap numpad8 35ms" {
+		t.Fatalf("got %v", ev)
+	}
+}
+
+func TestDriverSetInputConfigStoresCustomDirectionKeys(t *testing.T) {
+	d, em, _ := driverAt(t, time.Unix(0, 0))
+	// The user's real client is WASD, not numpad: w/s/a/d plus q/e/z/c for
+	// the diagonals - none of them anywhere near the built-in numpad layout.
+	wasd := map[string]string{
+		"N": "w", "S": "s", "W": "a", "E": "d",
+		"NW": "q", "NE": "e", "SW": "z", "SE": "c",
+	}
+	if err := d.SetInputConfig(nil, false, wasd); err != nil {
+		t.Fatal(err)
+	}
+
+	got := d.Submit(walk(1, d.Status().Session))
+
+	if got.Status != "emitted" || got.Key != "w" {
+		t.Fatalf("got %+v, want the configured WASD key for N", got)
+	}
+	if ev := em.Events(); len(ev) != 1 || ev[0] != "tap w 35ms" {
+		t.Fatalf("got %v", ev)
+	}
+}
+
+func TestDriverSetInputConfigRefusesUnknownDirectionName(t *testing.T) {
+	d, _, _ := driverAt(t, time.Unix(0, 0))
+
+	err := d.SetInputConfig(nil, false, map[string]string{"UP": "w"})
+
+	if err == nil {
+		t.Fatal("a direction name outside the eight compass names must be refused")
+	}
+	if !strings.Contains(err.Error(), "UP") {
+		t.Errorf("got %q, want it to name the rejected direction", err.Error())
+	}
+	// All-or-nothing: the built-in numpad default must survive a refused call.
+	if d.DirectionKeys["N"] != "numpad8" {
+		t.Error("a refused config must not partially apply, and must not clear the previous mapping")
+	}
+}
+
+func TestDriverSetInputConfigRefusesUnknownDirectionKey(t *testing.T) {
+	d, _, _ := driverAt(t, time.Unix(0, 0))
+
+	err := d.SetInputConfig(nil, false, map[string]string{"N": "control"})
+
+	if err == nil {
+		t.Fatal("an unknown key name for a direction must be refused")
+	}
+	if !strings.Contains(err.Error(), "N") {
+		t.Errorf("got %q, want it to name the rejected direction", err.Error())
+	}
+}
+
+// Reproduces the WASD-with-no-diagonal case directly: a direction left blank
+// must refuse with a reason naming the direction, not emit nothing silently
+// and not fall back to decomposing the diagonal into two straight steps.
+func TestDriverRefusesDirectionLeftEmptyWithClearReason(t *testing.T) {
+	d, em, _ := driverAt(t, time.Unix(0, 0))
+	wasd := map[string]string{"N": "w", "S": "s", "W": "a", "E": "d"} // no diagonals configured
+	if err := d.SetInputConfig(nil, false, wasd); err != nil {
+		t.Fatal(err)
+	}
+
+	got := d.Submit(Intent{Session: d.Status().Session, Seq: 1, Action: "walk", Direction: "NE", AgeMS: 50})
+
+	if got.Status != "refused" {
+		t.Fatalf("got %+v, want a refusal rather than silence for an unconfigured diagonal", got)
+	}
+	if !strings.Contains(got.Reason, "NE") {
+		t.Errorf("got reason %q, want it to name the direction with no configured key", got.Reason)
+	}
+	if len(em.Events()) != 0 {
+		t.Error("an unconfigured direction must not touch the system")
+	}
+}
+
+func TestDriverWalkRefusesUnknownDirectionName(t *testing.T) {
+	d, em, _ := driverAt(t, time.Unix(0, 0))
+
+	got := d.Submit(Intent{Session: d.Status().Session, Seq: 1, Action: "walk", Direction: "UP", AgeMS: 50})
+
+	if got.Status != "refused" {
+		t.Fatalf("got %+v", got)
+	}
+	if len(em.Events()) != 0 {
+		t.Error("an unknown direction name must not touch the system")
 	}
 }
 

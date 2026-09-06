@@ -29,31 +29,31 @@ type Emitter interface {
 	Preflight() error
 }
 
-// Diagonals are single keys. Composing them from two arrow presses depends on
-// event ordering inside the client and is unreliable.
-var directionKeys = map[string]string{
-	"NW": "numpad7", "N": "numpad8", "NE": "numpad9",
-	"W": "numpad4", "E": "numpad6",
-	"SW": "numpad1", "S": "numpad2", "SE": "numpad3",
-}
-
-func keyForDirection(dir string) (string, bool) {
-	key, ok := directionKeys[dir]
-	return key, ok
-}
-
 // hotkeyNames lists every key name the platform emitters recognise for a
-// floor-action hotkey. input_darwin.go and input_windows.go each carry the
-// real per-platform codes for the same set of names; this portable table is
-// the one inputapi.go's /api/input/config handler checks a submitted key
-// against, since it must build (and validate) on every platform regardless of
-// which emitter is actually running.
+// floor-action hotkey or a direction. input_darwin.go and input_windows.go
+// each carry the real per-platform codes for the same set of names; this
+// portable table is the one inputapi.go's /api/input/config handler checks a
+// submitted key against, since it must build (and validate) on every
+// platform regardless of which emitter is actually running.
 var hotkeyNames = map[string]bool{
 	"numpad1": true, "numpad2": true, "numpad3": true, "numpad4": true,
 	"numpad6": true, "numpad7": true, "numpad8": true, "numpad9": true,
 	"up": true, "down": true, "left": true, "right": true,
 	"f1": true, "f2": true, "f3": true, "f4": true, "f5": true, "f6": true,
 	"f7": true, "f8": true, "f9": true, "f10": true, "f11": true, "f12": true,
+}
+
+// init adds the ANSI letter keys a-z and the top-row digits 0-9, so a client
+// whose movement is bound to letters (WASD and the like) has a key name to
+// configure at all - darwinKeys and windowsKeys each carry the matching
+// per-platform codes for the same names.
+func init() {
+	for c := byte('a'); c <= 'z'; c++ {
+		hotkeyNames[string(rune(c))] = true
+	}
+	for c := byte('0'); c <= '9'; c++ {
+		hotkeyNames[string(rune(c))] = true
+	}
 }
 
 // DryEmitter performs no system calls. It backs the -input dry mode and every

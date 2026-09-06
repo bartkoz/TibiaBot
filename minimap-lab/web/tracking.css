@@ -9,6 +9,8 @@
 #input-status{margin-top:16px;color:#a0b2bf;font-size:13px}
 #input-status code{color:#e3edf2}
 .route-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px;margin-top:14px}
+.compass-grid{display:grid;grid-template-columns:repeat(3,72px);gap:8px;margin-top:10px}
+.compass-grid input{margin-top:0;text-align:center}
 .route-switches{display:flex;flex-wrap:wrap;align-items:center;gap:18px;margin-top:14px}
 #route-status{margin-top:16px;color:#a0b2bf;font-size:13px}
 #route-next{margin-top:6px;font:600 20px ui-monospace,monospace;color:#73d6bd}
