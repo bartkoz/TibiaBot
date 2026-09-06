@@ -121,7 +121,9 @@ Każde zdarzenie sprawdza focus tuż przed wysłaniem, więc utrata focusu przez
 
 ### Świeżość obserwacji
 
-Każdy krok niesie wiek pozycji, na której się opiera; wykonawca odrzuca krok starszy niż `-stale-ms` (domyślnie **400 ms**) komunikatem „pozycja starsza niż … ms" — to zabezpieczenie ważniejsze niż heartbeat, bo nie pozwala chodzić na podstawie nieaktualnego obrazu (np. z zakładki throttlowanej w tle). Jeśli na danym sprzęcie krok po kroku wraca sama ta odmowa, sprawdź w panelu telemetrię **Cały odczyt** — to czas przechwycenia klatki, dopasowania i odpowiedzi razem; gdy regularnie przekracza próg, podnieś go: `go run . -input system -stale-ms 800`. Zbyt wysoki próg to świadomy kompromis (starsza pozycja jako podstawa kroku), nie błąd konfiguracji.
+Każdy krok niesie wiek pozycji, na której się opiera; wykonawca odrzuca krok starszy niż `-stale-ms` (domyślnie **400 ms**) komunikatem „pozycja starsza niż … ms" — to zabezpieczenie ważniejsze niż heartbeat, bo nie pozwala chodzić na podstawie nieaktualnego obrazu (np. z zakładki throttlowanej w tle). Jeśli na danym sprzęcie krok po kroku wraca sama ta odmowa, sprawdź w panelu telemetrię **Cały odczyt** — to czas przechwycenia klatki, dopasowania i odpowiedzi razem; gdy regularnie przekracza próg, podnieś go: `go run . -input system -stale-ms 600`. Zbyt wysoki próg to świadomy kompromis (starsza pozycja jako podstawa kroku), nie błąd konfiguracji.
+
+`-stale-ms` przyjmuje wyłącznie **100–600**; poza tym zakresem program kończy się błędem przy starcie zamiast po cichu rozstroić bramkę. Dolna granica to najszybszy takt śledzenia (10 Hz = 100 ms) — poniżej niej żaden odczyt nie miałby szans zmieścić się w budżecie. Górna zostaje wyraźnie poniżej limitu heartbeatu (750 ms): przy wartości bliskiej temu progowi wykonawca i tak rozbroiłby się z powodu martwego pulsu, zanim obserwacja zdążyłaby aż tak się zestarzeć, więc bramka świeżości przestałaby cokolwiek znaczyć.
 
 ### macOS: zgoda Accessibility
 

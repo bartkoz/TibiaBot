@@ -14,10 +14,34 @@ const (
 	// capture-to-reply round trip (the panel's "Cały odczyt" telemetry)
 	// exceeds this would otherwise have every single step refused.
 	defaultMaxObservationAgeMS = 400
-	heartbeatTimeoutMS         = 750
-	maxTapsPerSecond           = 5
-	actionClickDelayMS         = 120
+	// minStaleMS/maxStaleMS bound -stale-ms to a range the system can
+	// actually use, so an unvalidated flag cannot silently switch off the
+	// freshness gate or disable every step:
+	//   - minStaleMS is the fastest tracking interval (10 Hz = 100ms).
+	//     Tighter than that leaves no round-trip budget at all - every
+	//     single observation would already be older than the threshold.
+	//   - maxStaleMS stays well under heartbeatTimeoutMS (750ms): at or
+	//     above it, a dead heartbeat would already have disarmed the
+	//     session before an observation could ever get that stale, so the
+	//     freshness gate would stop meaning anything.
+	minStaleMS         = 100
+	maxStaleMS         = 600
+	heartbeatTimeoutMS = 750
+	maxTapsPerSecond   = 5
+	actionClickDelayMS = 120
 )
+
+// validateStaleMS refuses a -stale-ms value outside minStaleMS-maxStaleMS.
+// An unvalidated flag is worse than a fixed constant: an extra digit (8000
+// instead of 800) would silently widen the freshness gate with no warning,
+// and a negative value would make the driver refuse every single step while
+// logging the confusing "pozycja starsza niż -N ms".
+func validateStaleMS(ms int) error {
+	if ms < minStaleMS || ms > maxStaleMS {
+		return fmt.Errorf("-stale-ms musi mieścić się w zakresie %d–%d ms, podano %d", minStaleMS, maxStaleMS, ms)
+	}
+	return nil
+}
 
 // Intent is a single thing the panel wants done. It carries the age of the
 // observation rather than its timestamp: performance.now() counts from

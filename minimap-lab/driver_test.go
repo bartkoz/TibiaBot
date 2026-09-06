@@ -125,6 +125,39 @@ func TestDriverUsesConfiguredMaxObservationAge(t *testing.T) {
 	}
 }
 
+func TestValidateStaleMSAcceptsTheDefaultAndTheBounds(t *testing.T) {
+	for _, ms := range []int{defaultMaxObservationAgeMS, minStaleMS, maxStaleMS} {
+		if err := validateStaleMS(ms); err != nil {
+			t.Errorf("validateStaleMS(%d): %v", ms, err)
+		}
+	}
+}
+
+func TestValidateStaleMSRefusesTooLow(t *testing.T) {
+	// Below the fastest tracking interval (10 Hz = 100ms), there is no
+	// round-trip budget left at all - every single step would be refused.
+	if err := validateStaleMS(minStaleMS - 1); err == nil {
+		t.Error("a threshold tighter than the fastest tracking interval must be refused")
+	}
+}
+
+func TestValidateStaleMSRefusesTooHigh(t *testing.T) {
+	// At or beyond heartbeatTimeoutMS, a dead heartbeat would already have
+	// disarmed the session before an observation could ever get that stale,
+	// so the freshness gate would stop meaning anything.
+	if err := validateStaleMS(maxStaleMS + 1); err == nil {
+		t.Error("a threshold that close to the heartbeat timeout must be refused")
+	}
+}
+
+func TestValidateStaleMSRefusesNegative(t *testing.T) {
+	// A negative threshold makes the driver refuse every single step while
+	// logging the confusing "pozycja starsza niż -100 ms".
+	if err := validateStaleMS(-100); err == nil {
+		t.Error("a negative -stale-ms must be refused at startup, not silently disable every step")
+	}
+}
+
 func TestDriverDisarmsWhenAnotherWindowTakesFocus(t *testing.T) {
 	d, em, _ := driverAt(t, time.Unix(0, 0))
 	em.Window = Window{PID: 99, Path: "/Applications/Safari.app"}

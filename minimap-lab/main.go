@@ -62,11 +62,14 @@ func main() {
 	addr := flag.String("listen", "127.0.0.1:8095", "lokalny adres panelu")
 	mode := flag.String("input", "off", "sterowanie: off, dry albo system")
 	staleMS := flag.Int("stale-ms", defaultMaxObservationAgeMS,
-		"maksymalny wiek obserwacji pozycji w ms; wolny \"Cały odczyt\" w panelu przekraczający tę wartość odrzuca każdy krok")
+		fmt.Sprintf("maksymalny wiek obserwacji pozycji w ms (%d–%d); wolny \"Cały odczyt\" w panelu przekraczający tę wartość odrzuca każdy krok", minStaleMS, maxStaleMS))
 	flag.Parse()
 	host, _, err := net.SplitHostPort(*addr)
 	if err != nil || net.ParseIP(host) == nil || !net.ParseIP(host).IsLoopback() {
 		log.Fatal("-listen musi wskazywać numeryczny adres loopback, np. 127.0.0.1:8095")
+	}
+	if err := validateStaleMS(*staleMS); err != nil {
+		log.Fatal(err)
 	}
 	s := &server{dir: *dir, gate: make(chan struct{}, 1), debugDir: ".debug"}
 	em, err := selectEmitter(*mode)
