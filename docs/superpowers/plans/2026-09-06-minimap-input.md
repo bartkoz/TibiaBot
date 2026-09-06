@@ -700,7 +700,7 @@ func (d *Driver) allowTapLocked() bool {
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `cd minimap-lab && go test -run TestDriver ./...`
-Expected: PASS (12 testów)
+Expected: PASS (11 testów)
 
 - [ ] **Step 5: Commit**
 
@@ -890,7 +890,7 @@ oraz po `d.taps = append(d.taps, d.now())`, przed `d.inFlight = &want`:
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `cd minimap-lab && go test -run TestDriver ./...`
-Expected: PASS (19 testów)
+Expected: PASS (16 testów)
 
 - [ ] **Step 5: Commit**
 
