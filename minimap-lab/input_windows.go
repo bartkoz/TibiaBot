@@ -196,18 +196,21 @@ func (e *windowsEmitter) Focused() (Window, error) {
 }
 
 // processPath is the identity that matters. A browser tab can be titled
-// "Tibia", so the title alone must never gate emission.
+// "Tibia", so the title alone must never gate emission. Given C1, this is the
+// user's only confirmation of what actually got armed, so a lookup failure
+// must be visible - never silently indistinguishable from a real process
+// that simply has an empty path.
 func processPath(pid uint32) string {
-	h, _, _ := procOpenProcess.Call(processQueryLimitedInformation, 0, uintptr(pid))
+	h, _, err := procOpenProcess.Call(processQueryLimitedInformation, 0, uintptr(pid))
 	if h == 0 {
-		return ""
+		return fmt.Sprintf("(nie udało się odczytać ścieżki: %v)", err)
 	}
 	defer procCloseHandle.Call(h)
 	buf := make([]uint16, 1024)
 	size := uint32(len(buf))
-	ok, _, _ := procQueryFullProcessName.Call(h, 0, uintptr(unsafe.Pointer(&buf[0])), uintptr(unsafe.Pointer(&size)))
+	ok, _, err := procQueryFullProcessName.Call(h, 0, uintptr(unsafe.Pointer(&buf[0])), uintptr(unsafe.Pointer(&size)))
 	if ok == 0 {
-		return ""
+		return fmt.Sprintf("(nie udało się odczytać ścieżki: %v)", err)
 	}
 	return syscall.UTF16ToString(buf[:size])
 }
