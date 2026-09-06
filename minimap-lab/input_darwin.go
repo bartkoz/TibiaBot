@@ -33,6 +33,21 @@ const (
 // cgPoint stands in for CGPoint: two float64 fields, passed by value.
 type cgPoint struct{ X, Y float64 }
 
+// cgSize stands in for CGSize: two float64 fields, passed by value.
+type cgSize struct{ Width, Height float64 }
+
+// cgRect stands in for CGRect: a 32-byte struct (two nested two-float64
+// structs), returned by value. CGDisplayBounds is the only function here
+// that returns a struct rather than a scalar/pointer; purego's amd64 and
+// arm64 struct-return paths were verified empirically before relying on this
+// (see the fix-round report), including on arm64 where a 32-byte struct only
+// stays in registers if purego recognises it as a homogeneous
+// floating-point aggregate.
+type cgRect struct {
+	Origin cgPoint
+	Size   cgSize
+}
+
 type darwinEmitter struct {
 	mu sync.Mutex
 	// held is the set of physical key codes still down. Unlike Windows there
@@ -46,12 +61,27 @@ type darwinEmitter struct {
 	post           func(tap uint32, event uintptr)
 	release        func(ref uintptr)
 	preflight      func() bool
-	displayWide    func(display uint32) uint64
-	displayHigh    func(display uint32) uint64
+	displayBounds  func(display uint32) cgRect
 	mainDisplay    func() uint32
 
 	frontmostPID  func() int
 	frontmostName func() string
+}
+
+// registerFunc wraps purego.RegisterLibFunc, which panics when name cannot be
+// resolved in the library, and turns that panic into a plain error instead.
+// CGPreflightPostEventAccess, for instance, only exists from macOS 10.15
+// onward; without this, a missing symbol on an older system would crash the
+// whole panel process instead of surfacing the clean error that
+// selectEmitter (in inputapi.go) is built to report.
+func registerFunc(fptr any, handle uintptr, name string) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("nie udało się powiązać funkcji %s: %v", name, r)
+		}
+	}()
+	purego.RegisterLibFunc(fptr, handle, name)
+	return nil
 }
 
 func newSystemEmitter() (Emitter, error) {
@@ -61,24 +91,35 @@ func newSystemEmitter() (Emitter, error) {
 		return nil, fmt.Errorf("nie udało się otworzyć CoreGraphics: %w", err)
 	}
 	e := &darwinEmitter{held: map[uint16]bool{}}
-	// CGKeyCode is uint16, C bool is one byte, CGPoint is two float64 by value.
-	// purego does not verify any of this; a wrong declaration fails at run
-	// time, not at compile time.
-	purego.RegisterLibFunc(&e.createKeyboard, cg, "CGEventCreateKeyboardEvent")
-	purego.RegisterLibFunc(&e.createMouse, cg, "CGEventCreateMouseEvent")
-	purego.RegisterLibFunc(&e.post, cg, "CGEventPost")
-	purego.RegisterLibFunc(&e.preflight, cg, "CGPreflightPostEventAccess")
-	purego.RegisterLibFunc(&e.displayWide, cg, "CGDisplayPixelsWide")
-	purego.RegisterLibFunc(&e.displayHigh, cg, "CGDisplayPixelsHigh")
-	// Display id 0 is not the main display; it has to be asked for by name.
-	purego.RegisterLibFunc(&e.mainDisplay, cg, "CGMainDisplayID")
+	// CGKeyCode is uint16, C bool is one byte, CGPoint/CGRect are structs
+	// passed/returned by value. purego does not verify any of this; a wrong
+	// declaration fails at run time, not at compile time.
+	cgFuncs := []struct {
+		fptr any
+		name string
+	}{
+		{&e.createKeyboard, "CGEventCreateKeyboardEvent"},
+		{&e.createMouse, "CGEventCreateMouseEvent"},
+		{&e.post, "CGEventPost"},
+		{&e.preflight, "CGPreflightPostEventAccess"},
+		{&e.displayBounds, "CGDisplayBounds"},
+		// Display id 0 is not the main display; it has to be asked for by name.
+		{&e.mainDisplay, "CGMainDisplayID"},
+	}
+	for _, f := range cgFuncs {
+		if err := registerFunc(f.fptr, cg, f.name); err != nil {
+			return nil, err
+		}
+	}
 
 	cf, err := purego.Dlopen("/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation",
 		purego.RTLD_NOW|purego.RTLD_GLOBAL)
 	if err != nil {
 		return nil, fmt.Errorf("nie udało się otworzyć CoreFoundation: %w", err)
 	}
-	purego.RegisterLibFunc(&e.release, cf, "CFRelease")
+	if err := registerFunc(&e.release, cf, "CFRelease"); err != nil {
+		return nil, err
+	}
 
 	if err := e.bindWorkspace(); err != nil {
 		return nil, err
@@ -90,7 +131,7 @@ func newSystemEmitter() (Emitter, error) {
 // CGEventPost silently does nothing and the bot merely looks frozen.
 func (e *darwinEmitter) Preflight() error {
 	if !e.preflight() {
-		return fmt.Errorf("brak zgody Accessibility. Dodaj program w Ustawieniach → Prywatność i ochrona → Dostępność. Zgoda na nagrywanie ekranu, którą ma przeglądarka, jej nie zastępuje")
+		return fmt.Errorf("brak zgody Accessibility. Dodaj program w Ustawieniach → Prywatność i ochrona → Dostępność, a następnie uruchom panel ponownie — macOS zwykle wymaga restartu procesu, aby nowo nadane uprawnienie zaczęło działać. Zgoda na nagrywanie ekranu, którą ma przeglądarka, jej nie zastępuje")
 	}
 	return nil
 }
@@ -132,10 +173,18 @@ func (e *darwinEmitter) Click(nx, ny float64) error {
 	if nx < 0 || nx > 1 || ny < 0 || ny > 1 {
 		return fmt.Errorf("współrzędne kliknięcia poza ekranem")
 	}
-	// CGEvent works in points while the shared image is in physical pixels;
-	// normalised coordinates make the Retina factor cancel out.
+	// CGEventCreateMouseEvent's coordinates are global points, not pixels:
+	// CGDisplayPixelsWide/High report backing pixels, which on a Retina
+	// display is twice the point count CGEventPost actually expects, and
+	// using them would silently place every click at the wrong position.
+	// CGDisplayBounds is unambiguously in points and also carries the
+	// display's origin, which a plain size would ignore.
 	display := e.mainDisplay()
-	at := cgPoint{X: nx * float64(e.displayWide(display)), Y: ny * float64(e.displayHigh(display))}
+	bounds := e.displayBounds(display)
+	at := cgPoint{
+		X: bounds.Origin.X + nx*bounds.Size.Width,
+		Y: bounds.Origin.Y + ny*bounds.Size.Height,
+	}
 	for _, kind := range []uint32{kCGEventMouseMoved, kCGEventLeftMouseDown, kCGEventLeftMouseUp} {
 		ev := e.createMouse(0, kind, at, kCGMouseButtonLeft)
 		if ev == 0 {
