@@ -81,12 +81,15 @@ var windowsKeys = map[string]uint16{
 var windowsExtended = map[string]bool{"up": true, "down": true, "left": true, "right": true}
 
 type windowsEmitter struct {
-	mu   sync.Mutex
-	held map[uint16]bool
+	mu sync.Mutex
+	// held maps a virtual key still down to the exact key-down flags used for
+	// it (without keyeventfKeyUp), so ReleaseAll can reproduce the extended-key
+	// bit that distinguishes an arrow from its numpad twin.
+	held map[uint16]uint32
 }
 
 func newSystemEmitter() (Emitter, error) {
-	return &windowsEmitter{held: map[uint16]bool{}}, nil
+	return &windowsEmitter{held: map[uint16]uint32{}}, nil
 }
 
 func (e *windowsEmitter) Preflight() error { return nil }
@@ -97,21 +100,30 @@ func (e *windowsEmitter) TapKey(key string, ms int) error {
 		return fmt.Errorf("nieznany klawisz: %s", key)
 	}
 	scan, _, _ := procMapVirtualKeyW.Call(uintptr(vk), 0) // MAPVK_VK_TO_VSC
+	if scan == 0 {
+		return fmt.Errorf("brak kodu skanowania dla klawisza: %s", key)
+	}
 	flags := uint32(keyeventfScanCode)
 	if windowsExtended[key] {
 		flags |= keyeventfExtendedKey
 	}
-	e.mu.Lock()
-	e.held[vk] = true
-	e.mu.Unlock()
 	if err := e.sendKey(keyboardInput{kind: inputKeyboard, wScan: uint16(scan), flags: flags}); err != nil {
 		return err
 	}
+	// Only register the key as held once the key-down actually landed, so a
+	// failed key-down does not leave a phantom entry for ReleaseAll to chase.
+	e.mu.Lock()
+	e.held[vk] = flags
+	e.mu.Unlock()
 	time.Sleep(time.Duration(ms) * time.Millisecond)
 	err := e.sendKey(keyboardInput{kind: inputKeyboard, wScan: uint16(scan), flags: flags | keyeventfKeyUp})
-	e.mu.Lock()
-	delete(e.held, vk)
-	e.mu.Unlock()
+	if err == nil {
+		// Only forget the key once the key-up actually succeeded; otherwise the
+		// game may still see it held and ReleaseAll must be able to retry it.
+		e.mu.Lock()
+		delete(e.held, vk)
+		e.mu.Unlock()
+	}
 	return err
 }
 
@@ -134,18 +146,41 @@ func (e *windowsEmitter) Click(nx, ny float64) error {
 
 func (e *windowsEmitter) ReleaseAll() error {
 	e.mu.Lock()
-	keys := make([]uint16, 0, len(e.held))
-	for vk := range e.held {
-		keys = append(keys, vk)
+	pending := make(map[uint16]uint32, len(e.held))
+	for vk, flags := range e.held {
+		pending[vk] = flags
 	}
-	e.held = map[uint16]bool{}
 	e.mu.Unlock()
-	for _, vk := range keys {
+
+	// Only drop a key from held once its release actually succeeded, so a
+	// failed release stays tracked and can be retried instead of being
+	// silently forgotten.
+	var firstErr error
+	released := make([]uint16, 0, len(pending))
+	for vk, flags := range pending {
 		scan, _, _ := procMapVirtualKeyW.Call(uintptr(vk), 0)
-		e.sendKey(keyboardInput{kind: inputKeyboard, wScan: uint16(scan),
-			flags: keyeventfScanCode | keyeventfKeyUp})
+		if scan == 0 {
+			if firstErr == nil {
+				firstErr = fmt.Errorf("brak kodu skanowania dla klawisza wirtualnego: 0x%02X", vk)
+			}
+			continue
+		}
+		if err := e.sendKey(keyboardInput{kind: inputKeyboard, wScan: uint16(scan),
+			flags: flags | keyeventfKeyUp}); err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		released = append(released, vk)
 	}
-	return nil
+
+	e.mu.Lock()
+	for _, vk := range released {
+		delete(e.held, vk)
+	}
+	e.mu.Unlock()
+	return firstErr
 }
 
 func (e *windowsEmitter) Focused() (Window, error) {
@@ -195,6 +230,12 @@ func (e *windowsEmitter) sendMouse(in mouseInput) error {
 	return nil
 }
 
-// SendInput reads an array of INPUT records of one fixed size; the two structs
-// standing in for it must agree, or the call silently fails.
-var _ [0]struct{} = [unsafe.Sizeof(keyboardInput{}) - unsafe.Sizeof(mouseInput{})]struct{}{}
+// SendInput reads an array of INPUT records of one fixed size; the structs
+// standing in for it must match that size exactly, or the call silently
+// misbehaves. This layout is amd64-specific: the real Win32 INPUT union is 40
+// bytes there. On 386 it is only 28 bytes, so these two structs would need a
+// different layout on that architecture — assert the exact size so a 386
+// build fails loudly at compile time instead of silently sending misaligned
+// data.
+var _ [40]byte = [unsafe.Sizeof(keyboardInput{})]byte{}
+var _ [40]byte = [unsafe.Sizeof(mouseInput{})]byte{}
