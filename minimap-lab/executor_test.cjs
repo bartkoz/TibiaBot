@@ -223,6 +223,23 @@ test('schody bez wcześniejszej obserwacji nie dają kierunku', () => {
   assert.equal(ex.intentFor(stairs, 0), null);
 });
 
+test('schody z lądowaniem na tej samej kratce nie wysyłają pustego kierunku', () => {
+  // Recording a stairs waypoint and its landing point at the same x,y is
+  // normal. stepDirection(from, next) then computes dx=dy=0, which the
+  // compass maps to '' - a direction the driver refuses as "nieznany
+  // kierunek". That must never be sent; the human climbs these manually.
+  const ex = new StepExecutor();
+  const stairs = {action: 'transition', index: 1,
+    waypoint: {x: 100, y: 100, z: 7, type: 'stairs'},
+    next: {x: 100, y: 100, z: 6}};
+  ex.observe(at(100, 100, 7), 0, 0);
+
+  const intent = ex.intentFor(stairs, 10);
+
+  assert.equal(intent, null);
+  assert.equal(ex.state().waiting, false, 'no pending step must be left behind for an empty direction');
+});
+
 test('akcja piętra czeka na zmianę Z, nie na kratkę', () => {
   const ex = new StepExecutor({actionTimeoutMS: 5000});
   const rope = {action: 'transition', index: 3, waypoint: {x: 100, y: 100, z: 7, type: 'rope'}};

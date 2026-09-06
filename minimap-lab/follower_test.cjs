@@ -320,6 +320,22 @@ test('instrukcja przejścia niesie następny waypoint', () => {
   assert.deepEqual(out.next, {x: 101, y: 100, z: 6, type: 'walk'});
 });
 
+test('instrukcja przejścia niesie bieżący indeks waypointa', () => {
+  // executor.js reads out.index (falling back to 0) to tell the driver which
+  // waypoint a floor action belongs to; without it every transition looks
+  // like waypoint 0.
+  const f = new RouteFollower([
+    {x: 10, y: 10, z: 7, type: 'walk'},
+    {x: 100, y: 100, z: 7, type: 'rope'},
+  ], {tolerance: 1});
+  f.step({x: 10, y: 10, z: 7}, 0); // consumes waypoint 0
+
+  const out = f.step({x: 100, y: 100, z: 7}, 100);
+
+  assert.equal(out.action, 'transition');
+  assert.equal(out.index, 1);
+});
+
 test('ostatni waypoint przejścia nie ma następnika', () => {
   const f = new RouteFollower([{x: 100, y: 100, z: 7, type: 'rope'}]);
 

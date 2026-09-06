@@ -82,7 +82,7 @@ class RouteFollower {
       if (standingOnAction) this.actionAt = {index: this.index, z: position.z};
       const verb = TRANSITION_INSTRUCTIONS[target.type] ?? TRANSITION_INSTRUCTIONS.walk;
       const floor = standingOnAction ? '' : ` → piętro ${target.z}`;
-      return {action: 'transition', waypoint: target, next: this.waypoints[this.index + 1] ?? null,
+      return {action: 'transition', index: this.index, waypoint: target, next: this.waypoints[this.index + 1] ?? null,
         instruction: `${verb}${floor}`};
     }
     if (this.pathTo && !sameTile(this.pathTo, target)) this.dropPath();

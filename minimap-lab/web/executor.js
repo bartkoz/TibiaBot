@@ -124,9 +124,15 @@ class StepExecutor {
       // onto it moves the character. The next waypoint says which way that is.
       if (wp.type === 'stairs') {
         if (!out.next || !this.last) return null;
+        const direction = stepDirection(this.last, out.next);
+        // A stairs waypoint and its landing point recorded at the same x,y is
+        // normal (e.g. straight-up stairs). stepDirection then has nothing to
+        // point at ('' - the driver's "nieznany kierunek"), so send nothing
+        // and leave it to the human, exactly like an unknown position does.
+        if (!direction) return null;
         this.startTarget(targetFromOut(out));
         this.pending = {kind: 'transition', x: wp.x, y: wp.y, z: wp.z, viaHotkey: false, from: this.last, emittedAt: null, sentAt: now, id: this.nextId++};
-        return {action: 'walk', direction: stepDirection(this.last, out.next)};
+        return {action: 'walk', direction};
       }
       this.actionDone = false;
       this.startTarget(targetFromOut(out));
@@ -134,6 +140,23 @@ class StepExecutor {
       return {action: 'transition', type: wp.type, waypoint: out.index ?? 0};
     }
     return null;
+  }
+  // clearActionDone is called once the panel has reported a completed floor
+  // action to the driver (POST /api/input/done). Without this, actionDone
+  // stays true until the next transition intent is created, which may never
+  // happen again once the route moves past its last floor action - leaving
+  // the panel to repost the same confirmation on every following tick.
+  clearActionDone() {
+    this.actionDone = false;
+  }
+  // dropPending abandons the current attempt without charging a failure: a
+  // refusal (rate limit, unknown hotkey, wrong session...) means the key was
+  // never sent, so nothing was learned about whether the target is reachable.
+  // Escalation counters (retries, cycles, blocked) are untouched; only the
+  // stale attempt is cleared so the next reading gets a fresh intent instead
+  // of waiting out the full emission grace period for no reason.
+  dropPending() {
+    this.pending = null;
   }
   // emitted records when the key actually left the driver, correlated by id
   // so a late confirmation for a step already dropped (see the emission
