@@ -64,8 +64,15 @@ type darwinEmitter struct {
 	displayBounds  func(display uint32) cgRect
 	mainDisplay    func() uint32
 
-	frontmostPID  func() int
-	frontmostName func() string
+	// frontmostApp returns a reference to NSWorkspace's current
+	// frontmostApplication, or 0 if there is none. Focused() calls this exactly
+	// once and derives both the PID and the name from that single reference -
+	// calling it twice (once per field) would let the frontmost app change
+	// between the two calls, so PID and Path could end up describing two
+	// different applications.
+	frontmostApp func() uintptr
+	pidOfApp     func(app uintptr) int
+	nameOfApp    func(app uintptr) string
 }
 
 // registerFunc wraps purego.RegisterLibFunc, which panics when name cannot be
@@ -232,11 +239,19 @@ func (e *darwinEmitter) ReleaseAll() error {
 }
 
 func (e *darwinEmitter) Focused() (Window, error) {
-	pid := e.frontmostPID()
+	// A single lookup: deriving PID and name from two separate calls to
+	// frontmostApplication could describe two different apps if focus changed
+	// in between, and this is the display the user relies on to confirm what
+	// actually got armed.
+	app := e.frontmostApp()
+	if app == 0 {
+		return Window{}, fmt.Errorf("nie udało się odczytać aktywnej aplikacji")
+	}
+	pid := e.pidOfApp(app)
 	if pid == 0 {
 		return Window{}, fmt.Errorf("nie udało się odczytać aktywnej aplikacji")
 	}
-	name := e.frontmostName()
+	name := e.nameOfApp(app)
 	return Window{PID: pid, Path: name, Title: name}, nil
 }
 
@@ -313,19 +328,9 @@ func (e *darwinEmitter) bindWorkspace() error {
 	shared, frontmost := sel("sharedWorkspace"), sel("frontmostApplication")
 	pidSel, idSel, utf8Sel := sel("processIdentifier"), sel("bundleIdentifier"), sel("UTF8String")
 
-	app := func() uintptr { return send(send(workspace, shared), frontmost) }
-	e.frontmostPID = func() int {
-		a := app()
-		if a == 0 {
-			return 0
-		}
-		return int(int32(send(a, pidSel)))
-	}
-	e.frontmostName = func() string {
-		a := app()
-		if a == 0 {
-			return ""
-		}
+	e.frontmostApp = func() uintptr { return send(send(workspace, shared), frontmost) }
+	e.pidOfApp = func(a uintptr) int { return int(int32(send(a, pidSel))) }
+	e.nameOfApp = func(a uintptr) string {
 		id := send(a, idSel)
 		if id == 0 {
 			return ""
