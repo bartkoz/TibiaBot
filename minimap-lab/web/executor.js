@@ -29,7 +29,17 @@ const MIN_STILL_FRAMES = 3;
 // it answers with the one intent that may be sent right now, or null.
 class StepExecutor {
   constructor(options = {}) {
-    this.stepTimeoutMS = options.stepTimeoutMS ?? 1200;
+    // 1800 ms, not 1200: step duration in Tibia scales with the character's
+    // speed and the ground cost, and a step on mud or under paralysis runs
+    // well past a second. A timeout shorter than the step itself would turn
+    // ordinary slow movement into learned blockages.
+    this.stepTimeoutMS = options.stepTimeoutMS ?? 1800;
+    // How long after a timeout an arrival still counts as "that was lag, not
+    // a wall" and revokes what the failure taught.
+    this.lateArrivalMS = options.lateArrivalMS ?? 600;
+    // A blocked target is a suspicion with a shelf life, not a verdict. It
+    // matches the server's temporary-block TTL.
+    this.blockedTTL = options.blockedTTL ?? 60000;
     this.actionTimeoutMS = options.actionTimeoutMS ?? 5000;
     this.maxFailedCycles = options.maxFailedCycles ?? 3;
     // Ids are never reused, including across reset(), so a late emitted()
@@ -51,6 +61,11 @@ class StepExecutor {
     this.actionDone = false;
     // What the last failed step taught about the map, waiting to be shipped.
     this.observation = null;
+    // The target of the most recent failure, kept just long enough to notice a
+    // late arrival on it.
+    this.recentFailure = null;
+    // When blocked was set, so it can lapse instead of lasting all session.
+    this.blockedAt = null;
   }
   state() {
     return {
@@ -94,12 +109,16 @@ class StepExecutor {
         last_frame_age_ms: Math.round(now - p.lastFrameAt),
       };
     }
+    if (p.kind === 'walk' && p.from) {
+      this.recentFailure = {to: {x: p.target[0], y: p.target[1], z: p.from.z}, at: now};
+    }
     this.pending = null;
     this.cycles++;
     if (this.cycles >= this.maxFailedCycles) { this.stopped = true; return; }
     if (this.retries >= 1) {
       this.blocked = true;
       this.blockedTarget = targetOf(p);
+      this.blockedAt = now;
       this.retries = 0;
       return;
     }
@@ -127,10 +146,19 @@ class StepExecutor {
       // blocked means "this particular target cannot be reached", not "stop
       // forever": once the follower asks for something else, the route was
       // recomputed and the new target deserves a fresh attempt.
-      if (!out) return null;
-      if (sameTarget(targetFromOut(out), this.blockedTarget)) return null;
-      this.blocked = false;
-      this.blockedTarget = null;
+      //
+      // It also lapses on its own. The server penalises a temporary block
+      // rather than walling it off, so A* may keep routing through the very
+      // same tile - the target never changes, and without a deadline the
+      // executor would refuse it for the rest of the session even after the
+      // obstacle walked away.
+      if (this.blockedAt !== null && now - this.blockedAt >= this.blockedTTL) {
+        this.clearBlocked();
+      } else {
+        if (!out) return null;
+        if (sameTarget(targetFromOut(out), this.blockedTarget)) return null;
+        this.clearBlocked();
+      }
     }
     if (!out) return null;
     if (out.action === 'walk') {
@@ -200,6 +228,7 @@ class StepExecutor {
     // Kept for stairs, whose direction comes from the current tile rather than
     // from a path.
     this.last = {...position};
+    this.noteLateArrival(position, capturedAt, now);
     const p = this.pending;
     if (!p || p.emittedAt === null || capturedAt <= p.emittedAt) return;
     if (p.kind === 'transition') {
@@ -242,12 +271,33 @@ class StepExecutor {
     this.observation = null;
     return obs;
   }
+  // noteLateArrival catches the character reaching a tile shortly after the
+  // step to it was written off. That was lag or paralysis, not an obstacle, so
+  // whatever the failure taught is revoked and the target gets another chance.
+  noteLateArrival(position, capturedAt, now) {
+    const late = this.recentFailure;
+    if (!late || now - late.at > this.lateArrivalMS) return;
+    if (position.x !== late.to.x || position.y !== late.to.y || position.z !== late.to.z) return;
+    this.observation = {from: {...late.to}, to: {...late.to}, outcome: 'entered',
+      still_frames: 1, last_frame_age_ms: Math.round(now - capturedAt)};
+    this.recentFailure = null;
+    this.retries = 0;
+    if (this.blocked && this.blockedTarget &&
+        this.blockedTarget.x === late.to.x && this.blockedTarget.y === late.to.y) {
+      this.clearBlocked();
+    }
+  }
+  clearBlocked() {
+    this.blocked = false;
+    this.blockedTarget = null;
+    this.blockedAt = null;
+  }
   done() {
     this.pending = null;
     this.retries = 0;
     this.cycles = 0;
-    this.blocked = false;
-    this.blockedTarget = null;
+    this.recentFailure = null;
+    this.clearBlocked();
   }
 }
 

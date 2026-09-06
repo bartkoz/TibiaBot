@@ -390,3 +390,56 @@ test('udany krok nie produkuje obserwacji', () => {
   ex.observe(at(100, 99), 100, 110);
   assert.equal(ex.takeObservation(), null);
 });
+
+test('domyślny timeout kroku wynosi 1800 ms', () => {
+  // A step on mud or under paralysis takes well over a second; a shorter
+  // timeout would turn every such move into a false blockage.
+  assert.equal(new StepExecutor().stepTimeoutMS, 1800);
+});
+
+test('spóźnione wejście na kratkę odwołuje naukę', () => {
+  const ex = new StepExecutor({stepTimeoutMS: 1800, lateArrivalMS: 600});
+  failedStep(ex);
+  ex.takeObservation(); // the panel already reported the failure
+
+  // 300 ms after the timeout the character finally arrives: that was lag.
+  ex.observe(at(100, 99), 2100, 2170);
+
+  const obs = ex.takeObservation();
+  assert.equal(obs.outcome, 'entered');
+  assert.deepEqual(obs.to, {x: 100, y: 99, z: 7});
+});
+
+test('wejście długo po timeoucie nie jest już odwołaniem', () => {
+  const ex = new StepExecutor({stepTimeoutMS: 1800, lateArrivalMS: 600});
+  failedStep(ex);
+  ex.takeObservation();
+
+  ex.observe(at(100, 99), 5000, 5010);
+
+  assert.equal(ex.takeObservation(), null);
+});
+
+test('spóźnione wejście zdejmuje blokadę celu', () => {
+  const ex = new StepExecutor({stepTimeoutMS: 1800, lateArrivalMS: 600});
+  failedStep(ex);                    // first failure: one retry granted
+  failedStep(ex, {start: 3000});     // second failure on the same target: blocked
+  assert.equal(ex.state().blocked, true);
+
+  ex.observe(at(100, 99), 5000, 5100);
+  assert.equal(ex.state().blocked, false, 'a target the character reached cannot stay blocked');
+});
+
+test('blokada celu wygasa po swoim czasie', () => {
+  const ex = new StepExecutor({stepTimeoutMS: 1800, blockedTTL: 60000, maxFailedCycles: 99});
+  failedStep(ex);
+  failedStep(ex, {start: 3000});
+  assert.equal(ex.state().blocked, true);
+
+  // The follower keeps asking for the same tile - with a cost penalty rather
+  // than a wall on the server, A* may well still route through it. Without a
+  // TTL the executor would refuse that target for the rest of the session.
+  const out = walk('N', [100, 99]);
+  assert.equal(ex.intentFor(out, 20000), null);
+  assert.notEqual(ex.intentFor(out, 200000), null);
+});
