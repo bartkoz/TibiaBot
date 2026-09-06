@@ -19,6 +19,11 @@ const targetFromOut = (out) => {
 };
 const sameTarget = (a, b) => !!a && !!b && a.x === b.x && a.y === b.y && a.z === b.z;
 
+// MIN_STILL_FRAMES matches the server's own gate. One stale reading is not
+// proof the character stayed put; three consecutive ones are the cheapest
+// evidence that rules out a single dropped frame.
+const MIN_STILL_FRAMES = 3;
+
 // Lock-step execution state, kept free of the DOM and of fetch so it can be
 // tested directly. The panel feeds it follower output and confirmed positions;
 // it answers with the one intent that may be sent right now, or null.
@@ -44,6 +49,8 @@ class StepExecutor {
     this.halted = false;
     this.stopped = false;
     this.actionDone = false;
+    // What the last failed step taught about the map, waiting to be shipped.
+    this.observation = null;
   }
   state() {
     return {
@@ -70,7 +77,23 @@ class StepExecutor {
   // cycle, stop the executor if that was one too many, otherwise allow one
   // retry or, on the second failure of the same target, block it until the
   // route changes. blocked never means "stop forever" - only cycles does.
-  failPending(p) {
+  failPending(p, now) {
+    // Only a step confirmed as emitted and then watched standing still is
+    // evidence about the map. A key that never left the driver, a lost
+    // position or a floor change say nothing about the tile.
+    // The emittedAt check is defence in depth: observe() already refuses to
+    // count frames before the emission, so stillFrames cannot reach the
+    // threshold without it - but the two conditions are one rule and belong
+    // together where the rule is applied.
+    if (p.kind === 'walk' && p.emittedAt !== null && p.from && p.stillFrames >= MIN_STILL_FRAMES) {
+      this.observation = {
+        from: {x: p.from.x, y: p.from.y, z: p.from.z},
+        to: {x: p.target[0], y: p.target[1], z: p.from.z},
+        outcome: 'no_motion',
+        still_frames: p.stillFrames,
+        last_frame_age_ms: Math.round(now - p.lastFrameAt),
+      };
+    }
     this.pending = null;
     this.cycles++;
     if (this.cycles >= this.maxFailedCycles) { this.stopped = true; return; }
@@ -92,11 +115,11 @@ class StepExecutor {
         // forever would freeze the executor silently, looking exactly like a
         // legitimate wait, so give up on it too after a generous grace period.
         if (now - p.sentAt < 2 * this.stepTimeoutMS) return null;
-        this.failPending(p);
+        this.failPending(p, now);
       } else {
         const limit = p.kind === 'transition' ? this.actionTimeoutMS : this.stepTimeoutMS;
         if (now - p.emittedAt < limit) return null;
-        this.failPending(p);
+        this.failPending(p, now);
       }
       if (this.stopped) return null;
     }
@@ -115,7 +138,9 @@ class StepExecutor {
       // from the first observation after the press would make "did not move"
       // and "moved somewhere unexpected" indistinguishable.
       this.startTarget(targetFromOut(out));
-      this.pending = {kind: 'walk', target: out.next, from: this.last, emittedAt: null, sentAt: now, id: this.nextId++};
+      this.pending = {kind: 'walk', target: out.next, from: this.last,
+        stillFrames: 0, lastFrameAt: null,
+        emittedAt: null, sentAt: now, id: this.nextId++};
       return {action: 'walk', direction: out.direction};
     }
     if (out.action === 'transition') {
@@ -193,6 +218,10 @@ class StepExecutor {
       if (!stillThere) { this.pending = null; }
       return;
     }
+    // A step that changed the floor is not a failed step: walking onto stairs
+    // does exactly this. Judging it as one would teach the bot that stairs are
+    // a wall.
+    if (p.from && position.z !== p.from.z) { this.pending = null; return; }
     if (position.x === p.target[0] && position.y === p.target[1]) { this.done(); return; }
     // Standing still is a failed step and belongs to the retry counter, which
     // intentFor bumps after the timeout. Standing somewhere else entirely is a
@@ -200,7 +229,18 @@ class StepExecutor {
     // With no reference tile the step cannot be judged, so it is left to the
     // timeout rather than guessed at.
     const stillThere = !p.from || (position.x === p.from.x && position.y === p.from.y);
-    if (!stillThere) { this.pending = null; }
+    if (!stillThere) { this.pending = null; return; }
+    p.stillFrames++;
+    p.lastFrameAt = capturedAt;
+  }
+
+  // takeObservation hands the pending observation to the caller and forgets
+  // it, so one failed step is reported exactly once no matter how many times
+  // the panel ticks before the report goes out.
+  takeObservation() {
+    const obs = this.observation;
+    this.observation = null;
+    return obs;
   }
   done() {
     this.pending = null;

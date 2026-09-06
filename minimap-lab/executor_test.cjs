@@ -311,3 +311,82 @@ test('spóźnione potwierdzenie porzuconego kroku nie przesuwa terminu następne
   assert.equal(ex.state().blocked, true);
   assert.equal(ex.state().waiting, false);
 });
+
+// --- Nauka o mapie: co executor zgłasza magazynowi blokad ---
+
+// Drives one step that never moves the character, feeding `frames` readings
+// that all show it still standing on `from`.
+const failedStep = (ex, {frames = 3, from = at(100, 100), target = [100, 99], timeout = 1800, start = 0} = {}) => {
+  ex.observe(from, start, start);
+  ex.intentFor(walk('N', target), start + 10);
+  ex.emitted(start + 20, ex.state().stepId);
+  for (let i = 0; i < frames; i++) ex.observe(from, start + 100 + i * 100, start + 110 + i * 100);
+  ex.intentFor(walk('N', target), start + 20 + timeout + 50);
+  return ex.takeObservation();
+};
+
+test('krok bez ruchu z trzema klatkami produkuje obserwację', () => {
+  const ex = new StepExecutor({stepTimeoutMS: 1800});
+  const obs = failedStep(ex);
+  assert.equal(obs.outcome, 'no_motion');
+  assert.deepEqual(obs.from, {x: 100, y: 100, z: 7});
+  assert.deepEqual(obs.to, {x: 100, y: 99, z: 7});
+  assert.ok(obs.still_frames >= 3, `still_frames=${obs.still_frames}`);
+});
+
+test('obserwacja jest oddawana tylko raz', () => {
+  const ex = new StepExecutor({stepTimeoutMS: 1800});
+  failedStep(ex);
+  assert.equal(ex.takeObservation(), null);
+});
+
+test('krok bez potwierdzenia emisji niczego nie uczy', () => {
+  const ex = new StepExecutor({stepTimeoutMS: 1800});
+  ex.observe(at(100, 100), 0, 0);
+  ex.intentFor(walk('N', [100, 99]), 10);
+  // emitted() never called: the key may never have left the driver. Three
+  // readings, so nothing but the missing confirmation can reject this.
+  ex.observe(at(100, 100), 100, 110);
+  ex.observe(at(100, 100), 200, 210);
+  ex.observe(at(100, 100), 300, 310);
+  ex.intentFor(walk('N', [100, 99]), 10 + 2 * 1800 + 50);
+  assert.equal(ex.takeObservation(), null);
+});
+
+test('zmiana piętra niczego nie uczy', () => {
+  const ex = new StepExecutor({stepTimeoutMS: 1800});
+  ex.observe(at(100, 100, 7), 0, 0);
+  ex.intentFor(walk('N', [100, 99]), 10);
+  ex.emitted(20, ex.state().stepId);
+  // Walking onto stairs changes Z; that is not a wall. Three readings, so the
+  // evidence threshold is met and only the floor check can reject this.
+  ex.observe(at(100, 100, 6), 100, 110);
+  ex.observe(at(100, 100, 6), 200, 210);
+  ex.observe(at(100, 100, 6), 300, 310);
+  ex.intentFor(walk('N', [100, 99]), 20 + 1850);
+  assert.equal(ex.takeObservation(), null);
+});
+
+test('przesunięcie gdzie indziej niczego nie uczy', () => {
+  const ex = new StepExecutor({stepTimeoutMS: 1800});
+  ex.observe(at(100, 100), 0, 0);
+  ex.intentFor(walk('N', [100, 99]), 10);
+  ex.emitted(20, ex.state().stepId);
+  ex.observe(at(101, 101), 100, 110); // pushed by a creature, or the player took over
+  ex.intentFor(walk('N', [100, 99]), 20 + 1850);
+  assert.equal(ex.takeObservation(), null);
+});
+
+test('za mało klatek to za słaby dowód', () => {
+  const ex = new StepExecutor({stepTimeoutMS: 1800});
+  assert.equal(failedStep(ex, {frames: 1}), null);
+});
+
+test('udany krok nie produkuje obserwacji', () => {
+  const ex = new StepExecutor({stepTimeoutMS: 1800});
+  ex.observe(at(100, 100), 0, 0);
+  ex.intentFor(walk('N', [100, 99]), 10);
+  ex.emitted(20, ex.state().stepId);
+  ex.observe(at(100, 99), 100, 110);
+  assert.equal(ex.takeObservation(), null);
+});
