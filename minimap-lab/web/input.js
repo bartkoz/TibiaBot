@@ -84,11 +84,13 @@ class InputClient {
   // config sends the per-type floor-action hotkeys and whether the hotkey is
   // used on the character's own tile (no click afterwards). Without this,
   // ActionKeys stays empty forever and every floor action is refused for
-  // lack of a hotkey.
+  // lack of a hotkey. The config is all-or-nothing server-side, so the
+  // reason (naming the rejected field) is returned alongside ok, letting the
+  // caller surface it instead of leaving a silent, unexplained refusal.
   async config(keys, clickAfterHotkey) {
-    const {ok} = await this.postSafe('/api/input/config',
+    const {ok, state} = await this.postSafe('/api/input/config',
       {session: this.session, keys, click_after_hotkey: clickAfterHotkey});
-    return ok;
+    return {ok, reason: state?.reason};
   }
   // The status poll is also the heartbeat: a gap longer than the driver's
   // timeout disarms it on the Go side. A single failed poll must cost one

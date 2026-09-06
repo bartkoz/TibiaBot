@@ -54,7 +54,7 @@ test('config wysyła klawisze akcji i flagę kliknięcia po hotkeyu', async () =
   const client = new InputClient({fetch});
   client.session = 'abc';
 
-  const ok = await client.config({rope: 'f7', ladder: '', hole: '', shovel: ''}, false);
+  const {ok} = await client.config({rope: 'f7', ladder: '', hole: '', shovel: ''}, false);
 
   assert.equal(ok, true);
   assert.ok(calls[0].url.includes('/api/input/config'));
@@ -63,14 +63,15 @@ test('config wysyła klawisze akcji i flagę kliknięcia po hotkeyu', async () =
   assert.equal(calls[0].body.click_after_hotkey, false);
 });
 
-test('config nieudany zwraca false zamiast wyjątku', async () => {
-  const {fetch} = fakeFetch([{ok: false, json: {}}]);
+test('config nieudany zwraca false i powód odmowy zamiast wyjątku', async () => {
+  const {fetch} = fakeFetch([{ok: false, json: {reason: 'nieznany klawisz dla akcji rope: control'}}]);
   const client = new InputClient({fetch});
   client.session = 'abc';
 
-  const ok = await client.config({rope: 'f7'}, true);
+  const {ok, reason} = await client.config({rope: 'control'}, true);
 
   assert.equal(ok, false);
+  assert.equal(reason, 'nieznany klawisz dla akcji rope: control');
 });
 
 test('rozbrojenie po stronie serwera zatrzymuje wysyłanie', async () => {
