@@ -119,6 +119,10 @@ Kliknięcie **Uzbrój** w panelu (sekcja **5. Sterowanie**) nie uzbraja od razu 
 
 Każde zdarzenie sprawdza focus tuż przed wysłaniem, więc utrata focusu przez zapamiętany proces (np. alt-tab) rozbraja wykonawcę — to podstawowy, ręczny kill-switch. Wykonawca rozbraja się też sam, gdy panel przestanie odpowiadać na heartbeat dłużej niż 750 ms (np. zamknięta karta) — działa to niezależnie od alt-taba.
 
+### Świeżość obserwacji
+
+Każdy krok niesie wiek pozycji, na której się opiera; wykonawca odrzuca krok starszy niż `-stale-ms` (domyślnie **400 ms**) komunikatem „pozycja starsza niż … ms" — to zabezpieczenie ważniejsze niż heartbeat, bo nie pozwala chodzić na podstawie nieaktualnego obrazu (np. z zakładki throttlowanej w tle). Jeśli na danym sprzęcie krok po kroku wraca sama ta odmowa, sprawdź w panelu telemetrię **Cały odczyt** — to czas przechwycenia klatki, dopasowania i odpowiedzi razem; gdy regularnie przekracza próg, podnieś go: `go run . -input system -stale-ms 800`. Zbyt wysoki próg to świadomy kompromis (starsza pozycja jako podstawa kroku), nie błąd konfiguracji.
+
 ### macOS: zgoda Accessibility
 
 `-input system` na macOS wymaga zgody **Accessibility** dla procesu uruchamiającego `minimap-lab`: Ustawienia → Prywatność i ochrona → Dostępność. Bez niej uzbrojenie zakończy się błędem — sprawdzane jest to wprost przy uzbrajaniu, a nie dopiero przy pierwszym kroku, bo inaczej `CGEventPost` po cichu nic nie robi i bot tylko wygląda na zawieszony. Po nadaniu zgody zwykle trzeba **zrestartować program** — macOS nie zawsze honoruje uprawnienie przyznane już działającemu procesowi. Zgoda na **nagrywanie ekranu**, którą ma przeglądarka (do udostępniania obrazu), jest osobnym uprawnieniem i **jej nie zastępuje**.
@@ -142,6 +146,8 @@ Kliknięcia akcji (lina, drabina, dziura, łopata) celują we współrzędne kra
 
 **Chodź automatycznie** włącza rzeczywiste wysyłanie kroków: dopóki jest odznaczony (albo wykonawca nie jest uzbrojony), panel tylko pokazuje kierunek i liczy trasę, dokładnie jak przed tą funkcją. **Wykonuj akcje pięter** dotyczy wyłącznie akcji na przedmiotach — liny, drabiny, dziury i łopaty: gdy jest odznaczony, wykonawca zatrzymuje się przed takim waypointem i czeka, mimo że chodzenie jest włączone. Nie dotyczy to **schodów** (`stairs`) — schody pokonuje się zwykłym krokiem w ich stronę, bez żadnego hotkeya, więc są wykonywane zawsze, gdy tylko włączone jest chodzenie automatyczne, niezależnie od stanu tego checkboxa.
 
+Oba checkboxy można zaznaczyć **przed uzbrojeniem**, także w trakcie odliczania — zaznaczenie samo w sobie nic nie wysyła (blokuje to `!inputClient.armed`), więc nie trzeba wracać do przeglądarki po uzbrojeniu, żeby dopiero wtedy je zaznaczyć: to właśnie kradłoby focus grze i rozbrajało wykonawcę na najbliższym kroku. Prawdziwe rozbrojenie — z panelu albo z Go (utrata focusu, martwy heartbeat) — zawsze odznacza **Chodź automatycznie**, więc uzbrojenie nigdy nie wznawia chodzenia po cichu.
+
 ### Klawisze akcji pięter
 
 Wykonawca nie zna żadnego hotkeya, dopóki nie zostanie skonfigurowany z panelu — bez tego każda akcja piętra (lina, drabina, dziura, łopata) kończy się odmową „brak hotkeya dla akcji …”, a **Wykonuj akcje pięter** wygląda na włączony, ale nic nie robi. Cztery pola tekstowe w sekcji **5. Sterowanie** przyjmują nazwę klawisza dla każdego typu (np. `f7`); zaakceptowane nazwy to `f1`–`f12`, `up`/`down`/`left`/`right` i `numpad1`–`numpad9` (bez `numpad5`) — te same, których używają emitery macOS i Windows. Pusty klawisz zostawia daną akcję odrzucaną. Checkbox **Klawisz działa na własnej kratce (bez klikania po nim)** odpowiada temu, czy hotkey sam kończy akcję (np. lina użyta na sobie) czy wymaga kliknięcia we wskazaną wcześniej kratkę postaci (**Wskaż kratkę postaci**) — to drugie dodaje krótkie kliknięcie ~120 ms po tapnięciu klawisza.
@@ -163,6 +169,8 @@ cd minimap-lab && go run . -input system
 ```
 
 Przed punktem 6 wpisz w panelu hotkey przypisany linie w kliencie gry (sekcja **Klawisze akcji pięter** wyżej) — bez tego akcja zawsze kończy się odmową.
+
+Zaznacz **Chodź automatycznie** (i **Wykonuj akcje pięter**, jeśli test tego wymaga) **przed** kliknięciem „Uzbrój" — patrz **Dwa checkboxy** wyżej. Zaznaczenie ich dopiero po uzbrojeniu wymaga kliknięcia w przeglądarce, co kradnie focus grze i rozbraja wykonawcę na najbliższym kroku.
 
 W tej kolejności:
 
