@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func pathServer(t testing.TB, tiles ...*image.Paletted) *server {
@@ -167,5 +168,59 @@ func TestPathAPIStopsWorkForAnAbandonedRequest(t *testing.T) {
 	}
 	if s.costCache != nil {
 		t.Error("an abandoned request should not populate the cost cache")
+	}
+}
+
+func TestPathAvoidsLearnedBlock(t *testing.T) {
+	s := pathServer(t, costTile(100, nil))
+	s.blocks = NewBlockStore(time.Now)
+
+	body := `{"from":{"x":32800,"y":32050,"z":7},"to":{"x":32800,"y":32054,"z":7},"margin":8}`
+	before := decodePath(t, postPath(t, s, body))
+	if !before.Found {
+		t.Fatalf("baseline route not found: %s", before.Reason)
+	}
+
+	// Learn the tile straight ahead twice, so it becomes permanent and the
+	// route has to go around it.
+	obs := Observation{From: Position{32800, 32051, 7}, To: Position{32800, 32052, 7},
+		Outcome: "no_motion", StillFrames: 3, LastFrameAgeMS: 100}
+	s.blocks.Observe(obs)
+	s.blocks.tiles[tileKey{32800, 32052, 7}].Kind = KindPerm
+
+	after := decodePath(t, postPath(t, s, body))
+	if !after.Found {
+		t.Fatalf("route not found after learning a block: %s", after.Reason)
+	}
+	for _, st := range after.Steps {
+		if st == [2]int{32800, 32052} {
+			t.Fatal("route still runs through the learned block")
+		}
+	}
+	if after.OverlayRevision == 0 {
+		t.Fatal("the reply carries no overlay revision, so the panel cannot tell a stale route from a fresh one")
+	}
+}
+
+func TestStandingOnABlockClearsIt(t *testing.T) {
+	s := pathServer(t, costTile(100, nil))
+	s.blocks = NewBlockStore(time.Now)
+	s.blocks.Observe(Observation{From: Position{32800, 32051, 7}, To: Position{32800, 32050, 7},
+		Outcome: "no_motion", StillFrames: 3, LastFrameAgeMS: 100})
+
+	decodePath(t, postPath(t, s, `{"from":{"x":32800,"y":32050,"z":7},"to":{"x":32800,"y":32054,"z":7}}`))
+
+	if k := s.blocks.Snapshot(image.Rect(32790, 32040, 32810, 32060), 7).Tile(32800, 32050); k != KindNone {
+		t.Fatalf("tile kind %v; the character is standing there, which beats any learned guess", k)
+	}
+}
+
+func TestPathWorksWithoutABlockStore(t *testing.T) {
+	// Every existing test builds a server with no store; that must keep working
+	// rather than panicking on a nil map.
+	s := pathServer(t, costTile(100, nil))
+	r := decodePath(t, postPath(t, s, `{"from":{"x":32800,"y":32050,"z":7},"to":{"x":32800,"y":32054,"z":7}}`))
+	if !r.Found {
+		t.Fatalf("route not found: %s", r.Reason)
 	}
 }

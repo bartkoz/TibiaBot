@@ -94,9 +94,16 @@ func (s *server) path(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	// Presence beats any learned hypothesis: a character standing on a tile we
+	// marked unreachable is proof the mark is simply wrong.
+	s.blocks.Clear(from)
+	// One snapshot for the whole search: A* assumes the cost of a closed vertex
+	// never changes, so the graph must not shift under it mid-search.
+	overlay := s.blocks.Snapshot(area, from.Z)
 	// Every reachable tile is closed at most once, so the area itself bounds
 	// the work; no arbitrary iteration constant is needed.
-	result := findPath(ctx, NewPathGrid(grid.limitTo(area), nil), [2]int{from.X, from.Y}, [2]int{to.X, to.Y}, area.Dx()*area.Dy())
+	result := findPath(ctx, NewPathGrid(grid.limitTo(area), overlay), [2]int{from.X, from.Y}, [2]int{to.X, to.Y}, area.Dx()*area.Dy())
+	result.OverlayRevision = s.blocks.Revision()
 	if result.Steps == nil {
 		result.Steps = [][2]int{}
 	}

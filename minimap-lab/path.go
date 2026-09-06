@@ -19,6 +19,9 @@ type PathResult struct {
 	Cost      float64  `json:"cost"`
 	Reason    string   `json:"reason"`
 	ElapsedMS float64  `json:"elapsed_ms"`
+	// OverlayRevision lets the panel tell a route computed before its latest
+	// observation from one computed after it.
+	OverlayRevision uint64 `json:"overlay_revision"`
 }
 
 type step struct {
