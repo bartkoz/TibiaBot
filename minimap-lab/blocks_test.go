@@ -2,6 +2,9 @@ package main
 
 import (
 	"image"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -207,5 +210,119 @@ func TestRevisionMovesOnlyOnChange(t *testing.T) {
 		Outcome: "no_motion", StillFrames: 3, LastFrameAgeMS: 100})
 	if s.Revision() != afterBump {
 		t.Fatal("revision moved on an ignored observation; the panel would redraw for nothing")
+	}
+}
+
+func TestPermanentBlocksSurviveRestart(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "blocks.json")
+
+	s, c := newTestStore()
+	s.SetPath(path)
+	s.Observe(bump(Position{100, 100, 7}, Position{100, 99, 7}))
+	c.advance(61 * time.Second)
+	s.Observe(bump(Position{100, 100, 7}, Position{100, 99, 7}))
+	if err := s.Save(); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	fresh, _ := newTestStore()
+	fresh.SetPath(path)
+	if err := fresh.Load(); err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if got := fresh.Snapshot(image.Rect(90, 90, 110, 110), 7).Tile(100, 99); got != KindPerm {
+		t.Fatalf("tile kind %v after reload, want KindPerm", got)
+	}
+}
+
+func TestTemporaryBlocksAreNotWritten(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "blocks.json")
+	s, _ := newTestStore()
+	s.SetPath(path)
+	s.Observe(bump(Position{100, 100, 7}, Position{100, 99, 7}))
+	if err := s.Save(); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	fresh, _ := newTestStore()
+	fresh.SetPath(path)
+	if err := fresh.Load(); err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if got := fresh.Snapshot(image.Rect(90, 90, 110, 110), 7).Tile(100, 99); got != KindNone {
+		t.Fatalf("tile kind %v; a temporary block is a guess and must not reach the disk", got)
+	}
+}
+
+func TestClearedTileLeavesTheFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "blocks.json")
+	s, c := newTestStore()
+	s.SetPath(path)
+	s.Observe(bump(Position{100, 100, 7}, Position{100, 99, 7}))
+	c.advance(61 * time.Second)
+	s.Observe(bump(Position{100, 100, 7}, Position{100, 99, 7}))
+	s.Save()
+	s.Clear(Position{100, 99, 7})
+	if err := s.Save(); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	fresh, _ := newTestStore()
+	fresh.SetPath(path)
+	fresh.Load()
+	if got := fresh.Snapshot(image.Rect(90, 90, 110, 110), 7).Tile(100, 99); got != KindNone {
+		t.Fatalf("tile kind %v; a revoked block must disappear from disk too", got)
+	}
+}
+
+func TestUnknownFileVersionIsRefused(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "blocks.json")
+	if err := os.WriteFile(path, []byte(`{"version":99,"tiles":[]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s, _ := newTestStore()
+	s.SetPath(path)
+	err := s.Load()
+	if err == nil {
+		t.Fatal("a file from a future version was accepted; the next Save would overwrite it")
+	}
+	if !strings.Contains(err.Error(), "wersj") {
+		t.Fatalf("error %q does not name the version problem", err)
+	}
+}
+
+func TestMissingFileIsNotAnError(t *testing.T) {
+	s, _ := newTestStore()
+	s.SetPath(filepath.Join(t.TempDir(), "blocks.json"))
+	if err := s.Load(); err != nil {
+		t.Fatalf("load of a missing file: %v - a first run has no file yet", err)
+	}
+}
+
+func TestSaveLeavesNoTemporaryFile(t *testing.T) {
+	dir := t.TempDir()
+	s, c := newTestStore()
+	s.SetPath(filepath.Join(dir, "blocks.json"))
+	s.Observe(bump(Position{100, 100, 7}, Position{100, 99, 7}))
+	c.advance(61 * time.Second)
+	s.Observe(bump(Position{100, 100, 7}, Position{100, 99, 7}))
+	if err := s.Save(); err != nil {
+		t.Fatal(err)
+	}
+	entries, _ := os.ReadDir(dir)
+	if len(entries) != 1 {
+		t.Fatalf("%d files in the directory, want exactly blocks.json", len(entries))
+	}
+}
+
+func TestFlushWritesOnlyAfterAPersistentChange(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "blocks.json")
+	s, _ := newTestStore()
+	s.SetPath(path)
+	s.Observe(bump(Position{100, 100, 7}, Position{100, 99, 7})) // temporary only
+	s.Flush()
+	if _, err := os.Stat(path); err == nil {
+		t.Fatal("a temporary block rewrote the file; only permanent changes belong on disk")
 	}
 }

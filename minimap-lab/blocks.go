@@ -1,8 +1,15 @@
 package main
 
 import (
+	"encoding/json"
+	"errors"
 	"fmt"
 	"image"
+	"io/fs"
+	"log"
+	"os"
+	"path/filepath"
+	"sort"
 	"sync"
 	"time"
 )
@@ -273,5 +280,135 @@ func (s *BlockStore) sweepLocked(now time.Time) {
 			delete(s.edges, k)
 			s.rev++
 		}
+	}
+}
+
+// blocksFileVersion guards the on-disk format. A file from a newer version is
+// refused rather than read partially - Save would then overwrite data written
+// by a build that understood more than this one does.
+const blocksFileVersion = 1
+
+type blocksFile struct {
+	Version int          `json:"version"`
+	Tiles   []storedTile `json:"tiles"`
+}
+
+type storedTile struct {
+	X         int       `json:"x"`
+	Y         int       `json:"y"`
+	Z         int       `json:"z"`
+	Episodes  int       `json:"episodes"`
+	FirstSeen time.Time `json:"first_seen"`
+}
+
+func (s *BlockStore) SetPath(path string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.path = path
+}
+
+func (s *BlockStore) Load() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.path == "" {
+		return nil
+	}
+	data, err := os.ReadFile(s.path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil // a first run simply has nothing to load
+	}
+	if err != nil {
+		return err
+	}
+	var f blocksFile
+	if err := json.Unmarshal(data, &f); err != nil {
+		return fmt.Errorf("nie udało się odczytać %s: %w", s.path, err)
+	}
+	if f.Version != blocksFileVersion {
+		return fmt.Errorf("plik blokad %s ma wersję %d, obsługiwana jest %d", s.path, f.Version, blocksFileVersion)
+	}
+	now := s.now()
+	for _, t := range f.Tiles {
+		s.tiles[tileKey{t.X, t.Y, t.Z}] = &Blockage{Kind: KindPerm, Episodes: t.Episodes,
+			First: t.FirstSeen, Forget: now.Add(forgetAfter)}
+	}
+	s.rev++
+	return nil
+}
+
+// Save rewrites the file through a temporary in the same directory followed by
+// a rename, so a crash mid-write cannot leave a half-written file behind. Only
+// permanent blocks are written: a temporary one is a guess with a minute to
+// live and has no business outliving the process.
+func (s *BlockStore) Save() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.saveLocked()
+}
+
+func (s *BlockStore) saveLocked() error {
+	if s.path == "" {
+		return nil
+	}
+	f := blocksFile{Version: blocksFileVersion, Tiles: []storedTile{}}
+	for k, b := range s.tiles {
+		if b.Kind != KindPerm {
+			continue
+		}
+		f.Tiles = append(f.Tiles, storedTile{X: k[0], Y: k[1], Z: k[2], Episodes: b.Episodes, FirstSeen: b.First})
+	}
+	// Stable order keeps the file diffable and its rewrites boring.
+	sort.Slice(f.Tiles, func(i, j int) bool {
+		a, b := f.Tiles[i], f.Tiles[j]
+		if a.Z != b.Z {
+			return a.Z < b.Z
+		}
+		if a.Y != b.Y {
+			return a.Y < b.Y
+		}
+		return a.X < b.X
+	})
+	data, err := json.MarshalIndent(f, "", "  ")
+	if err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(s.path), ".blocks-*.tmp")
+	if err != nil {
+		return err
+	}
+	name := tmp.Name()
+	defer os.Remove(name) // no-op once the rename succeeded
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(name, s.path); err != nil {
+		return err
+	}
+	s.dirty = false
+	return nil
+}
+
+// Flush writes the file if a permanent block changed since the last write. The
+// caller is the HTTP handler, so a burst of temporary blocks - which never
+// reach the disk anyway - costs no writes at all.
+func (s *BlockStore) Flush() {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.dirty {
+		return
+	}
+	if err := s.saveLocked(); err != nil {
+		log.Printf("Nie udało się zapisać blokad: %v", err)
 	}
 }
