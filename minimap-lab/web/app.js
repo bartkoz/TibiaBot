@@ -57,9 +57,10 @@ function setSource(image, reset = true) {
   if (!w || !h) throw new Error('Źródło nie udostępniło jeszcze klatki.');
   if (!reset && (source.width !== w || source.height !== h)) {
     // Without a fresh position further movement is not permissible.
-    roi = marker = null; invalidate(); executor.reset(); inputClient.disarm();
+    roi = marker = null; invalidate(); inputClient.disarm();
     // disarm() never calls onState and stops the heartbeat, so nothing else
     // would ever refresh the toolbar - it would keep showing armed controls.
+    // Its own !armed branch resets the executor, so that call is not repeated here.
     renderInputStatus({reason: 'zmieniła się rozdzielczość źródła'});
     status('Rozdzielczość źródła zmieniła się. Zaznacz minimapę ponownie.', 'error');
   }
@@ -390,7 +391,11 @@ function followStep(position, now) {
   // a retry and then a permanent block - stalling the route at that waypoint
   // even after the checkbox is re-ticked, since a block only clears when the
   // target changes, which it cannot while stuck there.
-  if (out.action === 'transition' && !$('input-actions').checked) return out;
+  // Stairs are excluded: the follower reports them as a 'transition' output
+  // too, but the executor converts them into an ordinary walk step (a floor
+  // change confirms it, not a hotkey), so pausing "floor actions" must not
+  // also refuse to walk onto stairs.
+  if (out.action === 'transition' && out.waypoint.type !== 'stairs' && !$('input-actions').checked) return out;
   const intent = executor.intentFor(out, now);
   if (!intent) return out;
   // The id ties the confirmation to this step: a reply that arrives after the

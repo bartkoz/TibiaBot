@@ -17,6 +17,8 @@ function app({respond, respondPath, respondInput, latency=3} = {}) {
       replaceChildren(...kids) {this.children = kids;},
       getContext() {return context2d;},
       toBlob(fn) {fn(new Blob(['png']));},
+      getBoundingClientRect() {return {left:0, top:0, width:this.width, height:this.height};},
+      setPointerCapture() {},
       setAttribute() {}, click() {this.listeners.click?.(); this.onclick?.();}, remove() {},
       async play() {}, videoWidth:103, videoHeight:110, currentTime:0};
   }
@@ -384,4 +386,57 @@ test('a disarmed reply from the server leaves the panel showing disarmed control
   assert.equal(a.get('input-disarm').disabled, true);
   assert.equal(a.get('input-walk').checked, false, 'walk is unticked when control stops');
   assert.match(a.get('input-status').textContent, /zmiana okna aktywnego/);
+});
+
+test('floor actions unticked still lets the character walk onto stairs', async () => {
+  // The follower reports every floor-change waypoint as 'transition',
+  // stairs included, but the executor turns a stairs transition into an
+  // ordinary walk step confirmed by a floor change, not a hotkey. Pausing
+  // "wykonuj akcje pięter" must pause rope/shovel/ladder, not stairs.
+  const a = app();
+  await new Promise(setImmediate); await a.get('share').onclick();
+  await a.loadRoute(routeFile({x:32958, y:32077, z:6, type:'stairs'}, {x:32960, y:32077, z:6}));
+  a.get('route-follow').checked = true;
+  a.get('input-walk').checked = true;
+  a.inputClient.armed = true; a.inputClient.session = 'test-session';
+  // input-actions stays unticked.
+  await a.get('locate').onclick();
+  await new Promise(setImmediate);
+  assert.equal(a.sendRequests.length, 1, 'a stairs step is an ordinary walk, not a paused action');
+  assert.equal(a.sendRequests[0].action, 'walk');
+});
+
+test('a changed capture resolution while armed leaves the panel showing disarmed controls', async () => {
+  const a = app();
+  await new Promise(setImmediate); await a.get('share').onclick();
+  a.get('live').checked = true;
+  a.inputClient.armed = true; a.inputClient.session = 'test-session';
+  await a.get('locate').onclick();
+  a.get('video').videoWidth = 200; // the capture source changed resolution mid-stream
+  await a.tick();
+  assert.equal(a.inputClient.armed, false);
+  assert.equal(a.get('input-arm').disabled, false, 'arm is available again');
+  assert.equal(a.get('input-disarm').disabled, true);
+  assert.equal(a.get('input-calibrate').disabled, true);
+  assert.equal(a.get('input-walk').disabled, true);
+  assert.equal(a.get('input-actions').disabled, true);
+});
+
+test('a calibration click does not invalidate live tracking, but a normal pointerdown still does', async () => {
+  const a = app();
+  await new Promise(setImmediate); await a.get('share').onclick();
+  a.get('live').checked = true;
+  await a.get('locate').onclick();
+  assert.equal(a.get('live').checked, true, 'baseline: live tracking is on after the first reading');
+
+  a.get('input-calibrate').listeners.click();
+  a.get('screen').listeners.pointerdown({clientX:0, clientY:0, pointerId:1});
+  assert.equal(a.get('live').checked, true, 'a calibration click must not invalidate live tracking');
+
+  // Clear calibration mode the way the real click handler does: an offscreen
+  // point (the mock has no clientWidth/clientHeight) makes normalisedPoint
+  // return null before any network call, but calibrating is still cleared.
+  a.get('screen').listeners.click({offsetX:1, offsetY:1, currentTarget:a.get('screen')});
+  a.get('screen').listeners.pointerdown({clientX:0, clientY:0, pointerId:2});
+  assert.equal(a.get('live').checked, false, 'a normal click still invalidates afterwards');
 });
