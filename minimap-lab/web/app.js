@@ -421,8 +421,15 @@ async function pumpBlocks(position, now) {
       // The server's verdict is shown verbatim, so a refused observation is
       // visible instead of looking like a lost request.
       $('blocks-status').textContent = `${obs.to.x}, ${obs.to.y}: ${decision.reason}`;
-      // Anything the server accepted changed the map under the cached route.
-      if (decision.result !== 'ignored') follower?.dropPath();
+      // Anything the server accepted changed the map under the cached route -
+      // including a route request already in flight, which is what the
+      // revision guards against.
+      if (decision.result !== 'ignored' && follower) {
+        if (decision.revision) {
+          follower.minOverlayRevision = Math.max(follower.minOverlayRevision, decision.revision);
+        }
+        follower.dropPath();
+      }
     }
   }
   if (!$('grid-preview-on').checked || !position) return;

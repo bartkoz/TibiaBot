@@ -25,6 +25,12 @@ class RouteFollower {
     // A failure is a moment, not a verdict: one dropped request must not freeze
     // guidance until the user toggles following off and on again.
     this.retryMS = options.retryMS ?? 4000;
+    // The oldest overlay revision a route may be based on. The panel raises it
+    // whenever the server accepts an observation, so a path request that was
+    // already in flight when a block was learned cannot install a route that
+    // predates it - which would send the bot back into the tile it just
+    // learned about.
+    this.minOverlayRevision = 0;
     this.reset();
   }
   reset() {
@@ -59,6 +65,11 @@ class RouteFollower {
     const target = this.waypoint;
     // Leave state untouched: whatever replaced this request is more current.
     if (!target || !askedFor || !sameTile(askedFor, target)) return;
+    // Same reasoning, one dimension further: the waypoint may be unchanged
+    // while the map underneath it is not. A reply with no revision at all is
+    // accepted - an older server, or a locally produced failure, must not
+    // deadlock guidance.
+    if (result?.overlay_revision !== undefined && result.overlay_revision < this.minOverlayRevision) return;
     this.requestedAt = now;
     if (!result || !result.found) {
       this.path = null;

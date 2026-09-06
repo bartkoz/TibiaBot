@@ -356,3 +356,26 @@ test('actionTolerance można poluzować świadomie', () => {
   // actionTolerance (not falling back to tolerance) can satisfy this.
   assert.equal(out.action, 'transition');
 });
+
+test('trasa policzona przed nauczoną blokadą jest odrzucana', () => {
+  // The path request goes out on the tick that blocks a target; the block is
+  // only reported to the server on the next one. The in-flight reply then
+  // arrives describing the world before the block - installing it would send
+  // the bot straight back into the tile it just learned about.
+  const f = new RouteFollower([{x: 10, y: 10, z: 7, type: 'walk'}]);
+  const target = {x: 10, y: 10, z: 7};
+  f.minOverlayRevision = 5;
+  f.setPath({found: true, status: 'ok', steps: [[1, 1], [2, 2]], overlay_revision: 4}, 0, target);
+  assert.equal(f.path, null, 'zainstalowano trasę sprzed nauczonej blokady');
+
+  f.setPath({found: true, status: 'ok', steps: [[1, 1], [2, 2]], overlay_revision: 5}, 0, target);
+  assert.notEqual(f.path, null, 'trasa policzona na aktualnej nakładce została odrzucona');
+});
+
+test('brak rewizji w odpowiedzi nie blokuje trasy', () => {
+  // A server built before this field, or a locally computed reply, must not
+  // deadlock the follower.
+  const f = new RouteFollower([{x: 10, y: 10, z: 7, type: 'walk'}]);
+  f.setPath({found: true, status: 'ok', steps: [[1, 1], [2, 2]]}, 0, {x: 10, y: 10, z: 7});
+  assert.notEqual(f.path, null);
+});

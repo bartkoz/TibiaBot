@@ -73,6 +73,12 @@ type Observation struct {
 type Decision struct {
 	Result string `json:"result"`
 	Reason string `json:"reason"`
+	// Revision is the overlay revision after this observation was applied. The
+	// panel keeps the highest one it has seen and discards any route whose
+	// overlay_revision is older - otherwise a path request already in flight
+	// when a block is learned reinstalls the pre-block route on arrival, and
+	// the bot walks straight back into the tile it just learned about.
+	Revision uint64 `json:"revision"`
 }
 
 type Blockage struct {
@@ -99,6 +105,11 @@ type BlockStore struct {
 	// rewrites the file.
 	path  string
 	dirty bool
+	// writeMu serialises whole write cycles. mu alone is not enough: encoding
+	// and writing are deliberately not under it, so two flushes could otherwise
+	// interleave and the slower rename would land last, silently replacing a
+	// newer file with an older snapshot.
+	writeMu sync.Mutex
 }
 
 // Overlay is an immutable view of the blockages inside one area of one floor,
@@ -136,6 +147,12 @@ func (s *BlockStore) Revision() uint64 {
 	return s.rev
 }
 
+// decide stamps every answer with the revision the store is at, read under the
+// caller's lock.
+func (s *BlockStore) decide(result, reason string) Decision {
+	return Decision{Result: result, Reason: reason, Revision: s.rev}
+}
+
 func (s *BlockStore) Observe(obs Observation) Decision {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -154,28 +171,27 @@ func (s *BlockStore) Observe(obs Observation) Decision {
 		}
 		if cleared {
 			s.rev++
-			return Decision{Result: "cleared", Reason: "Postać weszła na kratkę; blokada usunięta."}
+			return s.decide("cleared", "Postać weszła na kratkę; blokada usunięta.")
 		}
-		return Decision{Result: "ignored", Reason: "Kratka nie była zablokowana."}
+		return s.decide("ignored", "Kratka nie była zablokowana.")
 	case "no_motion":
 	default:
-		return Decision{Result: "ignored", Reason: fmt.Sprintf("Nieznany wynik próby: %s", obs.Outcome)}
+		return s.decide("ignored", fmt.Sprintf("Nieznany wynik próby: %s", obs.Outcome))
 	}
 
 	if obs.From.Z != obs.To.Z {
-		return Decision{Result: "ignored", Reason: "Krok między piętrami nie jest dowodem przeszkody."}
+		return s.decide("ignored", "Krok między piętrami nie jest dowodem przeszkody.")
 	}
 	dx, dy := abs(obs.To.X-obs.From.X), abs(obs.To.Y-obs.From.Y)
 	if dx > 1 || dy > 1 || (dx == 0 && dy == 0) {
-		return Decision{Result: "ignored", Reason: "Kratki nie sąsiadują ze sobą."}
+		return s.decide("ignored", "Kratki nie sąsiadują ze sobą.")
 	}
 	if obs.StillFrames < minStillFrames {
-		return Decision{Result: "ignored",
-			Reason: fmt.Sprintf("Za mało klatek bez ruchu: %d, wymagane %d.", obs.StillFrames, minStillFrames)}
+		return s.decide("ignored",
+			fmt.Sprintf("Za mało klatek bez ruchu: %d, wymagane %d.", obs.StillFrames, minStillFrames))
 	}
 	if obs.LastFrameAgeMS > maxFrameAgeMS {
-		return Decision{Result: "ignored",
-			Reason: fmt.Sprintf("Ostatnia klatka starsza niż %d ms.", maxFrameAgeMS)}
+		return s.decide("ignored", fmt.Sprintf("Ostatnia klatka starsza niż %d ms.", maxFrameAgeMS))
 	}
 
 	// A diagonal step also fails when both orthogonal tiles at the corner are
@@ -186,7 +202,7 @@ func (s *BlockStore) Observe(obs Observation) Decision {
 		k := edgeKey{obs.From.X, obs.From.Y, obs.To.X, obs.To.Y, obs.From.Z}
 		s.edges[k] = now.Add(edgeTTL)
 		s.rev++
-		return Decision{Result: "temp", Reason: "Skos nieprzejezdny; zablokowano samo przejście."}
+		return s.decide("temp", "Skos nieprzejezdny; zablokowano samo przejście.")
 	}
 
 	k := tileKey{obs.To.X, obs.To.Y, obs.To.Z}
@@ -195,11 +211,11 @@ func (s *BlockStore) Observe(obs Observation) Decision {
 		s.tiles[k] = &Blockage{Kind: KindTemp, Episodes: 1, First: now,
 			Expires: now.Add(tempTTL), Forget: now.Add(forgetAfter)}
 		s.rev++
-		return Decision{Result: "temp", Reason: "Pierwszy epizod; blokada tymczasowa."}
+		return s.decide("temp", "Pierwszy epizod; blokada tymczasowa.")
 	}
 	if b.Kind == KindPerm {
 		b.Forget = now.Add(forgetAfter)
-		return Decision{Result: "promoted", Reason: "Kratka była już blokadą trwałą."}
+		return s.decide("promoted", "Kratka była już blokadą trwałą.")
 	}
 	// Still inside the previous block's lifetime: this is the same episode
 	// seen again (a retry, a recomputed route, a resent report), not a second
@@ -209,24 +225,29 @@ func (s *BlockStore) Observe(obs Observation) Decision {
 		// as two episodes, even though the obstacle never left.
 		b.Expires = now.Add(tempTTL)
 		b.Forget = now.Add(forgetAfter)
-		return Decision{Result: "temp", Reason: "Ten sam epizod; blokada tymczasowa przedłużona."}
+		return s.decide("temp", "Ten sam epizod; blokada tymczasowa przedłużona.")
 	}
 	// Time apart is not enough. An obstacle that simply stayed put - an idle
 	// player in a doorway - would otherwise be promoted to a permanent wall by
 	// the mere passage of a minute, and permanent blocks never expire.
 	if !obs.MovedSince {
+		// Kind must come back with the deadline. sweepLocked ran at the top of
+		// this call with the same clock and set it to KindNone, so renewing the
+		// dates alone would leave a block that steers nothing, shows nowhere,
+		// and can never promote - every later bump would just push the deadline
+		// out again.
+		b.Kind = KindTemp
 		b.Expires = now.Add(tempTTL)
 		b.Forget = now.Add(forgetAfter)
 		s.rev++
-		return Decision{Result: "temp",
-			Reason: "Ta sama przeszkoda bez chodzenia w międzyczasie; blokada tymczasowa odnowiona."}
+		return s.decide("temp", "Ta sama przeszkoda bez chodzenia w międzyczasie; blokada tymczasowa odnowiona.")
 	}
 	b.Episodes++
 	b.Forget = now.Add(forgetAfter)
 	b.Kind, b.Expires = KindPerm, time.Time{}
 	s.dirty = true
 	s.rev++
-	return Decision{Result: "promoted", Reason: "Drugi niezależny epizod; blokada trwała."}
+	return s.decide("promoted", "Drugi niezależny epizod; blokada trwała.")
 }
 
 // Clear removes whatever is known about a tile. Reported presence beats any
@@ -380,8 +401,11 @@ func (s *BlockStore) Load() error {
 // across fsync and rename would stall every route query and preview request
 // for the duration of a disk write.
 func (s *BlockStore) Save() error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
 	s.mu.Lock()
 	path, data, err := s.encodeLocked()
+	at := s.rev
 	s.mu.Unlock()
 	if err != nil || path == "" {
 		return err
@@ -390,7 +414,13 @@ func (s *BlockStore) Save() error {
 		return err
 	}
 	s.mu.Lock()
-	s.dirty = false
+	// Only if nothing changed while the file was being written. Clearing the
+	// flag unconditionally would mark a promotion that arrived mid-write as
+	// saved, and it would then be lost on restart - the one thing a permanent
+	// block must survive.
+	if s.rev == at {
+		s.dirty = false
+	}
 	s.mu.Unlock()
 	return nil
 }

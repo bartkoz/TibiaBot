@@ -385,3 +385,44 @@ func TestEnteredClearsADiagonalEdge(t *testing.T) {
 		t.Fatal("walking the diagonal did not lift the edge block")
 	}
 }
+
+func TestRenewedBlockStaysActive(t *testing.T) {
+	// The exact sequence the feature exists for: the executor's own block and
+	// the server's TTL are both armed by the first failure, so the retry lands
+	// just past the deadline with nothing having succeeded in between. The
+	// renewed block must still steer routes - a renewal that leaves the tile
+	// invisible neuters it for the rest of the run, because every later bump
+	// then only pushes the deadline out again.
+	s, c := newTestStore()
+	s.Observe(bump(Position{100, 100, 7}, Position{100, 99, 7}))
+	c.advance(61 * time.Second)
+
+	stale := bump(Position{100, 100, 7}, Position{100, 99, 7})
+	stale.MovedSince = false
+	if d := s.Observe(stale); d.Result != "temp" {
+		t.Fatalf("result %q (%s), want temp", d.Result, d.Reason)
+	}
+
+	if got := s.Snapshot(image.Rect(90, 90, 110, 110), 7).Tile(100, 99); got != KindTemp {
+		t.Fatalf("tile kind %v after renewal, want KindTemp - the renewed block steers nothing", got)
+	}
+	if list := s.List(image.Rect(90, 90, 110, 110), 7); len(list) != 1 {
+		t.Fatalf("List returned %d entries after renewal, want 1", len(list))
+	}
+}
+
+func TestRenewedBlockCanStillPromote(t *testing.T) {
+	// After a renewal, an episode that does carry proof of walking must still
+	// be able to promote the tile.
+	s, c := newTestStore()
+	s.Observe(bump(Position{100, 100, 7}, Position{100, 99, 7}))
+	c.advance(61 * time.Second)
+	stale := bump(Position{100, 100, 7}, Position{100, 99, 7})
+	stale.MovedSince = false
+	s.Observe(stale)
+	c.advance(61 * time.Second)
+
+	if d := s.Observe(bump(Position{100, 100, 7}, Position{100, 99, 7})); d.Result != "promoted" {
+		t.Fatalf("result %q (%s), want promoted", d.Result, d.Reason)
+	}
+}
