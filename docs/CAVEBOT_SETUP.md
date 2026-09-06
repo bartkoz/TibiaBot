@@ -1,4 +1,4 @@
-# Cavebot Setup Guide
+# Cavebot Setup Guide (Windows)
 
 Step-by-step instructions to get the cavebot running from scratch.
 
@@ -20,69 +20,45 @@ Download and install from [obsproject.com](https://obsproject.com).
 
 ---
 
-## Step 3: Grant OBS Screen Recording Permission (macOS)
-
-OBS needs screen recording access **before** it can capture anything.
-
-1. Open **System Settings > Privacy & Security > Screen Recording**
-2. Enable **OBS** in the list
-3. If OBS was already enabled, toggle it **off then back on**
-4. **Quit and restart OBS** — permission changes require a full restart
-
-> Without this, OBS will show a black preview no matter what source you add.
-
----
-
-## Step 4: Add a Screen Capture Source in OBS
+## Step 3: Add a Window Capture Source in OBS
 
 1. Open OBS Studio
 2. In the **Scenes** panel (bottom-left), click **+** to create a new scene, name it `Tibia`
-3. In the **Sources** panel, click **+** to add a new source:
-
-   | OS | Source type |
-   |----|-------------|
-   | **macOS** | macOS Screen Capture |
-   | **Windows** | Window Capture |
-   | **Linux** | Window Capture (X11) or Screen Capture (Wayland) |
-
+3. In the **Sources** panel, click **+** and select **Window Capture**
 4. Name it `tibia` and click OK
-5. In the properties dialog:
-   - **macOS**: set Method to **"Display Capture"**, select your monitor from the Display dropdown
-   - **Windows/Linux**: select the Tibia client window from the Window dropdown
-6. **Uncheck "Show cursor"** — the cursor interferes with pixel reads
+5. In the properties dialog, select the Tibia client window from the **Window** dropdown
+6. **Uncheck "Capture Cursor"** — the cursor interferes with pixel reads
 7. Click OK
 
-> **macOS note**: "Application Capture" often produces a black screen. Use **"Display Capture"** instead — it's more reliable. The trade-off is it captures the entire screen, so keep the Tibia window visible and unobstructed while the bot runs.
+> The Tibia client must be open before adding the source, otherwise it won't appear in the dropdown.
 
 ---
 
-## Step 5: Configure OBS Canvas Resolution
+## Step 4: Configure OBS Canvas Resolution
 
-The bot reads pixel regions at exact coordinates, so the output resolution must be predictable.
+The bot reads pixel regions at exact coordinates, so the output resolution must match the game.
 
 1. Go to **Settings > Video**
 2. Set **Base (Canvas) Resolution** to `1920x1080`
-3. Set **Output (Scaled) Resolution** to `1920x1080` (same — no downscaling)
+3. Set **Output (Scaled) Resolution** to `1920x1080` (same value — no downscaling)
 4. Set **FPS** to `20` (the bot doesn't need more; saves CPU)
 5. Click **Apply**
 
-> **Retina/HiDPI displays**: Your physical screen may be 2880×1800 or higher, but OBS will output at the canvas resolution you set here. All pixel coordinates in the bot config must match the **OBS output resolution** (1920×1080), not your native screen resolution.
-
 ---
 
-## Step 6: Fit Source to Canvas
+## Step 5: Fit Source to Canvas
 
 The Tibia game must fill the entire OBS canvas with no black borders:
 
 1. Right-click the source in the OBS preview area
-2. Select **Transform > Fit to Screen** (Ctrl+F / Cmd+F)
-3. Verify the game image fills the entire preview
+2. Select **Transform > Fit to Screen** (or press Ctrl+F)
+3. Verify the game image fills the entire preview — no black bars
 
 ---
 
-## Step 7: Remove Overlays and Filters
+## Step 6: Remove Overlays and Filters
 
-The bot does pixel-perfect reads of HP bars, minimap, and battle list. Any visual alteration will break detection.
+The bot does pixel-perfect reads of HP bars, minimap, and battle list. Any visual alteration breaks detection.
 
 - No text overlays, webcam sources, or image sources in the scene
 - No color correction, sharpening, or other filters on the capture source
@@ -90,7 +66,7 @@ The bot does pixel-perfect reads of HP bars, minimap, and battle list. Any visua
 
 ---
 
-## Step 8: Start the Virtual Camera
+## Step 7: Start the Virtual Camera
 
 1. In the OBS main window, click **Start Virtual Camera** (bottom-right Controls panel)
 2. The button changes to "Stop Virtual Camera" when active
@@ -100,7 +76,7 @@ The bot does pixel-perfect reads of HP bars, minimap, and battle list. Any visua
 
 ---
 
-## Step 9: Find the Camera Index
+## Step 8: Find the Camera Index
 
 The bot needs to know which device number is the OBS Virtual Camera.
 
@@ -119,18 +95,18 @@ for i in range(10):
 "
 ```
 
-Look for the entry showing `1920x1080` (or whatever you set as canvas resolution). That index number goes into your config as `camera_index`.
+Look for the entry showing `1920x1080`. That index number goes into your config as `camera_index`. If you have no webcam, it's usually `0`.
 
 ---
 
-## Step 10: Verify the Capture
+## Step 9: Verify the Capture
 
 Save a test frame to confirm everything works:
 
 ```bash
 uv run python -c "
 import cv2
-cap = cv2.VideoCapture(0)  # replace 0 with your camera_index
+cap = cv2.VideoCapture(0)
 ret, frame = cap.read()
 if ret:
     cv2.imwrite('test_capture.png', frame)
@@ -141,16 +117,18 @@ cap.release()
 "
 ```
 
+Replace `0` with your camera index from Step 8 if different.
+
 Open `test_capture.png` and verify:
 - The Tibia client is fully visible
 - No black borders or scaling artifacts
-- The resolution matches your canvas setting (e.g. 1920×1080)
+- Resolution is 1920×1080
 
-**Keep this image open** — you'll use it in the next step to measure pixel coordinates.
+**Keep this image open** — you'll use it to measure pixel coordinates.
 
 ---
 
-## Step 11: Create Your Config File
+## Step 10: Create Your Config File
 
 ```bash
 cp configs/default.yaml configs/mychar.yaml
@@ -158,9 +136,9 @@ cp configs/default.yaml configs/mychar.yaml
 
 ---
 
-## Step 12: Calibrate Screen Regions
+## Step 11: Calibrate Screen Regions
 
-Open `test_capture.png` in an image editor (Preview on macOS, Paint on Windows, GIMP, etc.). Measure the pixel coordinates of these UI elements:
+Open `test_capture.png` in Paint or any image editor. Measure the pixel coordinates of these UI elements:
 
 | Region | What to find | Format |
 |--------|-------------|--------|
@@ -175,29 +153,27 @@ Update your config:
 
 ```yaml
 capture:
-  camera_index: 0                            # from Step 9
+  camera_index: 0                            # from Step 8
   minimap_region: [1650, 20, 110, 110]       # adjust to your layout
   health_bar_region: [10, 50, 200, 15]       # adjust to your layout
   mana_bar_region: [10, 70, 200, 15]         # adjust to your layout
   battle_list_region: [1650, 200, 180, 300]  # adjust to your layout
 ```
 
-> **Important**: These coordinates must match the OBS output image, NOT your native screen resolution. Always measure from `test_capture.png`.
-
 ---
 
-## Step 13: Copy Minimap Data
+## Step 12: Copy Minimap Data
 
 The bot uses Tibia's minimap files for position detection and pathfinding.
 
 1. Find your Tibia minimap directory:
-   - **macOS**: `~/Library/Application Support/Tibia/packages/Tibia/minimap/`
-   - **Windows**: `%APPDATA%\Tibia\packages\Tibia\minimap\`
-   - **Linux**: `~/.local/share/Tibia/packages/Tibia/minimap/`
+   ```
+   %APPDATA%\Tibia\packages\Tibia\minimap\
+   ```
 
 2. Copy all files into the bot's data directory:
    ```bash
-   cp ~/Library/Application\ Support/Tibia/packages/Tibia/minimap/* data/minimap/
+   xcopy "%APPDATA%\Tibia\packages\Tibia\minimap\*" data\minimap\ /Y
    ```
 
 The bot expects two file types per area:
@@ -208,7 +184,7 @@ The bot expects two file types per area:
 
 ---
 
-## Step 14: Configure Healing
+## Step 13: Configure Healing
 
 Map these to your in-game hotkeys:
 
@@ -224,7 +200,7 @@ healing:
 
 ---
 
-## Step 15: Configure Combat
+## Step 14: Configure Combat
 
 ```yaml
 combat:
@@ -235,7 +211,7 @@ combat:
 
 ---
 
-## Step 16: Configure Movement
+## Step 15: Configure Movement
 
 ```yaml
 movement:
@@ -244,7 +220,7 @@ movement:
 
 ---
 
-## Step 17: Set the Minimap Path
+## Step 16: Set the Minimap Path
 
 ```yaml
 minimap:
@@ -254,9 +230,9 @@ minimap:
 
 ---
 
-## Step 18: Add Waypoints
+## Step 17: Add Waypoints
 
-Waypoints define the cavebot's walking loop. There are two methods.
+Waypoints define the cavebot's walking loop.
 
 ### Method A: Web UI (recommended)
 
@@ -313,7 +289,7 @@ Set `loop: true` to repeat forever, `false` to stop after one cycle.
 
 ---
 
-## Step 19: Run the Bot
+## Step 18: Run the Bot
 
 ```bash
 # Normal start
@@ -419,13 +395,11 @@ web:
 
 | Problem | Cause | Fix |
 |---------|-------|-----|
-| OBS preview is black | Missing screen recording permission | macOS: System Settings > Privacy > Screen Recording > toggle OBS off/on, restart OBS |
-| OBS "Application Capture" stays black | macOS bug with some apps | Switch Method to **"Display Capture"** in source properties |
-| `ERROR: could not read frame` | Virtual Camera not started, or wrong index | Click "Start Virtual Camera" in OBS, then re-run the camera index script |
-| `cv2.error: Assertion failed` in `matchTemplate` | `minimap_region` captures an area larger than 256×256 | Verify coordinates in `test_capture.png` — minimap should be ~110×110px |
-| "No path found to waypoint N" | Missing minimap data | Walk through the area in-game to generate tiles. Check both Color and WaypointCost PNGs exist |
-| Bot doesn't detect position | Wrong `minimap_region` coordinates | Re-measure from `test_capture.png`. Coordinates must match OBS output, not native screen resolution |
+| `ERROR: could not read frame` | Virtual Camera not started or wrong index | Click "Start Virtual Camera" in OBS, re-run camera index script |
+| OBS preview is black | OBS not running as admin, or Tibia not open | Try running OBS as administrator; ensure Tibia is open before adding source |
+| `cv2.error` in `matchTemplate` | `minimap_region` too large (>256px) | Re-measure from `test_capture.png` — minimap should be ~110×110px |
+| "No path found to waypoint N" | Missing minimap data | Walk through the area in-game. Check both Color and WaypointCost PNGs exist |
+| Bot doesn't detect position | Wrong `minimap_region` coordinates | Re-measure from `test_capture.png` |
 | HP/mana always reads 0% or 100% | Wrong bar region coordinates | Re-measure `health_bar_region` / `mana_bar_region` from `test_capture.png` |
-| Bot doesn't attack | Wrong battle list region or attack key | Verify `battle_list_region` from screenshot, check `attack_key` matches Tibia hotkey |
-| Atlas blank in web UI | Wrong `data_path` or no tiles for Z level | Check path exists and contains Minimap_Color PNGs, try a different Z level |
-| Resolution mismatch | OBS scaling doesn't match config | Set both Base and Output resolution in OBS Settings > Video to the same value. Re-do `test_capture.png` and re-measure all regions |
+| Bot doesn't attack | Wrong battle list region or key | Verify `battle_list_region` from screenshot, check `attack_key` matches Tibia hotkey |
+| Atlas blank in web UI | Wrong `data_path` or no tiles for Z level | Check path exists and contains Minimap_Color PNGs, try different Z level |

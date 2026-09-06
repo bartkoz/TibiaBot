@@ -18,10 +18,8 @@ zmieniły — i po trzech cyklach wykonawca zatrzymuje się na dobre. Wiedza „
 się nie da" nie ma dziś gdzie trafić.
 
 Ten dokument opisuje warstwę nauczonych blokad: pamięć kratek, po których nie
-da się chodzić mimo tego, co mówią dane mapy. Na start zasila ją wyłącznie
-nieudany krok („bump-and-learn"). Rozpoznawanie obiektów z obrazu gry to
-osobny, późniejszy etap — ten dokument buduje miejsce, do którego taki moduł
-będzie mógł wpiąć swoje obserwacje, ale sam go nie realizuje.
+da się chodzić mimo tego, co mówią dane mapy. Zasila ją nieudany krok
+(„bump-and-learn") i tylko on.
 
 Zakres obejmuje też podgląd na żywo w panelu: mapa wokół postaci pokazująca,
 co jest przechodnie w danych, czego w danych nie ma, i co bot sam nauczył się
@@ -35,9 +33,15 @@ minimapa Tibii koduje podłoże i ściany, a meble rysuje wyłącznie viewport.
 Żadna warstwa minimapy nie opisze lady.
 
 Klient gry nie ratuje sytuacji. `staticmapdata-*.dat` w assetach zawiera POI i
-miasta, nie kolizje świata. `appearances-*.dat` niesie flagi przechodności dla
-każdego `itemid` — to właściwe źródło dla przyszłego modułu wizji, ale samo w
-sobie nie mówi, **który** obiekt leży na której kratce.
+miasta, nie kolizje świata.
+
+Rozważana była druga droga: gotowa lista przechodnich obiektów — z wiki albo z
+`appearances-*.dat` klienta — i rozpoznawanie z obrazu gry, co stoi na kratce.
+**Odrzucona.** Lista jest niepełna, a brakujące ogniwo „piksel → itemid"
+kosztuje osobny podsystem (dekoder sprite'ów, kalibracja siatki viewportu,
+dopasowanie), którego wynik i tak trzeba by weryfikować w praktyce. Nauka z
+nieudanych kroków jest kompletna z definicji: obejmuje meble, drzwi, graczy i
+potwory jednym mechanizmem, bez żadnej listy do utrzymywania.
 
 ## Decyzje
 
@@ -306,14 +310,9 @@ Docker Compose.
 
 ## Poza zakresem
 
-- **Rozpoznawanie obiektów z viewportu.** Osobny etap: dekoder
-  `appearances-*.dat`, dekoder arkuszy sprite'ów, kalibracja siatki kafli,
-  dopasowanie. Wpina się w `BlockStore` jako drugie źródło obserwacji, z
-  własnym `source` i własną polityką TTL. Ten dokument buduje pod to miejsce,
-  ale niczego z tego nie realizuje.
-- **Otwieranie drzwi.** Kratka z zamkniętymi drzwiami będzie na razie zwykłą
-  blokadą. Rozpoznanie „to są drzwi, spróbuj ich użyć" wymaga wizji.
-- **Rozróżnianie przyczyny blokady.** Zapisujemy `source=bump`,
-  `cause=unknown`. Czas utrzymywania się przeszkody nie odróżnia postaci od
-  mebla, a zgadywanie zapisywałoby w pliku hipotezy udające fakty.
+- **Rozpoznawanie obiektów z viewportu.** Odrzucone, patrz wyżej.
+- **Otwieranie drzwi.** Kratka z zamkniętymi drzwiami jest zwykłą blokadą.
+- **Rozróżnianie przyczyny blokady.** Czas utrzymywania się przeszkody nie
+  odróżnia postaci od mebla, a zgadywanie zapisywałoby w pliku hipotezy udające
+  fakty.
 - **Adaptacyjny timeout kroku** — patrz uzasadnienie wyżej.
