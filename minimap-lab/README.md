@@ -1,6 +1,6 @@
 # Minimap Lab (Go)
 
-Samodzielny prototyp lokalizacji `(x,y,z)` z obrazu minimapy oraz prowadzenia po trasie waypointów. Bez zewnętrznych bibliotek, OpenCV ani CGO. Panel działa lokalnie i analizuje screenshoty lub klatki ekranu udostępnionego przez przeglądarkę. Moduł realizuje odczyt pozycji i wskazuje kolejny krok trasy; **sterowanie postacią nie jest zaimplementowane** — panel nie wysyła klawiszy ani kliknięć do gry.
+Samodzielny prototyp lokalizacji `(x,y,z)` z obrazu minimapy, prowadzenia po trasie waypointów i opcjonalnego sterowania klawiaturą i myszą. Bez OpenCV i bez CGO na każdej platformie; jedyna zewnętrzna zależność to `github.com/ebitengine/purego`, wpięta wyłącznie w emiter macOS — Windows i Linux jej nie potrzebują. Panel działa lokalnie i analizuje screenshoty lub klatki ekranu udostępnionego przez przeglądarkę. Moduł realizuje odczyt pozycji i wskazuje kolejny krok trasy; **sterowanie postacią jest opcjonalne i wyłączone domyślnie** — uruchomiony z `-input dry` albo `-input system`, panel może wysyłać klawisze i kliknięcia do gry. Zobacz sekcję **Sterowanie**.
 
 ## Uruchomienie
 
@@ -55,7 +55,7 @@ Panel pokazuje:
 - **Poprawne odczyty** — udział zaakceptowanych lokalnych dopasowań w ostatnich 3 sekundach.
 - **Obszar** — lokalne wyszukiwanie albo całe piętro i liczbę możliwych pozycji.
 
-Pętla odejmuje czas obliczeń od okresu 100/200 ms i nigdy nie kolejkuje równoległych żądań. Przy wolnym przetwarzaniu pokazuje niższą rzeczywistą częstotliwość. Nie liczy ponownie klatki o tym samym czasie odtwarzania źródła; po sekundzie bez nowej klatki ukrywa stare XYZ. Ograniczenia przechwytywania i harmonogramu przeglądarki nadal mogą obniżać częstotliwość — sprawdzaj pomiar w panelu. Jest to tester odczytu podczas ręcznego chodzenia, także między sąsiednimi piętrami; nie wysyła klawiszy.
+Pętla odejmuje czas obliczeń od okresu 100/200 ms i nigdy nie kolejkuje równoległych żądań. Przy wolnym przetwarzaniu pokazuje niższą rzeczywistą częstotliwość. Nie liczy ponownie klatki o tym samym czasie odtwarzania źródła; po sekundzie bez nowej klatki ukrywa stare XYZ. Ograniczenia przechwytywania i harmonogramu przeglądarki nadal mogą obniżać częstotliwość — sprawdzaj pomiar w panelu. Jest to tester odczytu podczas ręcznego chodzenia, także między sąsiednimi piętrami; sam z siebie nie wysyła klawiszy — robi to dopiero uzbrojony wykonawca po zaznaczeniu **Chodź automatycznie**, opisany w sekcji **Sterowanie**.
 
 Benchmarki na zapisanym prawdziwym wycinku:
 
@@ -108,6 +108,72 @@ Jeżeli obraz pasuje równie dobrze na starym piętrze, przejście może w ogól
 Nieudane wyliczenie trasy — zerwane połączenie, timeout, waypoint chwilowo poza wczytanym obszarem — nie jest wyrokiem: panel pokazuje powód i ponawia próbę, gdy przejdziesz na inną kratkę albo po kilku sekundach. Zmiana tolerancji i zapętlenia działa od następnego odczytu i **nie cofa trasy** do pierwszego punktu; robi to dopiero wyłączenie i włączenie podążania.
 
 Zejście z zaplanowanej ścieżki, zmiana bieżącego waypointa i edycja listy unieważniają trasę i wymuszają przeliczenie. Odpowiedź, która dotrze po zmianie celu, jest odrzucana — inaczej ścieżka policzona do poprzedniego waypointa kierowałaby w złą stronę. Żądanie trasy biegnie obok pętli śledzenia i nigdy jej nie opóźnia.
+
+## Sterowanie
+
+Flaga `-input` wybiera tryb: `off` (domyślny — każda trasa `/api/arm`, `/api/input` itd. odpowiada 503, panel działa wyłącznie jako podgląd), `dry` (emiter zapamiętuje zdarzenia w pamięci i nic nie wysyła do systemu — cały przepływ da się przećwiczyć bez ryzyka) albo `system` (prawdziwe zdarzenia klawiatury i myszy). `-input system` ma emiter tylko na macOS (CoreGraphics przez `purego`) i Windows (`user32.dll`/`SendInput`); na Linuksie i innych platformach nie ma jeszcze emitera systemowego, więc start z `-input system` tam kończy się błędem — dostępne pozostają `off` i `dry`.
+
+### Uzbrajanie i rozbrajanie
+
+Przycisk **Uzbrój** w panelu (sekcja **5. Sterowanie**) zapamiętuje aktywne w tej właśnie chwili okno (PID i identyfikator procesu — bundle ID na macOS, ścieżka pliku na Windows) jako jedyny cel, do którego wolno coś wysłać. **Klient gry musi być oknem aktywnym w chwili kliknięcia „Uzbrój"** — panel nie rozpoznaje, które okno to Tibia, tylko zapamiętuje to, co akurat ma focus.
+
+Każde zdarzenie sprawdza focus tuż przed wysłaniem, więc utrata focusu przez zapamiętany proces (np. alt-tab) rozbraja wykonawcę — to podstawowy, ręczny kill-switch. Wykonawca rozbraja się też sam, gdy panel przestanie odpowiadać na heartbeat dłużej niż 750 ms (np. zamknięta karta) — działa to niezależnie od alt-taba.
+
+### macOS: zgoda Accessibility
+
+`-input system` na macOS wymaga zgody **Accessibility** dla procesu uruchamiającego `minimap-lab`: Ustawienia → Prywatność i ochrona → Dostępność. Bez niej uzbrojenie zakończy się błędem — sprawdzane jest to wprost przy uzbrajaniu, a nie dopiero przy pierwszym kroku, bo inaczej `CGEventPost` po cichu nic nie robi i bot tylko wygląda na zawieszony. Po nadaniu zgody zwykle trzeba **zrestartować program** — macOS nie zawsze honoruje uprawnienie przyznane już działającemu procesowi. Zgoda na **nagrywanie ekranu**, którą ma przeglądarka (do udostępniania obrazu), jest osobnym uprawnieniem i **jej nie zastępuje**.
+
+### Zależności
+
+Jedyna zewnętrzna zależność w `go.mod` to `github.com/ebitengine/purego`, przypięta do `v0.9.0`. Używa jej wyłącznie plik emitera macOS (`input_darwin.go`, build tag `darwin`) do wywołań CoreGraphics/AppKit. Emiter Windows (`input_windows.go`) korzysta jedynie z `syscall` i `user32.dll`/`kernel32.dll` ze standardowej biblioteki — zero zależności. CGO jest wyłączone wszędzie, na wszystkich trzech platformach (patrz buildy krzyżowe niżej).
+
+### Cały ekran, jeden monitor
+
+Kliknięcia akcji (lina, drabina, dziura, łopata) celują we współrzędne kratki postaci, wskazane przy kalibracji jako **ułamek udostępnionego obrazu** (0–1 w obu osiach); Go mnoży je przez rzeczywisty rozmiar ekranu w punktach systemowych. To przeliczenie jest afiniczne tylko wtedy, gdy źródłem obrazu jest **cały ekran**, a nie pojedyncze okno ani karta przeglądarki, i tylko na **jednym monitorze** — inne źródło albo drugi monitor przesuwają klik w losowe miejsce.
+
+### Znane ograniczenia
+
+- Sprawdzenie focusu i wysłanie zdarzenia **nie są atomowe**: alt-tab może zdarzyć się dokładnie pomiędzy nimi i pojedynczy klawisz trafi wtedy do innego okna. Ryzyko jest mocno ograniczone, ale nie da się go wyeliminować tymi API.
+- Ruch myszy wykonany ręcznie przez człowieka **nie przerywa** trwającej sekwencji tap→klik — klik celuje w skalibrowaną kratkę bezwzględnymi współrzędnymi ekranu, niezależnie od tego, gdzie akurat stoi kursor. Jedyną ochroną przed realnym zagrożeniem — zmianą aktywnego okna w trakcie 120 ms przerwy między tapnięciem hotkeya a kliknięciem — jest ponowne sprawdzenie focusu tuż przed samym kliknięciem.
+- Przeglądarka **throttluje kartę w tle**; brak świeżych klatek z udostępnionego ekranu zatrzymuje ruch — to zachowanie zamierzone (bez świeżej pozycji nie ma dowodu, że krok się wykonał), nie błąd.
+- **Nie ma gwarancji, że klient gry przyjmie zdarzenia syntetyczne.** Kod skanowania klawisza nie czyni ze zdarzenia sprzętowego Raw Inputu; jeśli klient je odrzuci, jedyną drogą naprzód są `PostMessage` do okna albo sterownik wejścia — oba poza zakresem tego projektu. Rozstrzyga to wyłącznie test na żywym kliencie, opisany niżej.
+
+### Dwa checkboxy
+
+**Chodź automatycznie** włącza rzeczywiste wysyłanie kroków: dopóki jest odznaczony (albo wykonawca nie jest uzbrojony), panel tylko pokazuje kierunek i liczy trasę, dokładnie jak przed tą funkcją. **Wykonuj akcje pięter** dotyczy wyłącznie akcji na przedmiotach — liny, drabiny, dziury i łopaty: gdy jest odznaczony, wykonawca zatrzymuje się przed takim waypointem i czeka, mimo że chodzenie jest włączone. Nie dotyczy to **schodów** (`stairs`) — schody pokonuje się zwykłym krokiem w ich stronę, bez żadnego hotkeya, więc są wykonywane zawsze, gdy tylko włączone jest chodzenie automatyczne, niezależnie od stanu tego checkboxa.
+
+### Test w trybie dry, bez gry
+
+```sh
+cd minimap-lab && go run . -input dry
+```
+
+W panelu: uzbrój, włącz **Chodź automatycznie** na nagranej trasie i sprawdź, że sekwencja kierunków zgadza się z trasą pokazywaną w podglądzie. Żadne zdarzenie nie trafia do systemu — `DryEmitter` tylko je zapamiętuje.
+
+### Test na żywym kliencie
+
+```sh
+cd minimap-lab && go run . -input system
+```
+
+W tej kolejności:
+
+1. Cztery kierunki po jednym kroku — postać rusza we właściwą stronę.
+2. Krok po skosie.
+3. Krok w ścianę — wykonawca zatrzymuje się po dwóch próbach, nie zapętla.
+4. Alt-tab w trakcie chodzenia — panel pokazuje rozbrojenie, klawisze ustają.
+5. Trasa 20 kratek bez przejść między piętrami.
+6. Waypoint z liną.
+7. Waypoint ze schodami — postać wchodzi krokiem, panel potwierdza nowe Z.
+
+Zapisz wynik każdego punktu w opisie commita — to jedyna weryfikacja emiterów, których nie da się objąć `go test`.
+
+### Testy
+
+```sh
+go test ./...
+node --test ui_test.cjs tracker_test.cjs route_test.cjs recorder_test.cjs follower_test.cjs executor_test.cjs input_client_test.cjs
+```
 
 ## Jak działa
 
