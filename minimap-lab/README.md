@@ -123,6 +123,17 @@ Wykonawca nie uczy się ze wszystkiego. Nieudany **skos** blokuje samo przejści
 
 Limit czasu na krok wynosi 1800 ms. Czas przejścia kratki w Tibii zależy od prędkości postaci i kosztu terenu; krok na błocie albo pod paraliżem trwa dłużej niż sekundę, a timeout krótszy od samego kroku zamieniałby zwykły powolny ruch w fałszywe blokady.
 
+Wykonawca nie uczy się też niczego, gdy sam stoi na kratce, którą dane mapy
+uznają za nieprzechodnią. Postać nie stoi na wodzie ani w ścianie, więc taki
+odczyt oznacza, że lokalizator dopasował obraz do złego miejsca — a kratka,
+na którą rzekomo nie dało się wejść, leży wtedy zupełnie gdzie indziej. Bez
+tego zabezpieczenia zamrożona pozycja zapisuje trwałe blokady w środku
+otwartego terenu. Brak danych mapy nie blokuje nauki: paczki bywają miejscami
+ubogie, a odmowa uczenia się akurat tam byłaby gorsza niż fałszywe trafienia,
+przed którymi to chroni. Zgłoszenie wejścia na kratkę jest z tej reguły
+wyłączone — może wyłącznie usunąć blokadę, więc najgorsze, co zrobi błędne, to
+zapomnienie jednej lekcji.
+
 Blokada jest odwoływalna. Postać stojąca na kratce kasuje jej wpis, także trwały — obecność jest mocniejszym dowodem niż jakakolwiek nauczona hipoteza. Sprawdza to każde żądanie trasy, bez osobnego zapytania, a skasowanie wpisu trwałego od razu trafia na dysk: inaczej restart przywróciłby przeszkodę, której już nie ma. Nieudany skos, który potem się powiódł, zdejmuje zakaz tego konkretnego przejścia.
 
 Blokada tymczasowa zamyka też **skos przy rogu**. Postać ani mebel stojący w narożniku nie przepuszczą przejścia po przekątnej, tak samo jak ściana, więc trasa nie może się tamtędy przeciskać — inaczej bot wysyłałby krok, który gra odrzuci.

@@ -112,3 +112,75 @@ func TestBlocksRoutesAnswer503WithoutAStore(t *testing.T) {
 		t.Fatalf("status %d, want 503 - a server without a store must say so, not pretend the map is empty", w.Code)
 	}
 }
+
+func TestObserveIgnoredWhenTheCharacterStandsOnImpassableGround(t *testing.T) {
+	// The character cannot be standing on water or inside a wall. A report
+	// claiming it is means the locator matched the wrong place, and the tile it
+	// "failed to enter" is somewhere else entirely - learning from it writes a
+	// permanent block into open ground, which is exactly how three of them
+	// appeared in a real run.
+	s := pathServer(t, costTile(100, map[[2]int]uint8{{50, 51}: blockedCost}))
+	s.blocks = NewBlockStore(time.Now)
+
+	var d Decision
+	decodeInto(t, callBlocks(t, s, "POST", "/api/blocks/observe",
+		`{"from":{"x":32818,"y":32051,"z":7},"to":{"x":32818,"y":32050,"z":7},"outcome":"no_motion","still_frames":3,"last_frame_age_ms":120,"moved_since":true}`), &d)
+
+	if d.Result != "ignored" {
+		t.Fatalf("result %q (%s), want ignored", d.Result, d.Reason)
+	}
+	if !strings.Contains(strings.ToLower(d.Reason), "pozycja postaci") {
+		t.Fatalf("reason %q does not name the unreliable position", d.Reason)
+	}
+	if k := s.blocks.Snapshot(rectAround(32818, 32050, 4), 7).Tile(32818, 32050); k != KindNone {
+		t.Fatalf("tile kind %v; nothing may be learned from an unreliable position", k)
+	}
+}
+
+func TestObserveStillWorksFromSolidGround(t *testing.T) {
+	s := pathServer(t, costTile(100, nil))
+	s.blocks = NewBlockStore(time.Now)
+
+	var d Decision
+	decodeInto(t, callBlocks(t, s, "POST", "/api/blocks/observe",
+		`{"from":{"x":32818,"y":32051,"z":7},"to":{"x":32818,"y":32050,"z":7},"outcome":"no_motion","still_frames":3,"last_frame_age_ms":120,"moved_since":true}`), &d)
+	if d.Result != "temp" {
+		t.Fatalf("result %q (%s), want temp", d.Result, d.Reason)
+	}
+}
+
+func TestEnteredIsAcceptedEvenWithoutMapData(t *testing.T) {
+	// Revocation must never be gated on the map: a report that the character
+	// walked onto a tile can only ever remove a block, so the worst a bogus one
+	// does is forget a lesson - while refusing them would let a wrong permanent
+	// block survive precisely where the map data is poor.
+	// The reporting position is impassable in the map data - the same thing
+	// that makes a no_motion report untrustworthy - so this only passes if
+	// revocations are genuinely exempt from that check.
+	s := pathServer(t, costTile(100, map[[2]int]uint8{{50, 51}: blockedCost}))
+	s.blocks = NewBlockStore(time.Now)
+	s.blocks.Observe(Observation{From: Position{32818, 32051, 7}, To: Position{32818, 32050, 7},
+		Outcome: "no_motion", StillFrames: 3, LastFrameAgeMS: 100, MovedSince: true})
+
+	var d Decision
+	decodeInto(t, callBlocks(t, s, "POST", "/api/blocks/observe",
+		`{"from":{"x":32818,"y":32051,"z":7},"to":{"x":32818,"y":32050,"z":7},"outcome":"entered","still_frames":1,"last_frame_age_ms":50}`), &d)
+	if d.Result != "cleared" {
+		t.Fatalf("result %q (%s), want cleared", d.Result, d.Reason)
+	}
+}
+
+func TestObserveWorksWhereTheMapHasNoData(t *testing.T) {
+	// Missing map data must not gate learning. The pack is thin in places, and
+	// refusing to learn there would leave the bot helpless exactly where it has
+	// the least information to begin with.
+	s := pathServer(t, costTile(100, nil))
+	s.blocks = NewBlockStore(time.Now)
+
+	var d Decision
+	decodeInto(t, callBlocks(t, s, "POST", "/api/blocks/observe",
+		`{"from":{"x":33500,"y":32051,"z":7},"to":{"x":33500,"y":32050,"z":7},"outcome":"no_motion","still_frames":3,"last_frame_age_ms":120,"moved_since":true}`), &d)
+	if d.Result != "temp" {
+		t.Fatalf("result %q (%s), want temp", d.Result, d.Reason)
+	}
+}

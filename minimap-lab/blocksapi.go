@@ -37,6 +37,20 @@ func (s *server) observeBlock(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Nieprawidłowe żądanie JSON", http.StatusBadRequest)
 		return
 	}
+	// A character standing on water or inside a wall is not a character - it is
+	// a bad match from the locator. The tile it "failed to enter" is then
+	// somewhere else entirely, and learning from it writes a permanent block
+	// into open ground.
+	//
+	// Revocations are exempt: "the character walked onto this tile" can only
+	// ever remove a block, so a bogus one costs a forgotten lesson, while
+	// refusing them would let a wrong permanent block survive exactly where the
+	// map data is poor.
+	if obs.Outcome != "entered" && !s.standable(obs.From) {
+		writeJSON(w, Decision{Result: "ignored", Revision: s.blocks.Revision(),
+			Reason: "Pozycja postaci wypada na kratce nieprzechodniej, więc odczyt jest niewiarygodny; nic nie zapisano."})
+		return
+	}
 	d := s.blocks.Observe(obs)
 	// Only a change worth keeping touches the disk; an ignored observation or a
 	// temporary block must not rewrite the file.
@@ -74,6 +88,27 @@ func (s *server) deleteBlock(w http.ResponseWriter, r *http.Request) {
 		s.blocks.Flush()
 	}
 	writeJSON(w, map[string]bool{"cleared": cleared})
+}
+
+// standable reports whether the map data allows a character to be on this
+// tile. Missing data counts as standable: absence of evidence is not evidence
+// of a bad reading, and refusing to learn anywhere the pack is thin would be
+// worse than the false positives this guards against.
+func (s *server) standable(p Position) bool {
+	area := rectAround(p.X, p.Y, 1)
+	s.previewMu.Lock()
+	defer s.previewMu.Unlock()
+	if s.previewCache == nil || s.previewFloor != p.Z || !area.In(s.previewCache.bounds) {
+		g, err := loadCostArea(s.dir, p.Z, area.Inset(-previewMargin))
+		if err != nil {
+			return true // cannot tell; do not block learning on a read error
+		}
+		s.previewCache, s.previewFloor = g, p.Z
+	}
+	if !s.previewCache.Covered(p.X, p.Y) {
+		return true
+	}
+	return s.previewCache.At(p.X, p.Y) != blockedCost
 }
 
 // windowParams parses the x/y/z/r query shared by the listing and the preview.
