@@ -190,7 +190,12 @@ test('rozbrojenie z odrzuconym fetch nadal ustawia armed na false', async () => 
 // Reproduces the orphan-chain bug: a tick already awaiting its fetch when
 // stopHeartbeat() (then a fresh arm()) fires must not resurrect itself into a
 // second, independent polling chain once its stale fetch finally resolves.
-test('krok pulsu w locie w chwili stopHeartbeat() + arm() nie tworzy drugiego łańcucha', async () => {
+// The real hazard is not the extra HTTP call (the entry-of-tick generation
+// check already suppresses that) - it is a stale reply landing on a session
+// that has since been re-armed and corrupting *its* state. Two variants:
+// a stale {armed: false} reply, and a stale rejection.
+
+test('krok pulsu w locie, który rozwiązuje się jako {armed: false}, nie rozbraja świeżo uzbrojonej sesji', async () => {
   let resolveFirstPoll;
   const calls = [];
   const fetch = async (url) => {
@@ -211,23 +216,93 @@ test('krok pulsu w locie w chwili stopHeartbeat() + arm() nie tworzy drugiego ł
 
   // Let the first tick fire; its fetch is now hanging in flight.
   await new Promise((resolve) => setTimeout(resolve, 15));
-  assert.equal(calls.filter((u) => u === '/api/input/status').length, 1);
 
   // Stop the loop while that tick is still in flight, then start a fresh
   // chain via arm() - exactly the sequence the reviewer reproduced.
   client.stopHeartbeat();
   await client.arm();
+  assert.equal(client.session, 'xyz');
 
-  // Now let the stale tick's fetch resolve. If it reschedules itself, a
-  // second, orphaned chain starts running alongside the fresh one.
-  resolveFirstPoll({ok: true, json: async () => ({armed: true})});
-  await new Promise((resolve) => setTimeout(resolve, 40));
+  const countBeforeStaleReply = calls.filter((u) => u === '/api/input/status').length;
 
-  const countBeforeFinalStop = calls.filter((u) => u === '/api/input/status').length;
+  // The stale tick, from a superseded generation, now resolves saying the
+  // driver is no longer armed. That verdict was about the OLD session and
+  // must not touch the freshly re-armed one.
+  resolveFirstPoll({ok: true, json: async () => ({armed: false})});
+  await new Promise((resolve) => setTimeout(resolve, 30));
+
+  assert.equal(client.armed, true,
+    'a stale, superseded tick must not disarm the freshly re-armed session');
+  const countAfterStaleReply = calls.filter((u) => u === '/api/input/status').length;
+  assert.ok(countAfterStaleReply > countBeforeStaleReply,
+    'the fresh heartbeat must keep polling - the stale reply must not cancel it');
+
   client.stopHeartbeat();
-  await new Promise((resolve) => setTimeout(resolve, 40));
-  const countAfterFinalStop = calls.filter((u) => u === '/api/input/status').length;
+});
 
-  assert.equal(countAfterFinalStop, countBeforeFinalStop,
-    'polling must stop for good after the final stopHeartbeat() - a second chain would keep it growing');
+test('krok pulsu w locie, który się odrzuca, nie rozbraja i nie zatrzymuje świeżego pulsu', async () => {
+  let rejectFirstPoll;
+  const calls = [];
+  const fetch = async (url) => {
+    const isFirstStatusCall = url === '/api/input/status' && !calls.includes('/api/input/status');
+    calls.push(url);
+    if (isFirstStatusCall) {
+      return new Promise((_resolve, reject) => { rejectFirstPoll = reject; });
+    }
+    if (url === '/api/arm') return {ok: true, json: async () => ({armed: true, session: 'xyz'})};
+    return {ok: true, json: async () => ({armed: true})};
+  };
+  // A low threshold makes even a single mishandled stale failure visible
+  // immediately, instead of needing several to accumulate.
+  const client = new InputClient({fetch, beatMS: 5, maxHeartbeatFailures: 1});
+  client.session = 'abc';
+  client.armed = true;
+  client.startHeartbeat();
+
+  await new Promise((resolve) => setTimeout(resolve, 15));
+
+  client.stopHeartbeat();
+  await client.arm();
+  assert.equal(client.session, 'xyz');
+
+  const countBeforeStaleReject = calls.filter((u) => u === '/api/input/status').length;
+
+  // The stale tick, from a superseded generation, now rejects. That failure
+  // belongs to the OLD chain and must not be charged against the fresh one.
+  rejectFirstPoll(new Error('sieć padła'));
+  await new Promise((resolve) => setTimeout(resolve, 30));
+
+  assert.equal(client.armed, true,
+    'a stale, superseded rejection must not disarm the freshly re-armed session');
+  const countAfterStaleReject = calls.filter((u) => u === '/api/input/status').length;
+  assert.ok(countAfterStaleReject > countBeforeStaleReject,
+    'the fresh heartbeat must keep polling - the stale rejection must not cancel it');
+
+  client.stopHeartbeat();
+});
+
+// Without resetting the failure counter on every success, five failures
+// scattered across a long session - never consecutive, always recovered
+// from - would eventually disarm a perfectly healthy connection.
+test('niepowodzenia przeplecione sukcesami nie sumują się do rozbrojenia', async () => {
+  const outcomes = ['fail', 'ok', 'fail', 'ok', 'fail', 'ok']; // 3 failures, never consecutive
+  let i = 0;
+  const fetch = async () => {
+    const outcome = outcomes[i++] ?? 'ok';
+    if (outcome === 'fail') throw new Error('przejściowy błąd sieci');
+    return {ok: true, json: async () => ({armed: true})};
+  };
+  // Threshold of 2: three total failures exceed it, but none of them are
+  // back-to-back, so a working reset must keep the client armed throughout.
+  const client = new InputClient({fetch, beatMS: 5, maxHeartbeatFailures: 2});
+  client.session = 'abc';
+  client.armed = true;
+
+  client.startHeartbeat();
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  client.stopHeartbeat();
+
+  assert.ok(i >= outcomes.length, 'wszystkie zaplanowane próby musiały się odbyć');
+  assert.equal(client.armed, true,
+    'sukcesy między niepowodzeniami muszą zerować licznik, inaczej zdrowe połączenie zostanie rozbrojone bez powodu');
 });
