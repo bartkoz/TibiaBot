@@ -239,6 +239,11 @@ let follower = null, pathPending = false, lastPosition = null, lastPositionAt = 
 let wasBlocked = false;
 const executor = new StepExecutor();
 const inputClient = new InputClient({onState: renderInputStatus});
+const blocksClient = new BlocksClient();
+// Preview radius. 32 gives a 65x65 window: wide enough to show the room the
+// character is standing in, small enough to stay a single 4 kB response.
+const GRID_RADIUS = 32;
+let gridWindow = null;
 let calibrating = false;
 
 const clampNum = (id, low, high, fallback) => {
@@ -363,11 +368,67 @@ function updateRoute(position, capturedAt, now) {
     recorder.observe(position);
   }
   routeStatus();
+  // Fire and forget, and deliberately ahead of the route-follow gate: the
+  // walkability preview is a diagnostic tool, useful precisely when no route
+  // is running. Neither the report nor the preview may delay a reading.
+  pumpBlocks(position, now);
   if (!$('route-follow').checked) {
     $('route-next').textContent = '—';
     return;
   }
-  const out = followStep(position, capturedAt, now);
+  followStep(position, capturedAt, now);
+}
+
+// Colours are deliberately far apart: this preview exists to answer "why did
+// the bot go around there", and a subtle difference answers nothing.
+const GRID_COLOURS = {
+  free: [40, 70, 40, 255],
+  wall: [150, 40, 40, 255],
+  missing: [40, 40, 45, 255],
+  temp: [220, 170, 40, 255],
+  perm: [230, 80, 230, 255],
+};
+// gridPixels is split out of drawing so the colour rules can be tested without
+// a canvas.
+function gridPixels(w, side) {
+  const out = new Uint8ClampedArray(side * side * 4);
+  for (let i = 0; i < w.cells.length && i < side * side; i++) {
+    const c = w.cells[i];
+    let colour = GRID_COLOURS.free;
+    if (c & 2) colour = GRID_COLOURS.missing;
+    else if (c & 1) colour = GRID_COLOURS.wall;
+    // A learned block wins over the terrain underneath: showing it is the
+    // whole point of the preview.
+    if (c & 4) colour = GRID_COLOURS.temp;
+    if (c & 8) colour = GRID_COLOURS.perm;
+    out.set(colour, i * 4);
+  }
+  return out;
+}
+function drawGrid(w) {
+  const canvas = $('grid-canvas');
+  if (!canvas) return;
+  const side = 2 * GRID_RADIUS + 1;
+  canvas.width = canvas.height = side;
+  canvas.getContext('2d').putImageData(new ImageData(gridPixels(w, side), side, side), 0, 0);
+}
+// pumpBlocks ships whatever the executor learned and refreshes the preview.
+async function pumpBlocks(position, now) {
+  const obs = executor.takeObservation();
+  if (obs) {
+    const decision = await blocksClient.report(obs);
+    if (decision) {
+      // The server's verdict is shown verbatim, so a refused observation is
+      // visible instead of looking like a lost request.
+      $('blocks-status').textContent = `${obs.to.x}, ${obs.to.y}: ${decision.reason}`;
+      // Anything the server accepted changed the map under the cached route.
+      if (decision.result !== 'ignored') follower?.dropPath();
+    }
+  }
+  if (!$('grid-preview-on').checked || !position) return;
+  if (!blocksClient.shouldRefresh(position, now)) return;
+  const w = await blocksClient.window(position.x, position.y, position.z, GRID_RADIUS);
+  if (w) { gridWindow = w; drawGrid(w); }
 }
 
 // followStep advances the follower and reports what the player should do. It
@@ -689,3 +750,31 @@ try {
   routeStatus();
 }
 routeStatus();
+
+// Clicking a tile in the preview revokes what the executor learned about it.
+// The character walking onto it does the same thing on the server side; this
+// is the manual override for a block that is simply wrong.
+$('grid-canvas').addEventListener('click', async event => {
+  if (!gridWindow) return;
+  const side = 2 * GRID_RADIUS + 1;
+  const rect = event.target.getBoundingClientRect();
+  const col = Math.floor((event.clientX - rect.left) / rect.width * side);
+  const row = Math.floor((event.clientY - rect.top) / rect.height * side);
+  if (col < 0 || row < 0 || col >= side || row >= side) return;
+  const x = gridWindow.origin[0] + col, y = gridWindow.origin[1] + row;
+  // Bits 4 and 8 are the two learned kinds; map terrain is not ours to delete.
+  if (!(gridWindow.cells[row * side + col] & 12)) {
+    $('blocks-status').textContent = `${x}, ${y}: brak nauczonej blokady.`;
+    return;
+  }
+  const z = lastPosition?.z;
+  if (z === undefined) {
+    $('blocks-status').textContent = 'Nieznane piętro — uruchom śledzenie, zanim skasujesz blokadę.';
+    return;
+  }
+  const cleared = await blocksClient.remove(x, y, z);
+  $('blocks-status').textContent = cleared
+    ? `${x}, ${y}: blokada usunięta.`
+    : `${x}, ${y}: nie udało się usunąć blokady.`;
+  if (cleared) follower?.dropPath();
+});

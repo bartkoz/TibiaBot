@@ -21,3 +21,14 @@
 #route-list select,#route-list input{width:auto;display:inline-block;padding:4px 6px;font-size:12px}
 #route-list input{min-width:130px}
 button.tiny{padding:4px 9px;font-size:12px}
+
+/* The window is 65 tiles wide; scaling it up must not blur the tiles, or a
+   single learned block becomes impossible to point at. */
+.grid-canvas { width: 320px; height: 320px; image-rendering: pixelated; border: 1px solid #333; display: block; margin: .5rem 0; }
+.legend { font-size: .9em; }
+.swatch { display: inline-block; width: .8em; height: .8em; margin: 0 .2em 0 .8em; vertical-align: middle; border: 1px solid #0003; }
+.swatch-free { background: rgb(40, 70, 40); }
+.swatch-wall { background: rgb(150, 40, 40); }
+.swatch-missing { background: rgb(40, 40, 45); }
+.swatch-temp { background: rgb(220, 170, 40); }
+.swatch-perm { background: rgb(230, 80, 230); }

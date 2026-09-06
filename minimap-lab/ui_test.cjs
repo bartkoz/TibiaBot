@@ -5,8 +5,9 @@ const vm = require('node:vm');
 
 // Exercise UI event flows and submitted options, with only browser drawing and
 // media permission APIs stubbed. The Go tests verify the actual image matcher.
-function app({respond, respondPath, respondInput, latency=3, storage={}, inputAvailable=false} = {}) {
+function app({respond, respondPath, respondInput, latency=3, storage={}, inputAvailable=false, gridCells} = {}) {
   const elements = new Map(), requests = [], pathRequests = [], sendRequests = [];
+  const gridRequests = [], blockRequests = [];
   let clock = 100, timerID = 0;
   const timers = new Map();
   const context2d = new Proxy({}, {get: () => () => {}});
@@ -30,7 +31,10 @@ function app({respond, respondPath, respondInput, latency=3, storage={}, inputAv
     async decode() {}
   }
   const track = {stop() {}, addEventListener() {}};
-  const sandbox = {document, Image, Blob, FormData, AbortController, performance:{now:()=>clock}, URL:{createObjectURL:()=>'capture', revokeObjectURL(){}},
+  class ImageData {
+    constructor(data, width, height) {this.data = data; this.width = width; this.height = height;}
+  }
+  const sandbox = {document, Image, ImageData, Blob, FormData, AbortController, performance:{now:()=>clock}, URL:{createObjectURL:()=>'capture', revokeObjectURL(){}},
     setTimeout(fn,delay) {timers.set(++timerID,{fn,at:clock+delay});return timerID;}, clearTimeout(id) {timers.delete(id);},
     navigator:{mediaDevices:{async getDisplayMedia() {return {getTracks:()=>[track],getVideoTracks:()=>[track]};}}},
     localStorage:{store:new Map(Object.entries(storage)), getItem(k) {return this.store.has(k)?this.store.get(k):null;},
@@ -44,6 +48,18 @@ function app({respond, respondPath, respondInput, latency=3, storage={}, inputAv
         const body = JSON.parse(options.body); sendRequests.push(body);
         const result = respondInput?.(body, sendRequests.length) || {status:'emitted', key:'numpad6'};
         return {ok:true, async json() {return result;}};
+      }
+      if (url.startsWith('/api/grid')) {
+        gridRequests.push(url);
+        const r = Number(new URL(url, 'http://x').searchParams.get('r'));
+        const side = 2 * r + 1;
+        const cells = gridCells ?? new Uint8Array(side * side);
+        return {ok:true, headers:{get:(k)=>({'x-grid-origin':'32926,32045','x-grid-revision':'1'})[k.toLowerCase()] ?? null},
+          async arrayBuffer() {return cells.buffer;}};
+      }
+      if (url.startsWith('/api/blocks')) {
+        blockRequests.push(options ? JSON.parse(options.body) : url);
+        return {ok:true, async json() {return {result:'temp', reason:'Pierwszy epizod; blokada tymczasowa.', cleared:true};}};
       }
       if (url === '/api/path') {
         const req = JSON.parse(options.body); pathRequests.push(req);
@@ -63,12 +79,14 @@ function app({respond, respondPath, respondInput, latency=3, storage={}, inputAv
   vm.runInContext(readFileSync('web/follower.js','utf8'), sandbox);
   vm.runInContext(readFileSync('web/executor.js','utf8'), sandbox);
   vm.runInContext(readFileSync('web/input.js','utf8'), sandbox);
+  vm.runInContext(readFileSync('web/blocks.js','utf8'), sandbox);
   vm.runInContext(readFileSync('web/app.js','utf8'), sandbox);
   // app.js's own const declarations do not become properties of the sandbox
   // (unlike its function declarations, e.g. normalisedPoint), so pull the two
   // control objects out explicitly - test-only, nothing app.js itself needs.
-  vm.runInContext('globalThis.__inputClient = inputClient; globalThis.__executor = executor;', sandbox);
-  return {get:id=>document.getElementById(id), requests, pathRequests, sendRequests, timers,
+  vm.runInContext('globalThis.__inputClient = inputClient; globalThis.__executor = executor; globalThis.__blocksClient = blocksClient;', sandbox);
+  return {get:id=>document.getElementById(id), requests, pathRequests, sendRequests, gridRequests, blockRequests, timers,
+    blocksClient:sandbox.__blocksClient, gridPixels:sandbox.gridPixels,
     storage: sandbox.localStorage.store,
     normalisedPoint:sandbox.normalisedPoint, inputClient:sandbox.__inputClient, executor:sandbox.__executor,
     async loadRoute(route) {
@@ -963,4 +981,90 @@ test('a calibration click does not invalidate live tracking, but a normal pointe
   a.get('screen').listeners.click({offsetX:1, offsetY:1, currentTarget:a.get('screen')});
   a.get('screen').listeners.pointerdown({clientX:0, clientY:0, pointerId:2});
   assert.equal(a.get('live').checked, false, 'a normal click still invalidates afterwards');
+});
+
+test('nieudany krok jest zgłaszany do magazynu blokad', async () => {
+  const a = app();
+  await new Promise(setImmediate); await a.get('share').onclick();
+  await a.loadRoute(routeFile({x:32990, y:32077, z:7}));
+  a.get('route-follow').checked = true;
+  a.get('input-walk').checked = true;
+  a.get('live').checked = true;
+  a.inputClient.armed = true; a.inputClient.session = 'test-session';
+  await a.get('locate').onclick();
+
+  // The mocked position never advances, so the walk step times out and the
+  // executor learns something about the tile it could not enter.
+  for (let i = 0; i < 40; i++) { await a.tick(); await new Promise(setImmediate); }
+
+  const observations = a.blockRequests.filter(r => r && r.outcome);
+  assert.ok(observations.length > 0, 'a failed step taught the executor nothing that reached the server');
+  assert.equal(observations[0].outcome, 'no_motion');
+  assert.ok(observations[0].still_frames >= 3, `still_frames=${observations[0].still_frames}`);
+});
+
+test('podgląd rysuje każdy rodzaj kratki innym kolorem', () => {
+  const a = app();
+  const cells = new Uint8Array([0, 1, 2, 4, 8]); // wolna, ściana, brak danych, temp, perm
+  const pixels = a.gridPixels({origin:[0,0], revision:1, cells}, 5);
+  const colour = (i) => pixels.slice(i * 4, i * 4 + 4).join(',');
+  const all = [colour(0), colour(1), colour(2), colour(3), colour(4)];
+  assert.equal(new Set(all).size, all.length, `kolory się powtarzają: ${all.join(' | ')}`);
+});
+
+test('nauczona blokada przykrywa kolor terenu pod nią', () => {
+  const a = app();
+  // A learned block on a tile the map data calls walkable, and on one it calls
+  // a wall: both must read as the learned block, not as the terrain.
+  const pixels = a.gridPixels({origin:[0,0], revision:1, cells:new Uint8Array([4, 5])}, 2);
+  assert.equal(pixels.slice(0, 4).join(','), pixels.slice(4, 8).join(','));
+});
+
+test('podgląd nie odpytuje serwera, dopóki nie jest włączony', async () => {
+  const a = app();
+  await new Promise(setImmediate); await a.get('share').onclick();
+  a.get('live').checked = true;
+  await a.get('locate').onclick();
+  for (let i = 0; i < 5; i++) { await a.tick(); await new Promise(setImmediate); }
+  assert.equal(a.gridRequests.length, 0);
+
+  a.get('grid-preview-on').checked = true;
+  for (let i = 0; i < 5; i++) { await a.tick(); await new Promise(setImmediate); }
+  assert.ok(a.gridRequests.length > 0, 'podgląd włączony, a żadne okno nie zostało pobrane');
+});
+
+test('kliknięcie kratki z blokadą prosi o jej usunięcie', async () => {
+  const side = 65;
+  const cells = new Uint8Array(side * side);
+  cells[10 * side + 20] = 8; // permanent block
+  const a = app({gridCells: cells});
+  await new Promise(setImmediate); await a.get('share').onclick();
+  a.get('live').checked = true;
+  a.get('grid-preview-on').checked = true;
+  await a.get('locate').onclick();
+  for (let i = 0; i < 3; i++) { await a.tick(); await new Promise(setImmediate); }
+
+  const canvas = a.get('grid-canvas');
+  canvas.width = canvas.height = 320;
+  await canvas.listeners.click({target: canvas, clientX: 20 / side * 320 + 1, clientY: 10 / side * 320 + 1});
+
+  const deletes = a.blockRequests.filter(r => r && r.x !== undefined);
+  assert.equal(deletes.length, 1, `oczekiwano jednego żądania usunięcia, jest ${deletes.length}`);
+  assert.deepEqual({x: deletes[0].x, y: deletes[0].y}, {x: 32926 + 20, y: 32045 + 10});
+});
+
+test('kliknięcie kratki bez blokady niczego nie kasuje', async () => {
+  const a = app({gridCells: new Uint8Array(65 * 65)});
+  await new Promise(setImmediate); await a.get('share').onclick();
+  a.get('live').checked = true;
+  a.get('grid-preview-on').checked = true;
+  await a.get('locate').onclick();
+  for (let i = 0; i < 3; i++) { await a.tick(); await new Promise(setImmediate); }
+
+  const canvas = a.get('grid-canvas');
+  canvas.width = canvas.height = 320;
+  await canvas.listeners.click({target: canvas, clientX: 100, clientY: 100});
+
+  assert.equal(a.blockRequests.filter(r => r && r.x !== undefined).length, 0);
+  assert.match(a.get('blocks-status').textContent, /brak nauczonej blokady/);
 });

@@ -112,6 +112,21 @@
     </div>
     <div id="input-status" role="status" aria-live="polite">Sterowanie wyłączone. Uruchom panel z <code>-input dry</code> albo <code>-input system</code>.</div>
   </section>
+  <section>
+    <h2>6. Podgląd przechodności</h2>
+    <p>Trasy liczone są na kaflach kosztu z minimapy, a te znają teren i ściany — nie znają mebli. Lada w sklepie stoi na kratce opisanej jako w pełni przechodnia. Wykonawca uczy się takich miejsc sam, z nieudanych kroków; tutaj widać, czego się nauczył.</p>
+    <label><input type="checkbox" id="grid-preview-on"> Pokazuj mapę przechodności</label>
+    <canvas id="grid-canvas" class="grid-canvas" width="65" height="65"></canvas>
+    <p class="legend">
+      <span class="swatch swatch-free"></span> przejdziesz
+      <span class="swatch swatch-wall"></span> teren nieprzechodni
+      <span class="swatch swatch-missing"></span> brak danych mapy
+      <span class="swatch swatch-temp"></span> blokada nauczona, wygasa
+      <span class="swatch swatch-perm"></span> blokada nauczona, trwała
+    </p>
+    <div id="blocks-status" role="status" aria-live="polite">—</div>
+    <p>Kliknij kratkę z nauczoną blokadą, żeby ją usunąć. Wejście na kratkę własnymi nogami też ją kasuje — obecność postaci jest mocniejszym dowodem niż hipoteza wykonawcy.</p>
+  </section>
   <footer><p id="maps"></p><p>Wynik dopasowania nie jest prawdopodobieństwem. Wybierz piętro startowe; dalsze przejścia Z ±1 mogą być rozpoznawane z obrazu. Pierwszy test na grze wymaga kalibracji i sprawdzenia znanego miejsca.</p></footer>
 </main>
 <video id="video" autoplay muted playsinline hidden></video>
@@ -121,5 +136,6 @@
 <script src="/follower.js"></script>
 <script src="/executor.js"></script>
 <script src="/input.js"></script>
+<script src="/blocks.js"></script>
 <script src="/app.js"></script>
 </html>
