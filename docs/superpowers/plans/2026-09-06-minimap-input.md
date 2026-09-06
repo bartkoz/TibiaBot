@@ -20,18 +20,12 @@
 - **Kontrola `Origin` i loopback już istnieje** w `main.go:83-97` i obejmuje każdą trasę. Nie duplikować jej w nowych handlerach; dochodzi wyłącznie token sesji.
 - **Stałe bezpieczeństwa** (dokładne wartości ze specu): `holdMS = 35`, `maxObservationAgeMS = 400`, `heartbeatTimeoutMS = 750`, `maxTapsPerSecond = 5`, `stepTimeoutMS = 1200` (startowo), `actionTimeoutMS = 5000`, `actionClickDelayMS = 120`.
 
-## Świadome odstępstwa od specu
+## Świadome odstępstwo od specu
 
-Dwie rzeczy wypadają z zakresu tego planu i muszą trafić do README jako znane
-ograniczenia, a nie zostać po cichu pominięte:
+Jedna rzecz wypada z zakresu tego planu i musi trafić do README jako znane
+ograniczenie, a nie zostać po cichu pominięta:
 
-1. **Schody nie są wykonywane automatycznie.** Spec zakładał „stairs → sam
-   krok", ale waypoint typu `stairs` zatrzymuje followera w oczekiwaniu na
-   zmianę Z, a wejście na schody wymaga kroku na kratkę leżącą już na innym
-   piętrze — czego `/api/path` nie policzy. Driver i executor odrzucają
-   `stairs` z czytelnym komunikatem, panel pokazuje instrukcję, a przejście
-   wykonuje człowiek. Lina, dziura, drabina i łopata działają automatycznie.
-2. **Wykrycie ruchu myszy przez człowieka** nie jest implementowane. Wymaga
+1. **Wykrycie ruchu myszy przez człowieka** nie jest implementowane. Wymaga
    odczytu pozycji kursora na obu platformach i odróżnienia własnych zdarzeń od
    cudzych. Zamiast tego sekwencja z kliknięciem sprawdza focus **drugi raz**,
    tuż przed kliknięciem — to pokrywa przypadek, dla którego ta ochrona
@@ -1838,12 +1832,12 @@ git commit -m "feat: add macOS emitter using CoreGraphics through purego"
 ### Task 7: actionTolerance w followerze
 
 **Files:**
-- Modify: `minimap-lab/web/follower.js` (konstruktor `RouteFollower`, `step()`, `advance()`)
+- Modify: `minimap-lab/web/follower.js` (konstruktor `RouteFollower`, `step()`)
 - Test: `minimap-lab/follower_test.cjs`
 
 **Interfaces:**
 - Consumes: `RouteFollower`
-- Produces: opcja `actionTolerance` (domyślnie 0) w konstruktorze `RouteFollower`
+- Produces: opcja `actionTolerance` (domyślnie 0) w konstruktorze `RouteFollower`; pole `next` w wyniku `step()` o akcji `transition`
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1872,6 +1866,28 @@ test('waypoint akcji jest osiągnięty z dokładnie tej kratki', () => {
   const out = f.step({x: 100, y: 100, z: 7}, 0);
 
   assert.equal(out.action, 'transition');
+});
+
+test('instrukcja przejścia niesie następny waypoint', () => {
+  const f = new RouteFollower([
+    {x: 100, y: 100, z: 7, type: 'stairs'},
+    {x: 101, y: 100, z: 6, type: 'walk'},
+  ]);
+
+  const out = f.step({x: 100, y: 100, z: 7}, 0);
+
+  // The stairs tile sits on the current floor; the next waypoint is what says
+  // which way to step onto it.
+  assert.equal(out.action, 'transition');
+  assert.deepEqual(out.next, {x: 101, y: 100, z: 6, type: 'walk'});
+});
+
+test('ostatni waypoint przejścia nie ma następnika', () => {
+  const f = new RouteFollower([{x: 100, y: 100, z: 7, type: 'rope'}]);
+
+  const out = f.step({x: 100, y: 100, z: 7}, 0);
+
+  assert.equal(out.next, null);
 });
 
 test('actionTolerance można poluzować świadomie', () => {
@@ -1906,6 +1922,14 @@ W `step()` zamień wyliczenie `standingOnAction`:
 ```js
     const standingOnAction = target.type !== 'walk' && target.z === position.z &&
       chebyshev(target, position) <= this.actionTolerance;
+```
+
+oraz dołóż następny waypoint do zwracanej instrukcji przejścia — bez niego
+wykonawca nie ma z czego policzyć kierunku kroku na schody:
+
+```js
+      return {action: 'transition', waypoint: target, next: this.waypoints[this.index + 1] ?? null,
+        instruction: `${verb}${floor}`};
 ```
 
 W `advance()`, w bloku `if (!acted) { ... }`, zamień drugi warunek tak, żeby
@@ -2075,14 +2099,32 @@ test('nieoczekiwana kratka porzuca krok zamiast liczyć go jako nieudany', () =>
   assert.equal(ex.state().retries, 0, 'przesunięcie postaci to nie jest nieudany krok');
 });
 
-test('schody nie są wysyłane jako akcja', () => {
+test('schody są pokonywane krokiem w stronę następnego waypointa', () => {
   const ex = new StepExecutor();
-  const stairs = {action: 'transition', index: 1, waypoint: {x: 100, y: 100, z: 7, type: 'stairs'}};
+  const stairs = {action: 'transition', index: 1,
+    waypoint: {x: 100, y: 100, z: 7, type: 'stairs'},
+    next: {x: 101, y: 100, z: 6}};
+  ex.observe(at(100, 100, 7), 0, 0);
 
-  // Stairs are climbed by walking; the panel shows the instruction and the
-  // executor stays out of it.
-  assert.equal(ex.intentFor(stairs, 0), null);
+  // The stairs tile is on the current floor, so this is a walk. What makes it
+  // a transition is that the proof is a changed floor, not a reached tile.
+  assert.deepEqual(ex.intentFor(stairs, 10), {action: 'walk', direction: 'E'});
+  ex.emitted(20);
+
+  ex.observe(at(101, 100, 6), 100, 110);
+
   assert.equal(ex.state().waiting, false);
+  assert.equal(ex.state().actionDone, false, 'krok na schody nie zajmuje slotu akcji w driverze');
+});
+
+test('schody bez następnego waypointa nie dają kierunku', () => {
+  const ex = new StepExecutor();
+  ex.observe(at(100, 100, 7), 0, 0);
+
+  const intent = ex.intentFor({action: 'transition', index: 0,
+    waypoint: {x: 100, y: 100, z: 7, type: 'stairs'}, next: null}, 10);
+
+  assert.equal(intent, null);
 });
 
 test('akcja piętra czeka na zmianę Z, nie na kratkę', () => {
@@ -2111,6 +2153,10 @@ Expected: FAIL — `Cannot find module './web/executor.js'`
 `minimap-lab/web/executor.js`:
 
 ```js
+const COMPASS = [['NW', 'N', 'NE'], ['W', '', 'E'], ['SW', 'S', 'SE']];
+const stepDirection = (from, to) =>
+  COMPASS[Math.sign(to.y - from.y) + 1][Math.sign(to.x - from.x) + 1];
+
 // Lock-step execution state, kept free of the DOM and of fetch so it can be
 // tested directly. The panel feeds it follower output and confirmed positions;
 // it answers with the one intent that may be sent right now, or null.
@@ -2122,7 +2168,8 @@ class StepExecutor {
     this.reset();
   }
   reset() {
-    this.pending = null; // {kind, target, z, from, emittedAt}
+    this.pending = null; // {kind, target, z, from, viaHotkey, emittedAt}
+    this.last = null;
     this.retries = 0;
     this.cycles = 0;
     this.blocked = false;
@@ -2157,11 +2204,15 @@ class StepExecutor {
       return {action: 'walk', direction: out.direction};
     }
     if (out.action === 'transition') {
-      // Stairs are walked onto, not used. Sending them would press whatever
-      // hotkey happens to be bound, so the panel just shows the instruction.
-      if (out.waypoint.type === 'stairs') return null;
+      // Stairs carry no item: the tile is on the current floor and stepping
+      // onto it moves the character. The next waypoint says which way that is.
+      if (out.waypoint.type === 'stairs') {
+        if (!out.next || !this.last) return null;
+        this.pending = {kind: 'transition', z: out.waypoint.z, viaHotkey: false, emittedAt: null};
+        return {action: 'walk', direction: stepDirection(this.last, out.next)};
+      }
       this.actionDone = false;
-      this.pending = {kind: 'transition', z: out.waypoint.z, emittedAt: null};
+      this.pending = {kind: 'transition', z: out.waypoint.z, viaHotkey: true, emittedAt: null};
       return {action: 'transition', type: out.waypoint.type, waypoint: out.index ?? 0};
     }
     return null;
@@ -2177,11 +2228,19 @@ class StepExecutor {
   observe(position, capturedAt, now) {
     if (!position) { this.halted = true; this.pending = null; return; }
     this.halted = false;
+    // Kept for stairs, whose direction comes from the current tile rather than
+    // from a path.
+    this.last = {...position};
     const p = this.pending;
     if (!p || p.emittedAt === null || capturedAt <= p.emittedAt) return;
     if (p.from === null) p.from = {...position};
     if (p.kind === 'transition') {
-      if (position.z !== p.z) { this.done(); this.actionDone = true; }
+      // A floor change is the only proof, whether an item was used or the
+      // character simply walked onto stairs.
+      if (position.z !== p.z) {
+        this.done();
+        if (p.viaHotkey) this.actionDone = true;
+      }
       return;
     }
     if (position.x === p.target[0] && position.y === p.target[1]) { this.done(); return; }
@@ -2211,7 +2270,7 @@ if (typeof module !== 'undefined') module.exports = {StepExecutor};
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `cd minimap-lab && node --test executor_test.cjs`
-Expected: PASS — 13 testów
+Expected: PASS — 14 testów
 
 - [ ] **Step 5: Commit**
 
@@ -2596,8 +2655,8 @@ i dopisz sekcję **Sterowanie** obejmującą:
 - znane ograniczenie: przeglądarka throttluje kartę w tle, a brak świeżych
   klatek zatrzymuje ruch — zachowanie zamierzone,
 - że przyjęcie zdarzeń syntetycznych przez klient gry nie jest zagwarantowane,
-- że waypoint typu `stairs` wykonuje człowiek — panel pokazuje instrukcję
-  i czeka na zmianę piętra,
+- że waypoint typu `stairs` jest pokonywany krokiem w stronę następnego
+  waypointa, a potwierdzeniem jest zmiana piętra, nie osiągnięta kratka,
 - że ruch myszy przez człowieka nie przerywa sekwencji; chroni ją ponowne
   sprawdzenie focusu tuż przed kliknięciem,
 - komendy testów: `go test ./...` oraz `node --test` z pełną listą plików `.cjs`.
@@ -2636,7 +2695,7 @@ cd minimap-lab && go run . -input system
 4. Alt-tab w trakcie chodzenia — panel pokazuje rozbrojenie, klawisze ustają.
 5. Trasa 20 kratek bez przejść między piętrami.
 6. Waypoint z liną.
-7. Waypoint ze schodami — panel pokazuje instrukcję i czeka, klawisze milczą.
+7. Waypoint ze schodami — postać wchodzi krokiem, panel potwierdza nowe Z.
 
 Zapisz wynik każdego punktu w opisie commita — to jedyna weryfikacja emiterów,
 których nie da się objąć `go test`.

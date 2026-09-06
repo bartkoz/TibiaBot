@@ -216,7 +216,11 @@ Wynikają z tego dwa ograniczenia, sprawdzane przy uzbrajaniu i opisane w README
 | Typ | Sekwencja |
 |---|---|
 | `rope`, `ladder`, `hole`, `shovel` | tap hotkeya przedmiotu → 120 ms → klik LPM w kratkę postaci |
-| `stairs` | sam krok; schody pokonuje się chodzeniem |
+| `stairs` | sam krok w stronę następnego waypointa; kratka schodów leży na bieżącym piętrze, a wejście na nią przenosi postać |
+
+Schody nie niosą przedmiotu, więc wykonawca wysyła zwykły klawisz ruchu.
+Kierunek bierze z XY następnego waypointa, bo trasy przez piętra `/api/path` nie
+liczy. Potwierdzeniem jest zmiana `z`, nie osiągnięta kratka.
 
 Hotkey per typ pochodzi z konfiguracji panelu. Kto ma hotkey ustawiony w kliencie
 jako „use on yourself", wyłącza klik — sekwencja skraca się do samego tapa.
