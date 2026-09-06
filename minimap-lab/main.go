@@ -42,6 +42,12 @@ type server struct {
 	costMu    sync.Mutex
 	costCache *CostGrid
 	costFloor int
+	// The live preview asks for a small window around the character while the
+	// planner asks for a rectangle spanning a whole route. One shared cache
+	// would have them evict each other on every single reading.
+	previewMu    sync.Mutex
+	previewCache *CostGrid
+	previewFloor int
 	// Nil until -input selects an emitter; every input route then answers 503.
 	driver *Driver
 	// Learned blockages: tiles the map data calls walkable but the character
@@ -125,6 +131,7 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("POST /api/blocks/observe", s.observeBlock)
 	mux.HandleFunc("GET /api/blocks", s.listBlocks)
 	mux.HandleFunc("DELETE /api/blocks", s.deleteBlock)
+	mux.HandleFunc("GET /api/grid", s.grid)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// No cross-origin uploads or remote DNS names on the local service.
 		host, _, err := net.SplitHostPort(r.Host)
