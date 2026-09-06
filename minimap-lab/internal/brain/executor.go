@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"minimap-lab/internal/mapdata"
+	"minimap-lab/internal/nav"
 	"minimap-lab/internal/route"
 )
 
@@ -187,6 +188,24 @@ type Executor struct {
 	halted     bool
 	stopped    bool
 	actionDone bool
+
+	// What the last failed step taught about the map, waiting to be shipped.
+	observation    nav.Observation
+	hasObservation bool
+	// The target of the most recent failure, kept just long enough to notice a
+	// late arrival on it.
+	recentFailure    recentFailure
+	hasRecentFailure bool
+	// Whether any step has succeeded since the last failed one. The server
+	// needs it to tell "the bot went around and came back" from "the bot has
+	// been standing in front of the same player for a minute" - only the first
+	// is evidence of terrain.
+	movedSinceFailure bool
+}
+
+type recentFailure struct {
+	from, to mapdata.Position
+	at       time.Time
 }
 
 func NewExecutor(o ExecutorOptions) *Executor {
@@ -225,6 +244,9 @@ func (e *Executor) Reset() {
 	e.blocked, e.blockedTarget, e.hasBlockedAt = false, target{}, false
 	e.currentTarget, e.hasCurrentTarget = target{}, false
 	e.halted, e.stopped, e.actionDone = false, false, false
+	e.observation, e.hasObservation = nav.Observation{}, false
+	e.recentFailure, e.hasRecentFailure = recentFailure{}, false
+	e.movedSinceFailure = false
 }
 
 func (e *Executor) State() ExecState {
@@ -484,13 +506,95 @@ func stillThere(p *pendingStep, at mapdata.Position) bool {
 	return p.from == nil || (at.X == p.from.X && at.Y == p.from.Y)
 }
 
-// The three hooks below are where the executor turns step outcomes into
-// evidence about the map. They are separated from the step lifecycle above
-// because they answer a different question: the lifecycle decides what to
-// press next, these decide what a failure is allowed to teach.
+// Everything below turns step outcomes into evidence about the map. It is kept
+// apart from the step lifecycle above because it answers a different question:
+// the lifecycle decides what to press next, this decides what a failure is
+// allowed to teach.
 
-func (e *Executor) afterSuccess() {}
+// TakeObservation hands the pending observation to the caller and forgets it,
+// so one failed step is reported exactly once no matter how many times the
+// loop ticks before the report goes out.
+func (e *Executor) TakeObservation() (nav.Observation, bool) {
+	if !e.hasObservation {
+		return nav.Observation{}, false
+	}
+	obs := e.observation
+	e.observation, e.hasObservation = nav.Observation{}, false
+	return obs, true
+}
 
-func (e *Executor) noteFailure(p *pendingStep, now time.Time) {}
+func (e *Executor) afterSuccess() {
+	e.movedSinceFailure = true
+	e.hasRecentFailure = false
+}
 
-func (e *Executor) noteLateArrival(at mapdata.Position, capturedAt, now time.Time) {}
+// noteFailure decides whether a step that did not pan out says anything about
+// the map, and remembers the attempt long enough to notice a late arrival on
+// it.
+//
+// Four situations look like a failed step but are not evidence about terrain:
+// a key that never left the driver, a floor change (walking onto stairs does
+// exactly this), the character standing somewhere other than where the key was
+// sent from, and fewer than minStillFrames confirmations. The first and last
+// are checked here; the middle two are already handled in Observe, which drops
+// the step rather than letting it accumulate still frames.
+func (e *Executor) noteFailure(p *pendingStep, now time.Time) {
+	if p.kind == "walk" && p.hasEmitted && p.from != nil && p.stillFrames >= minStillFrames {
+		age := 0
+		if p.hasLastFrame {
+			age = int(now.Sub(p.lastFrameAt).Milliseconds())
+		}
+		e.observation = nav.Observation{
+			From:           *p.from,
+			To:             mapdata.Position{X: p.target[0], Y: p.target[1], Z: p.from.Z},
+			Outcome:        "no_motion",
+			StillFrames:    p.stillFrames,
+			LastFrameAgeMS: age,
+			MovedSince:     e.movedSinceFailure,
+		}
+		e.hasObservation = true
+		e.movedSinceFailure = false
+	}
+	if p.kind == "walk" && p.from != nil {
+		e.recentFailure = recentFailure{
+			from: *p.from,
+			to:   mapdata.Position{X: p.target[0], Y: p.target[1], Z: p.from.Z},
+			at:   now,
+		}
+		e.hasRecentFailure = true
+	}
+}
+
+// noteLateArrival catches the character reaching a tile shortly after the step
+// to it was written off. That was lag or paralysis, not an obstacle, so
+// whatever the failure taught is revoked and the target gets another chance.
+func (e *Executor) noteLateArrival(where mapdata.Position, capturedAt, now time.Time) {
+	if !e.hasRecentFailure {
+		return
+	}
+	late := e.recentFailure
+	// Judged by when the frame was captured, not when it was processed: a slow
+	// match must not turn a genuine arrival into a missed deadline.
+	if capturedAt.Sub(late.at) > e.lateArrival {
+		return
+	}
+	if where != late.to {
+		return
+	}
+	// from is the tile the failed step started on, so the server can also drop
+	// the edge a failed diagonal blocked - to alone does not identify it.
+	e.observation = nav.Observation{
+		From: late.from, To: late.to, Outcome: "entered",
+		StillFrames: 1, LastFrameAgeMS: int(now.Sub(capturedAt).Milliseconds()),
+	}
+	e.hasObservation = true
+	e.hasRecentFailure = false
+	// The step worked after all, so it is progress, not a failure: the whole
+	// escalation it caused is rolled back. Without clearing cycles, three
+	// unrelated lag spikes in a session would add up to a permanent stop.
+	e.retries, e.cycles = 0, 0
+	e.movedSinceFailure = true
+	if e.blocked && e.blockedTarget.X == late.to.X && e.blockedTarget.Y == late.to.Y {
+		e.clearBlocked()
+	}
+}
