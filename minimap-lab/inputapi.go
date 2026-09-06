@@ -110,7 +110,7 @@ func (s *server) inputStatus(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{"available": false, "platform": runtime.GOOS})
 		return
 	}
-	state := s.driver.Beat(r.URL.Query().Get("session"))
+	state := s.driver.Beat(r.Header.Get("X-Input-Session"))
 	// The token is a bearer secret; it leaves the server once, in the arm reply.
 	state.Session = ""
 	writeJSON(w, state)

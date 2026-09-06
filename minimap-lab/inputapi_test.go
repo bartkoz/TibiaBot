@@ -102,7 +102,8 @@ func TestInputAPIStatusActsAsHeartbeat(t *testing.T) {
 	s, _ := inputServer(t)
 	session := armSession(t, s)
 
-	r := httptest.NewRequest("GET", "http://127.0.0.1:8095/api/input/status?session="+session, nil)
+	r := httptest.NewRequest("GET", "http://127.0.0.1:8095/api/input/status", nil)
+	r.Header.Set("X-Input-Session", session)
 	w := httptest.NewRecorder()
 	s.routes().ServeHTTP(w, r)
 
@@ -113,6 +114,31 @@ func TestInputAPIStatusActsAsHeartbeat(t *testing.T) {
 	}
 	if st.Session != "" {
 		t.Error("status must not echo the token back; it is a bearer secret")
+	}
+}
+
+func TestInputAPIStatusAvailableWithoutEmitter(t *testing.T) {
+	s := &server{dir: t.TempDir(), gate: make(chan struct{}, 1)}
+
+	r := httptest.NewRequest("GET", "http://127.0.0.1:8095/api/input/status", nil)
+	w := httptest.NewRecorder()
+	s.routes().ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("got %d, want 200", w.Code)
+	}
+	var body struct {
+		Available bool   `json:"available"`
+		Platform  string `json:"platform"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Available {
+		t.Error("available must be false with no driver")
+	}
+	if body.Platform == "" {
+		t.Error("platform must be reported even with no driver")
 	}
 }
 
