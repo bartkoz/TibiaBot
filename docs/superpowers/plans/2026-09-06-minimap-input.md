@@ -2442,11 +2442,19 @@ class InputClient {
   async send(intent, ageMS) {
     if (!this.armed || !this.session) return {status: 'disarmed'};
     this.seq++;
-    const r = await this.post('/api/input', {
-      ...intent, session: this.session, seq: this.seq,
-      observation_age_ms: Math.round(ageMS),
-    });
-    const result = await r.json();
+    // A rejected fetch must still produce a result. If it escaped as a
+    // rejection the panel would skip both confirming and resetting the step,
+    // leaving the executor waiting on a key it can never account for.
+    let result;
+    try {
+      const r = await this.post('/api/input', {
+        ...intent, session: this.session, seq: this.seq,
+        observation_age_ms: Math.round(ageMS),
+      });
+      result = await r.json();
+    } catch (e) {
+      result = {status: 'error', reason: e.message};
+    }
     if (result.status === 'disarmed') { this.armed = false; this.stopHeartbeat(); }
     this.onState(result);
     return result;
@@ -2591,8 +2599,11 @@ zostaje nietknięty:
   const intent = executor.intentFor(out, now);
   if (!intent) return;
   if (intent.action === 'transition' && !$('input-actions').checked) return;
+  // The id ties the confirmation to this step: a reply that arrives after the
+  // step was abandoned must not stamp its successor.
+  const stepId = executor.state().stepId;
   inputClient.send(intent, now - lastPositionAt).then(result => {
-    if (result.status === 'emitted') executor.emitted(performance.now());
+    if (result.status === 'emitted') executor.emitted(performance.now(), stepId);
     else if (result.status !== 'in_progress') executor.reset();
   });
 ```
