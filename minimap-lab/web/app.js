@@ -56,7 +56,9 @@ function setSource(image, reset = true) {
   const h = image.videoHeight || image.naturalHeight || image.height;
   if (!w || !h) throw new Error('Źródło nie udostępniło jeszcze klatki.');
   if (!reset && (source.width !== w || source.height !== h)) {
-    roi = marker = null; invalidate(); status('Rozdzielczość źródła zmieniła się. Zaznacz minimapę ponownie.', 'error');
+    // Without a fresh position further movement is not permissible.
+    roi = marker = null; invalidate(); executor.reset(); inputClient.disarm();
+    status('Rozdzielczość źródła zmieniła się. Zaznacz minimapę ponownie.', 'error');
   }
   source.width = w; source.height = h; source.getContext('2d').drawImage(image, 0, 0);
   screen.width = Math.min(w, 1200); screen.height = Math.round(h * screen.width / w); ready = true;
@@ -223,6 +225,9 @@ fetch('/api/info').then(r => r.json()).then(info => {
 const DRAFT_KEY = 'minimap-lab-route';
 const recorder = new RouteRecorder();
 let follower = null, pathPending = false, lastPosition = null, lastPositionAt = 0, previewPosition = null;
+const executor = new StepExecutor();
+const inputClient = new InputClient({onState: renderInputStatus});
+let calibrating = false;
 
 const clampNum = (id, low, high, fallback) => {
   const value = num(id);
@@ -366,6 +371,22 @@ function followStep(position, now) {
   drawRoutePath();
   // The request runs alongside the tracking loop; it never delays a reading.
   if (out.action === 'path' && !pathPending) requestPath(out.from, out.to);
+  // Automatic control is opt-in and requires an armed session. With the
+  // checkbox unticked (the default) nothing below ever runs, so the
+  // preview-only behaviour above is completely untouched.
+  if (!$('input-walk').checked || !inputClient.armed) return out;
+  executor.observe(position, lastPositionAt, now);
+  if (executor.state().actionDone) inputClient.actionDone();
+  const intent = executor.intentFor(out, now);
+  if (!intent) return out;
+  if (intent.action === 'transition' && !$('input-actions').checked) return out;
+  // The id ties the confirmation to this step: a reply that arrives after the
+  // step was abandoned must not stamp its successor.
+  const stepId = executor.state().stepId;
+  inputClient.send(intent, now - lastPositionAt).then(result => {
+    if (result.status === 'emitted') executor.emitted(performance.now(), stepId);
+    else if (result.status !== 'in_progress') executor.reset();
+  });
   return out;
 }
 // The reference preview is a 129x129-tile window centred on the player, so a
@@ -428,6 +449,68 @@ $('route-follow').addEventListener('change', () => {
   if (!$('route-follow').checked) { $('route-next').textContent = '—'; return; }
   followStep(freshPosition(), performance.now());
 });
+
+// --- Sterowanie: uzbrajanie sesji i podłączenie wykonawcy do pętli śledzenia ---
+// The panel sends fractions of the shared image, never pixels. Go multiplies
+// them by the screen size in points, so Retina and DPI never reach this side.
+function normalisedPoint(event, element) {
+  const w = element.clientWidth, h = element.clientHeight;
+  if (!w || !h) return null;
+  const x = event.offsetX / w, y = event.offsetY / h;
+  if (x < 0 || x > 1 || y < 0 || y > 1) return null;
+  return {x, y};
+}
+// Single place that reflects inputClient.armed onto the toolbar: called after
+// arm, disarm, every send() reply and every heartbeat.
+function renderInputStatus(state = {}) {
+  const armed = inputClient.armed;
+  $('input-arm').disabled = armed;
+  for (const id of ['input-disarm', 'input-calibrate', 'input-walk', 'input-actions']) $(id).disabled = !armed;
+  if (!armed) {
+    // Every way of stopping clears half-finished step state, so re-arming
+    // never resumes a step whose confirmation was never seen.
+    if ($('input-walk').checked) $('input-walk').checked = false;
+    executor.reset();
+    calibrating = false;
+  }
+  if (armed && state.target) {
+    $('input-status').textContent = `Uzbrojono: ${state.target.path}${state.target.title ? ` — ${state.target.title}` : ''}`;
+  } else if (!armed && state.reason) {
+    $('input-status').textContent = `Sterowanie rozbrojone: ${state.reason}`;
+  } else if (armed) {
+    $('input-status').textContent = 'Uzbrojono.';
+  }
+}
+$('input-arm').addEventListener('click', () => inputClient.arm());
+$('input-disarm').addEventListener('click', async () => {
+  await inputClient.disarm();
+  executor.reset();
+  renderInputStatus({reason: 'zatrzymane z panelu'});
+});
+$('input-calibrate').addEventListener('click', () => {
+  calibrating = true;
+  $('input-status').textContent = 'Kliknij kratkę postaci na podglądzie ekranu.';
+});
+// The screen canvas is the same preview already used to select the minimap.
+$('screen').addEventListener('click', async event => {
+  if (!calibrating) return;
+  calibrating = false;
+  const point = normalisedPoint(event, event.currentTarget);
+  if (!point) { $('input-status').textContent = 'Punkt poza podglądem.'; return; }
+  const ok = await inputClient.calibrate(point.x, point.y);
+  $('input-status').textContent = ok
+    ? `Kratka postaci: ${point.x.toFixed(3)}, ${point.y.toFixed(3)}`
+    : 'Nie udało się zapisać kalibracji.';
+});
+$('input-walk').addEventListener('change', () => { if (!$('input-walk').checked) executor.reset(); });
+// Availability is only known once the server answers; the button starts
+// disabled so a fresh page never looks armable before this resolves.
+fetch('/api/input/status').then(r => r.json()).then(state => {
+  if (state.available === false) return;
+  $('input-arm').disabled = false;
+  $('input-status').textContent = 'Gotowe do uzbrojenia. Uzbrój, gdy klient gry jest oknem aktywnym.';
+}).catch(() => {});
+
 try {
   const draft = localStorage.getItem(DRAFT_KEY);
   if (draft) applyRoute(parseRoute(draft));

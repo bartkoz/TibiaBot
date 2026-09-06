@@ -1,6 +1,9 @@
-const COMPASS = [['NW', 'N', 'NE'], ['W', '', 'E'], ['SW', 'S', 'SE']];
+// Named distinctly from follower.js's identical COMPASS table: both scripts
+// now share one global scope on the panel page, where two top-level consts
+// of the same name would be a SyntaxError.
+const EXECUTOR_COMPASS = [['NW', 'N', 'NE'], ['W', '', 'E'], ['SW', 'S', 'SE']];
 const stepDirection = (from, to) =>
-  COMPASS[Math.sign(to.y - from.y) + 1][Math.sign(to.x - from.x) + 1];
+  EXECUTOR_COMPASS[Math.sign(to.y - from.y) + 1][Math.sign(to.x - from.x) + 1];
 
 // The tile identity a pending step (or an incoming follower output) is aimed
 // at, so a block can be compared against "the same target" vs "a different

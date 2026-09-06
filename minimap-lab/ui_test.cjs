@@ -35,6 +35,9 @@ function app({respond, respondPath, latency=3} = {}) {
       setItem(k,v) {this.store.set(k,String(v));}, removeItem(k) {this.store.delete(k);}},
     async fetch(url, options) {
       if (url === '/api/info') return {async json() {return {floors:[7,8],maps:'maps',message:''};}};
+      // No test arms a session, so control simply reports itself unavailable,
+      // the same reply the Go server gives when started without -input.
+      if (url === '/api/input/status') return {async json() {return {available:false, platform:'test'};}};
       if (url === '/api/path') {
         const req = JSON.parse(options.body); pathRequests.push(req);
         const steps = [[req.from.x, req.from.y], [req.from.x+1, req.from.y]];
@@ -51,8 +54,10 @@ function app({respond, respondPath, latency=3} = {}) {
   vm.runInContext(readFileSync('web/route.js','utf8'), sandbox);
   vm.runInContext(readFileSync('web/recorder.js','utf8'), sandbox);
   vm.runInContext(readFileSync('web/follower.js','utf8'), sandbox);
+  vm.runInContext(readFileSync('web/executor.js','utf8'), sandbox);
+  vm.runInContext(readFileSync('web/input.js','utf8'), sandbox);
   vm.runInContext(readFileSync('web/app.js','utf8'), sandbox);
-  return {get:id=>document.getElementById(id), requests, pathRequests, timers,
+  return {get:id=>document.getElementById(id), requests, pathRequests, timers, normalisedPoint:sandbox.normalisedPoint,
     async loadRoute(route) {
       const input = document.getElementById('route-file');
       input.files = [{name:'route.json', async text() {return typeof route === 'string' ? route : JSON.stringify(route);}}];
@@ -62,6 +67,9 @@ function app({respond, respondPath, latency=3} = {}) {
     timers.delete(entry[0]);clock=entry[1].at;if(fresh) document.getElementById('video').currentTime+=.1;await entry[1].fn();
   }};
 }
+// Loading the sandbox once at import time is enough to get the pure helper -
+// its extraction has no dependency on the rest of a test's mocked state.
+const {normalisedPoint} = app();
 
 test('demo does not leak its scale or threshold into screen sharing', async () => {
   const a = app(); await new Promise(setImmediate);
@@ -286,4 +294,20 @@ test('switching following on starts guiding from the position already known', as
   a.get('route-follow').listeners.change?.();
 
   assert.equal(a.pathRequests.length, 1, 'the tracked position is fresh, so start right away');
+});
+
+test('kalibracja przelicza piksel podglądu na ułamek ekranu', () => {
+  // A Retina capture is twice the point size; a fraction cancels that out.
+  const point = normalisedPoint({offsetX: 720, offsetY: 450}, {clientWidth: 1440, clientHeight: 900});
+
+  assert.equal(point.x, 0.5);
+  assert.equal(point.y, 0.5);
+});
+
+test('kalibracja odrzuca punkt poza podglądem', () => {
+  assert.equal(normalisedPoint({offsetX: -5, offsetY: 10}, {clientWidth: 100, clientHeight: 100}), null);
+});
+
+test('kalibracja odrzuca podgląd o zerowym rozmiarze', () => {
+  assert.equal(normalisedPoint({offsetX: 1, offsetY: 1}, {clientWidth: 0, clientHeight: 0}), null);
 });

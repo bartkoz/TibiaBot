@@ -74,6 +74,20 @@
     <div id="route-next">—</div>
     <ol id="route-list"></ol>
   </section>
+  <section class="panel control">
+    <h2>5. Sterowanie</h2>
+    <p>Wykonawca startuje rozbrojony. Uzbrajaj dopiero wtedy, gdy klient gry jest oknem aktywnym — zapamiętany zostanie właśnie ten proces. Alt-tab rozbraja. Wymagane jest udostępnienie całego ekranu i praca na jednym monitorze.</p>
+    <div class="toolbar">
+      <button id="input-arm" disabled>Uzbrój</button>
+      <button id="input-disarm" class="secondary" disabled>Rozbrój</button>
+      <button id="input-calibrate" class="secondary" disabled>Wskaż kratkę postaci</button>
+    </div>
+    <div class="route-switches">
+      <label class="check"><input id="input-walk" type="checkbox" disabled>Chodź automatycznie</label>
+      <label class="check"><input id="input-actions" type="checkbox" disabled>Wykonuj akcje pięter</label>
+    </div>
+    <div id="input-status" role="status" aria-live="polite">Sterowanie wyłączone. Uruchom panel z <code>-input dry</code> albo <code>-input system</code>.</div>
+  </section>
   <footer><p id="maps"></p><p>Wynik dopasowania nie jest prawdopodobieństwem. Wybierz piętro startowe; dalsze przejścia Z ±1 mogą być rozpoznawane z obrazu. Pierwszy test na grze wymaga kalibracji i sprawdzenia znanego miejsca.</p></footer>
 </main>
 <video id="video" autoplay muted playsinline hidden></video>
@@ -81,5 +95,7 @@
 <script src="/route.js"></script>
 <script src="/recorder.js"></script>
 <script src="/follower.js"></script>
+<script src="/executor.js"></script>
+<script src="/input.js"></script>
 <script src="/app.js"></script>
 </html>
