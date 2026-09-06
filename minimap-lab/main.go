@@ -42,6 +42,8 @@ type server struct {
 	costMu    sync.Mutex
 	costCache *CostGrid
 	costFloor int
+	// Nil until -input selects an emitter; every input route then answers 503.
+	driver *Driver
 }
 
 type matchRequest struct {
@@ -58,12 +60,21 @@ type matchRequest struct {
 func main() {
 	dir := flag.String("maps", "../data/minimap", "katalog z Minimap_Color_X_Y_Z.png")
 	addr := flag.String("listen", "127.0.0.1:8095", "lokalny adres panelu")
+	mode := flag.String("input", "off", "sterowanie: off, dry albo system")
 	flag.Parse()
 	host, _, err := net.SplitHostPort(*addr)
 	if err != nil || net.ParseIP(host) == nil || !net.ParseIP(host).IsLoopback() {
 		log.Fatal("-listen musi wskazywać numeryczny adres loopback, np. 127.0.0.1:8095")
 	}
 	s := &server{dir: *dir, gate: make(chan struct{}, 1), debugDir: ".debug"}
+	em, err := selectEmitter(*mode)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if em != nil {
+		s.driver = NewDriver(em)
+		log.Printf("Sterowanie: %s — wykonawca startuje rozbrojony.", *mode)
+	}
 	log.Printf("Minimap Lab: http://%s — mapy: %s", *addr, *dir)
 	h := &http.Server{Addr: *addr, Handler: s.routes(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 20 * time.Second, WriteTimeout: 60 * time.Second, IdleTimeout: 60 * time.Second}
 	log.Fatal(h.ListenAndServe())
@@ -80,6 +91,12 @@ func (s *server) routes() http.Handler {
 	})
 	mux.HandleFunc("POST /api/locate", s.match)
 	mux.HandleFunc("POST /api/path", s.path)
+	mux.HandleFunc("POST /api/arm", s.arm)
+	mux.HandleFunc("POST /api/disarm", s.disarm)
+	mux.HandleFunc("POST /api/input", s.input)
+	mux.HandleFunc("POST /api/input/calibrate", s.calibrate)
+	mux.HandleFunc("POST /api/input/done", s.actionDone)
+	mux.HandleFunc("GET /api/input/status", s.inputStatus)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// No cross-origin uploads or remote DNS names on the local service.
 		host, _, err := net.SplitHostPort(r.Host)
