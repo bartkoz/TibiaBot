@@ -244,6 +244,9 @@ const blocksClient = new BlocksClient();
 // character is standing in, small enough to stay a single 4 kB response.
 const GRID_RADIUS = 32;
 let gridWindow = null;
+// Counted rather than reported one by one: a bad patch of readings would
+// otherwise overwrite the status line dozens of times a second.
+let skippedWaypoints = 0;
 let calibrating = false;
 
 const clampNum = (id, low, high, fallback) => {
@@ -362,7 +365,23 @@ function updateRoute(position, capturedAt, now) {
   if ($('route-record').checked) {
     recorder.auto = true;
     recorder.every = clampNum('route-every', 1, 100, 10);
-    if (recorder.observe(position)) { renderWaypoints(); saveDraft(); }
+    // A position the map calls impassable is not a position the character was
+    // ever standing on - the locator matched the wrong place, and water is the
+    // usual culprit. Recording it produces a waypoint no route can ever reach,
+    // and the user only finds out much later, when the route stops working.
+    const flags = tileFlags(position);
+    if (flags === null) {
+      // No window covering this tile yet. Recording anyway would let exactly
+      // the unverified points through, so wait - the window is one request
+      // away and arrives within a tick or two.
+      $('blocks-status').textContent = 'Czekam na dane przechodniości dla tej okolicy…';
+    } else if (flags & 3) {
+      skippedWaypoints++;
+      $('blocks-status').textContent =
+        `Pominięto ${skippedWaypoints} ${skippedWaypoints === 1 ? 'punkt' : 'punktów'}: ` +
+        `${position.x}, ${position.y} to ${(flags & 2) ? 'obszar bez danych mapy' : 'kratka nieprzechodnia'}. ` +
+        'Odczyt pozycji był najpewniej błędny.';
+    } else if (recorder.observe(position)) { renderWaypoints(); saveDraft(); }
   } else {
     recorder.auto = false;
     recorder.observe(position);
@@ -390,6 +409,16 @@ const GRID_COLOURS = {
 };
 // gridPixels is split out of drawing so the colour rules can be tested without
 // a canvas.
+// tileFlags reads one tile out of the last window fetched, or null when that
+// window does not cover it (or none has arrived yet).
+function tileFlags(position) {
+  const w = gridWindow;
+  if (!w || !position || w.z !== position.z) return null;
+  const side = 2 * GRID_RADIUS + 1;
+  const col = position.x - w.origin[0], row = position.y - w.origin[1];
+  if (col < 0 || row < 0 || col >= side || row >= side) return null;
+  return w.cells[row * side + col];
+}
 function gridPixels(w, side) {
   const out = new Uint8ClampedArray(side * side * 4);
   for (let i = 0; i < w.cells.length && i < side * side; i++) {
@@ -432,10 +461,15 @@ async function pumpBlocks(position, now) {
       }
     }
   }
-  if (!$('grid-preview-on').checked || !position) return;
+  // The window is fetched for the preview and for recording alike: a waypoint
+  // may not be written without knowing whether the tile is one the character
+  // could actually have stood on.
+  if (!position || (!$('grid-preview-on').checked && !$('route-record').checked)) return;
   if (!blocksClient.shouldRefresh(position, now)) return;
   const w = await blocksClient.window(position.x, position.y, position.z, GRID_RADIUS);
-  if (w) { gridWindow = w; drawGrid(w); }
+  if (!w) return;
+  gridWindow = w;
+  if ($('grid-preview-on').checked) drawGrid(w);
 }
 
 // followStep advances the follower and reports what the player should do. It

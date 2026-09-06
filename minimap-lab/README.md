@@ -127,6 +127,28 @@ Blokada jest odwoływalna. Postać stojąca na kratce kasuje jej wpis, także tr
 
 Blokada tymczasowa zamyka też **skos przy rogu**. Postać ani mebel stojący w narożniku nie przepuszczą przejścia po przekątnej, tak samo jak ściana, więc trasa nie może się tamtędy przeciskać — inaczej bot wysyłałby krok, który gra odrzuci.
 
+### Nagrywanie a przechodniość
+
+Podczas nagrywania trasy panel sprawdza każdą kratkę, zanim ją zapisze, i
+**pomija punkty na kratkach nieprzechodnich albo bez danych mapy**. Postać nie
+stoi na wodzie ani w ścianie, więc taki odczyt oznacza, że lokalizator dopasował
+obraz do złego miejsca. Zapisany waypoint byłby bezużyteczny: trasa do niego
+nigdy się nie policzy, a dowiesz się o tym dopiero wtedy, gdy bot stanie w polu.
+Licznik pominiętych punktów widać w sekcji podglądu — jeśli rośnie szybko,
+odczyt pozycji jest niestabilny i warto poprawić zaznaczenie minimapy albo zoom,
+zanim nagrasz trasę.
+
+Pierwszy odczyt po włączeniu nagrywania jest pomijany: dane przechodniości dla
+okolicy dociągają się jeden takt później, a punkt niesprawdzony to dokładnie ten
+rodzaj punktu, którego ten mechanizm ma nie przepuszczać.
+
+Waypoint, który mimo wszystko trafi o kratkę lub dwie od przejezdnego terenu,
+nie przewraca trasy: A* celuje wtedy w najbliższą kratkę, na której da się
+stanąć, i zaznacza to w odpowiedzi polem `goal_moved`. Dalej niż dwie kratki
+oznaczałoby zgadywanie celu, o który nikt nie prosił — wtedy trasa jest odmawiana,
+a komunikat nazywa konkretną przyczynę: brak danych mapy, nauczoną blokadę
+(do skasowania w podglądzie) albo teren nieprzechodni.
+
 ### Podgląd przechodności
 
 Sekcja **6. Podgląd przechodności** rysuje okno 65×65 kratek wokół postaci. Ciemna zieleń to teren przejezdny, czerwień — nieprzechodni w danych mapy, grafit — brak danych (nie ma kafla PNG; to nie to samo co ściana), żółć — blokada nauczona tymczasowa, fiolet — trwała. Kliknięcie kratki z nauczoną blokadą usuwa ją i mówi, co dokładnie zniknęło — rodzaj, liczbę epizodów i czas pozostały do wygaśnięcia. Kratki opisanej przez dane mapy nie da się w ten sposób ruszyć.

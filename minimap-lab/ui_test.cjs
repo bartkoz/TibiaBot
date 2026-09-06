@@ -54,7 +54,11 @@ function app({respond, respondPath, respondInput, latency=3, storage={}, inputAv
         const r = Number(new URL(url, 'http://x').searchParams.get('r'));
         const side = 2 * r + 1;
         const cells = gridCells ?? new Uint8Array(side * side);
-        return {ok:true, headers:{get:(k)=>({'x-grid-origin':'32926,32045','x-grid-revision':'1'})[k.toLowerCase()] ?? null},
+        // The real endpoint centres the window on the tile asked for; a fixed
+        // origin would have the character walk out of its own preview.
+        const q = new URL(url, 'http://x').searchParams;
+        const origin = `${Number(q.get('x')) - r},${Number(q.get('y')) - r}`;
+        return {ok:true, headers:{get:(k)=>({'x-grid-origin':origin,'x-grid-revision':'1'})[k.toLowerCase()] ?? null},
           async arrayBuffer() {return cells.buffer;}};
       }
       if (url.startsWith('/api/blocks')) {
@@ -89,9 +93,9 @@ function app({respond, respondPath, respondInput, latency=3, storage={}, inputAv
   // app.js's own const declarations do not become properties of the sandbox
   // (unlike its function declarations, e.g. normalisedPoint), so pull the two
   // control objects out explicitly - test-only, nothing app.js itself needs.
-  vm.runInContext('globalThis.__inputClient = inputClient; globalThis.__executor = executor; globalThis.__blocksClient = blocksClient;', sandbox);
+  vm.runInContext('globalThis.__inputClient = inputClient; globalThis.__executor = executor; globalThis.__blocksClient = blocksClient; globalThis.__recorder = recorder;', sandbox);
   return {get:id=>document.getElementById(id), requests, pathRequests, sendRequests, gridRequests, blockRequests, timers,
-    blocksClient:sandbox.__blocksClient, gridPixels:sandbox.gridPixels,
+    blocksClient:sandbox.__blocksClient, gridPixels:sandbox.gridPixels, recorder:sandbox.__recorder,
     storage: sandbox.localStorage.store,
     normalisedPoint:sandbox.normalisedPoint, inputClient:sandbox.__inputClient, executor:sandbox.__executor,
     async loadRoute(route) {
@@ -325,7 +329,11 @@ test('recording collects waypoints while the tracker runs', async () => {
   a.get('route-record').checked = true;
   a.get('live').checked = true;
   await a.get('locate').onclick();
-  for (let i = 0; i < 4; i++) await a.tick();
+  // setImmediate between ticks lets the walkability window arrive: recording
+  // waits for it rather than writing unverified points, so the very first
+  // reading - taken before any window exists - is skipped and the count picks
+  // up one tick later.
+  for (let i = 0; i < 6; i++) { await a.tick(); await new Promise(setImmediate); }
   assert.match(a.get('route-status').textContent, /3/, 'one point every ten tiles walked');
 });
 
@@ -1112,4 +1120,45 @@ test('komunikat po skasowaniu mówi, co dokładnie zniknęło', async () => {
   await canvas.listeners.click({target: canvas, clientX: 20 / side * 320 + 1, clientY: 10 / side * 320 + 1});
 
   assert.match(a.get('blocks-status').textContent, /trwałą \(2 epizody\)/);
+});
+
+test('nagrywanie pomija kratkę, której dane nie uznają za przechodnią', async () => {
+  // The locator occasionally returns a position on water. A waypoint recorded
+  // there is worthless: A* will refuse it later, and the user finds out only
+  // when the route stops working.
+  const side = 65;
+  const cells = new Uint8Array(side * side);
+  cells[32 * side + 32] = 1; // the character's own tile reads as impassable
+  const a = app({gridCells: cells});
+  await new Promise(setImmediate); await a.get('share').onclick();
+  a.get('live').checked = true;
+  a.get('route-record').checked = true;
+  a.get('route-every').value = '1';
+  await a.get('locate').onclick();
+  for (let i = 0; i < 6; i++) { await a.tick(); await new Promise(setImmediate); }
+
+  assert.equal(a.recorder.waypoints.length, 0,
+    'zapisano waypoint na kratce, na której postać nie mogła stać');
+  assert.match(a.get('route-status').textContent + a.get('blocks-status').textContent, /pomini/i);
+});
+
+test('nagrywanie pobiera okno przechodniości nawet bez włączonego podglądu', async () => {
+  const a = app();
+  await new Promise(setImmediate); await a.get('share').onclick();
+  a.get('live').checked = true;
+  a.get('route-record').checked = true;
+  await a.get('locate').onclick();
+  for (let i = 0; i < 4; i++) { await a.tick(); await new Promise(setImmediate); }
+  assert.ok(a.gridRequests.length > 0, 'bez okna nie da się sprawdzić, czy kratka jest przechodnia');
+});
+
+test('kratka przechodnia nagrywa się normalnie', async () => {
+  const a = app({gridCells: new Uint8Array(65 * 65)});
+  await new Promise(setImmediate); await a.get('share').onclick();
+  a.get('live').checked = true;
+  a.get('route-record').checked = true;
+  a.get('route-every').value = '1';
+  await a.get('locate').onclick();
+  for (let i = 0; i < 6; i++) { await a.tick(); await new Promise(setImmediate); }
+  assert.ok(a.recorder.waypoints.length > 0, 'poprawna kratka nie została nagrana');
 });
