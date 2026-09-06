@@ -271,6 +271,38 @@ func (d *Driver) Calibrate(nx, ny float64) error {
 	return nil
 }
 
+// validActionTypes are the floor transitions a hotkey can be configured for.
+// Stairs are excluded on purpose: transitionLocked refuses them outright,
+// because stairs are climbed by walking onto them, not by using an item.
+var validActionTypes = map[string]bool{"rope": true, "ladder": true, "hole": true, "shovel": true}
+
+// SetActionConfig stores the hotkeys the panel configured for floor actions,
+// plus whether the hotkey is used on the character's own tile (no follow-up
+// click) or needs a click afterwards. It is the only way ActionKeys and
+// ClickAfterHotkey are ever populated outside tests: without it every floor
+// action is refused for lack of a hotkey. The whole config is validated
+// before anything is written, so a bad request never partially applies.
+func (d *Driver) SetActionConfig(keys map[string]string, clickAfterHotkey bool) error {
+	clean := make(map[string]string, len(keys))
+	for action, key := range keys {
+		if !validActionTypes[action] {
+			return fmt.Errorf("nieznany typ akcji: %s", action)
+		}
+		if key == "" {
+			continue // an unset hotkey is fine; that action stays refused until configured
+		}
+		if !hotkeyNames[key] {
+			return fmt.Errorf("nieznany klawisz: %s", key)
+		}
+		clean[action] = key
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.ActionKeys = clean
+	d.ClickAfterHotkey = clickAfterHotkey
+	return nil
+}
+
 func (d *Driver) record(seq uint64, r InputResult) InputResult {
 	d.lastSeq, d.lastResult = seq, r
 	return r

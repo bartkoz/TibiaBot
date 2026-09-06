@@ -92,6 +92,22 @@ func (s *server) calibrate(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]bool{"ok": true})
 }
 
+func (s *server) inputConfig(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Session          string            `json:"session"`
+		Keys             map[string]string `json:"keys"`
+		ClickAfterHotkey bool              `json:"click_after_hotkey"`
+	}
+	if !s.readInput(w, r, &body) || !s.sessionOK(w, body.Session) {
+		return
+	}
+	if err := s.driver.SetActionConfig(body.Keys, body.ClickAfterHotkey); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, map[string]bool{"ok": true})
+}
+
 func (s *server) actionDone(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Session string `json:"session"`

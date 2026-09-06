@@ -42,6 +42,20 @@ func keyForDirection(dir string) (string, bool) {
 	return key, ok
 }
 
+// hotkeyNames lists every key name the platform emitters recognise for a
+// floor-action hotkey. input_darwin.go and input_windows.go each carry the
+// real per-platform codes for the same set of names; this portable table is
+// the one inputapi.go's /api/input/config handler checks a submitted key
+// against, since it must build (and validate) on every platform regardless of
+// which emitter is actually running.
+var hotkeyNames = map[string]bool{
+	"numpad1": true, "numpad2": true, "numpad3": true, "numpad4": true,
+	"numpad6": true, "numpad7": true, "numpad8": true, "numpad9": true,
+	"up": true, "down": true, "left": true, "right": true,
+	"f1": true, "f2": true, "f3": true, "f4": true, "f5": true, "f6": true,
+	"f7": true, "f8": true, "f9": true, "f10": true, "f11": true, "f12": true,
+}
+
 // DryEmitter performs no system calls. It backs the -input dry mode and every
 // driver test, so the whole flow can be exercised without the game.
 type DryEmitter struct {

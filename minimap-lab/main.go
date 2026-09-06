@@ -95,6 +95,7 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("POST /api/disarm", s.disarm)
 	mux.HandleFunc("POST /api/input", s.input)
 	mux.HandleFunc("POST /api/input/calibrate", s.calibrate)
+	mux.HandleFunc("POST /api/input/config", s.inputConfig)
 	mux.HandleFunc("POST /api/input/done", s.actionDone)
 	mux.HandleFunc("GET /api/input/status", s.inputStatus)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

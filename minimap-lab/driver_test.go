@@ -344,6 +344,64 @@ func TestDriverCalibrateRefusesCoordinatesOutsideScreen(t *testing.T) {
 	}
 }
 
+func TestDriverSetActionConfigStoresValidHotkeys(t *testing.T) {
+	d, _, _ := driverAt(t, time.Unix(0, 0))
+
+	if err := d.SetActionConfig(map[string]string{"rope": "f7", "hole": "f8"}, true); err != nil {
+		t.Fatal(err)
+	}
+
+	if d.ActionKeys["rope"] != "f7" || d.ActionKeys["hole"] != "f8" {
+		t.Fatalf("got %+v", d.ActionKeys)
+	}
+	if !d.ClickAfterHotkey {
+		t.Error("the click-after-hotkey flag must reach the driver")
+	}
+	// Submit is the real proof the config actually took effect end to end.
+	got := d.Submit(Intent{Session: d.Status().Session, Seq: 1, Action: "transition", Type: "rope", AgeMS: 50})
+	if got.Status != "refused" || got.Reason != "brak kalibracji kratki postaci" {
+		t.Fatalf("got %+v, want a calibration refusal proving the hotkey itself was accepted", got)
+	}
+}
+
+func TestDriverSetActionConfigRefusesUnknownKey(t *testing.T) {
+	d, _, _ := driverAt(t, time.Unix(0, 0))
+
+	err := d.SetActionConfig(map[string]string{"rope": "control"}, false)
+
+	if err == nil {
+		t.Fatal("an unknown key name must be refused")
+	}
+	if len(d.ActionKeys) != 0 {
+		t.Error("a refused config must not partially apply")
+	}
+}
+
+func TestDriverSetActionConfigRefusesUnknownActionType(t *testing.T) {
+	d, _, _ := driverAt(t, time.Unix(0, 0))
+
+	err := d.SetActionConfig(map[string]string{"stairs": "f7"}, false)
+
+	if err == nil {
+		t.Fatal("stairs are walked, not hotkeyed - an action type outside rope/ladder/hole/shovel must be refused")
+	}
+}
+
+func TestDriverSetActionConfigAllowsClearingAHotkey(t *testing.T) {
+	d, _, _ := driverAt(t, time.Unix(0, 0))
+	if err := d.SetActionConfig(map[string]string{"rope": "f7"}, false); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := d.SetActionConfig(map[string]string{"rope": ""}, false); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, ok := d.ActionKeys["rope"]; ok {
+		t.Error("an empty key must clear the hotkey, not store an empty string")
+	}
+}
+
 func TestDriverEmitterFailureDisarmsWithPolishReason(t *testing.T) {
 	inner := &DryEmitter{Window: Window{PID: 42, Path: "/Applications/Tibia.app"}}
 	em := &failingEmitter{DryEmitter: inner, err: errors.New("boom")}

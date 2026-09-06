@@ -170,6 +170,67 @@ func TestInputAPICalibrateStoresPlayerTile(t *testing.T) {
 	}
 }
 
+func TestInputAPIConfigStoresHotkeys(t *testing.T) {
+	s, _ := inputServer(t)
+	session := armSession(t, s)
+
+	w := postInput(t, s, "/api/input/config",
+		`{"session":"`+session+`","keys":{"rope":"f7","hole":"f8"},"click_after_hotkey":true}`)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("%d %s", w.Code, w.Body.String())
+	}
+	if s.driver.ActionKeys["rope"] != "f7" || s.driver.ActionKeys["hole"] != "f8" {
+		t.Fatalf("got %+v", s.driver.ActionKeys)
+	}
+	if !s.driver.ClickAfterHotkey {
+		t.Error("click_after_hotkey did not reach the driver")
+	}
+}
+
+func TestInputAPIConfigRefusesUnknownKey(t *testing.T) {
+	s, _ := inputServer(t)
+	session := armSession(t, s)
+
+	w := postInput(t, s, "/api/input/config", `{"session":"`+session+`","keys":{"rope":"control"}}`)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("got %d, want 400", w.Code)
+	}
+}
+
+func TestInputAPIConfigRequiresSessionToken(t *testing.T) {
+	s, _ := inputServer(t)
+	armSession(t, s)
+
+	w := postInput(t, s, "/api/input/config", `{"keys":{"rope":"f7"}}`)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("got %d, want 403", w.Code)
+	}
+	if s.driver.ActionKeys["rope"] != "" {
+		t.Error("a tokenless config request must never reach the driver")
+	}
+}
+
+// sessionOK is the only guard on /api/disarm, /api/input/calibrate and
+// /api/input/done. Every existing test for it uses an empty token; this one
+// closes the gap a mutated sessionOK that always returns true would leave
+// open by using a well-formed but wrong one instead.
+func TestInputAPIDisarmRefusesWrongSessionToken(t *testing.T) {
+	s, _ := inputServer(t)
+	armSession(t, s)
+
+	w := postInput(t, s, "/api/disarm", `{"session":"podrobiona-sesja"}`)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("got %d, want 403", w.Code)
+	}
+	if !s.driver.Status().Armed {
+		t.Error("a wrong session token must not be able to disarm")
+	}
+}
+
 func TestInputAPIUnavailableWithoutEmitter(t *testing.T) {
 	s := &server{dir: t.TempDir(), gate: make(chan struct{}, 1)}
 
