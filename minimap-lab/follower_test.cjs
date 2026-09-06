@@ -281,3 +281,60 @@ test('a looped route whose points are all within tolerance settles too', () => {
 
   assert.ok(out.action !== 'path', `every point is reached at once: ${out.action}`);
 });
+
+test('waypoint akcji nie jest osiągnięty z sąsiedniej kratki', () => {
+  const f = new RouteFollower([
+    {x: 100, y: 100, z: 7, type: 'rope'},
+    {x: 100, y: 100, z: 6, type: 'walk'},
+  ], {tolerance: 1});
+
+  const out = f.step({x: 101, y: 100, z: 7}, 0);
+
+  // Walking tolerance may be loose; a rope used one tile off the rope spot
+  // does nothing at all.
+  assert.notEqual(out.action, 'transition');
+});
+
+test('waypoint akcji jest osiągnięty z dokładnie tej kratki', () => {
+  const f = new RouteFollower([
+    {x: 100, y: 100, z: 7, type: 'rope'},
+    {x: 100, y: 100, z: 6, type: 'walk'},
+  ], {tolerance: 1});
+
+  const out = f.step({x: 100, y: 100, z: 7}, 0);
+
+  assert.equal(out.action, 'transition');
+});
+
+test('instrukcja przejścia niesie następny waypoint', () => {
+  const f = new RouteFollower([
+    {x: 100, y: 100, z: 7, type: 'stairs'},
+    {x: 101, y: 100, z: 6, type: 'walk'},
+  ]);
+
+  const out = f.step({x: 100, y: 100, z: 7}, 0);
+
+  // The stairs tile sits on the current floor; the next waypoint is what says
+  // which way to step onto it.
+  assert.equal(out.action, 'transition');
+  assert.deepEqual(out.next, {x: 101, y: 100, z: 6, type: 'walk'});
+});
+
+test('ostatni waypoint przejścia nie ma następnika', () => {
+  const f = new RouteFollower([{x: 100, y: 100, z: 7, type: 'rope'}]);
+
+  const out = f.step({x: 100, y: 100, z: 7}, 0);
+
+  assert.equal(out.next, null);
+});
+
+test('actionTolerance można poluzować świadomie', () => {
+  const f = new RouteFollower([
+    {x: 100, y: 100, z: 7, type: 'stairs'},
+    {x: 101, y: 100, z: 6, type: 'walk'},
+  ], {tolerance: 1, actionTolerance: 1});
+
+  const out = f.step({x: 101, y: 100, z: 7}, 0);
+
+  assert.equal(out.action, 'transition');
+});

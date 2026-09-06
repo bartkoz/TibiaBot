@@ -17,6 +17,9 @@ class RouteFollower {
   constructor(waypoints = [], options = {}) {
     this.waypoints = waypoints;
     this.tolerance = options.tolerance ?? 1;
+    // An action waypoint needs the exact tile: a rope used one tile off the
+    // rope spot does nothing, while walking tolerance may stay loose.
+    this.actionTolerance = options.actionTolerance ?? 0;
     this.loop = options.loop ?? false;
     this.replanMS = options.replanMS ?? 500;
     // A failure is a moment, not a verdict: one dropped request must not freeze
@@ -73,13 +76,14 @@ class RouteFollower {
     // Two ways to end up waiting for a floor change: standing on a waypoint
     // that carries an action, or facing a waypoint on another floor.
     const standingOnAction = target.type !== 'walk' && target.z === position.z &&
-      chebyshev(target, position) <= this.tolerance;
+      chebyshev(target, position) <= this.actionTolerance;
     if (standingOnAction || target.z !== position.z) {
       this.dropPath();
       if (standingOnAction) this.actionAt = {index: this.index, z: position.z};
       const verb = TRANSITION_INSTRUCTIONS[target.type] ?? TRANSITION_INSTRUCTIONS.walk;
       const floor = standingOnAction ? '' : ` → piętro ${target.z}`;
-      return {action: 'transition', waypoint: target, instruction: `${verb}${floor}`};
+      return {action: 'transition', waypoint: target, next: this.waypoints[this.index + 1] ?? null,
+        instruction: `${verb}${floor}`};
     }
     if (this.pathTo && !sameTile(this.pathTo, target)) this.dropPath();
     const ahead = this.path && remainingPath(this.path, position);
