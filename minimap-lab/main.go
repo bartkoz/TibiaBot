@@ -122,6 +122,9 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("POST /api/input/config", s.inputConfig)
 	mux.HandleFunc("POST /api/input/done", s.actionDone)
 	mux.HandleFunc("GET /api/input/status", s.inputStatus)
+	mux.HandleFunc("POST /api/blocks/observe", s.observeBlock)
+	mux.HandleFunc("GET /api/blocks", s.listBlocks)
+	mux.HandleFunc("DELETE /api/blocks", s.deleteBlock)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// No cross-origin uploads or remote DNS names on the local service.
 		host, _, err := net.SplitHostPort(r.Host)

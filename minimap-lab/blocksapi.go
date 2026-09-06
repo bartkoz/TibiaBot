@@ -1,0 +1,117 @@
+package main
+
+import (
+	"encoding/json"
+	"image"
+	"net/http"
+	"strconv"
+	"time"
+)
+
+// maxBlocksRadius keeps one listing bounded. The panel never asks for more
+// than its own preview window.
+const maxBlocksRadius = 64
+
+type BlockInfo struct {
+	X           int    `json:"x"`
+	Y           int    `json:"y"`
+	Z           int    `json:"z"`
+	Kind        string `json:"kind"`
+	Episodes    int    `json:"episodes"`
+	ExpiresInMS int    `json:"expires_in_ms"`
+}
+
+// rectAround is the square window shared by the blocks listing and the grid
+// preview, so both agree on what "radius" means.
+func rectAround(x, y, r int) image.Rectangle {
+	return image.Rect(x-r, y-r, x+r+1, y+r+1)
+}
+
+func (s *server) observeBlock(w http.ResponseWriter, r *http.Request) {
+	if s.blocks == nil {
+		writeJSONError(w, http.StatusServiceUnavailable, "Magazyn blokad nie jest włączony.")
+		return
+	}
+	var obs Observation
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&obs); err != nil {
+		http.Error(w, "Nieprawidłowe żądanie JSON", http.StatusBadRequest)
+		return
+	}
+	d := s.blocks.Observe(obs)
+	// Only a change worth keeping touches the disk; an ignored observation or a
+	// temporary block must not rewrite the file.
+	if d.Result == "promoted" || d.Result == "cleared" {
+		s.blocks.Flush()
+	}
+	writeJSON(w, d)
+}
+
+func (s *server) listBlocks(w http.ResponseWriter, r *http.Request) {
+	if s.blocks == nil {
+		writeJSONError(w, http.StatusServiceUnavailable, "Magazyn blokad nie jest włączony.")
+		return
+	}
+	x, y, z, radius, ok := windowParams(r)
+	if !ok {
+		http.Error(w, "Wymagane x, y (0–65535), z (0–15) i r (1–64).", http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, s.blocks.List(rectAround(x, y, radius), z))
+}
+
+func (s *server) deleteBlock(w http.ResponseWriter, r *http.Request) {
+	if s.blocks == nil {
+		writeJSONError(w, http.StatusServiceUnavailable, "Magazyn blokad nie jest włączony.")
+		return
+	}
+	var p Position
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<10)).Decode(&p); err != nil {
+		http.Error(w, "Nieprawidłowe żądanie JSON", http.StatusBadRequest)
+		return
+	}
+	cleared := s.blocks.Clear(p)
+	if cleared {
+		s.blocks.Flush()
+	}
+	writeJSON(w, map[string]bool{"cleared": cleared})
+}
+
+// windowParams parses the x/y/z/r query shared by the listing and the preview.
+func windowParams(r *http.Request) (x, y, z, radius int, ok bool) {
+	q := r.URL.Query()
+	x, err1 := strconv.Atoi(q.Get("x"))
+	y, err2 := strconv.Atoi(q.Get("y"))
+	z, err3 := strconv.Atoi(q.Get("z"))
+	radius, err4 := strconv.Atoi(q.Get("r"))
+	if err1 != nil || err2 != nil || err3 != nil || err4 != nil {
+		return 0, 0, 0, 0, false
+	}
+	if x < 0 || x > 65535 || y < 0 || y > 65535 || z < 0 || z > 15 || radius < 1 || radius > maxBlocksRadius {
+		return 0, 0, 0, 0, false
+	}
+	return x, y, z, radius, true
+}
+
+// List reports the learned blockages inside an area, for the panel's own view.
+func (s *BlockStore) List(area image.Rectangle, z int) []BlockInfo {
+	if s == nil {
+		return []BlockInfo{}
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := s.now()
+	s.sweepLocked(now)
+	out := []BlockInfo{}
+	for k, b := range s.tiles {
+		if b.Kind == KindNone || k[2] != z || !image.Pt(k[0], k[1]).In(area) {
+			continue
+		}
+		info := BlockInfo{X: k[0], Y: k[1], Z: k[2], Episodes: b.Episodes, Kind: "perm"}
+		if b.Kind == KindTemp {
+			info.Kind = "temp"
+			info.ExpiresInMS = int(b.Expires.Sub(now) / time.Millisecond)
+		}
+		out = append(out, info)
+	}
+	return out
+}
