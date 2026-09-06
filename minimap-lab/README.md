@@ -1,0 +1,158 @@
+# Minimap Lab (Go)
+
+Samodzielny prototyp lokalizacji `(x,y,z)` z obrazu minimapy oraz prowadzenia po trasie waypointów. Bez zewnętrznych bibliotek, OpenCV ani CGO. Panel działa lokalnie i analizuje screenshoty lub klatki ekranu udostępnionego przez przeglądarkę. Moduł realizuje odczyt pozycji i wskazuje kolejny krok trasy; **sterowanie postacią nie jest zaimplementowane** — panel nie wysyła klawiszy ani kliknięć do gry.
+
+## Uruchomienie
+
+```sh
+cd /Users/Bartek/TibiaBot/minimap-lab
+./minimap-lab
+```
+
+Otwórz **http://127.0.0.1:8095** i kliknij **Uruchom demo**. Oczekiwany wynik: **32200, 32180, 7**. Demo jest syntetyczne, pokazuje działanie algorytmu, nie dowodzi skuteczności na obrazie klienta gry.
+
+Domyślny katalog map to `../data/minimap`, względem katalogu uruchomienia. W tym projekcie są już pliki referencyjne.
+
+Gotowy plik wykonywalny jest zbudowany dla tego Maca (Apple Silicon). Kompilacja ze źródeł: `go run .`. Moduł wskazuje toolchain Go 1.24.2, dostępny już lokalnie; nowszy Go też może go zbudować. Na innym komputerze Go może pobrać wskazany toolchain. Domyślny Go 1.22.2 na tym Macu tworzył pliki odrzucane przez loader systemowy (`missing LC_UUID`), dlatego kompilacja i testy używają Go 1.24.2.
+
+```sh
+go run . -maps /sciezka/do/minimap -listen 127.0.0.1:8096
+go test ./...
+go build -o minimap-lab .
+```
+
+Na Windows: `go build -o minimap-lab.exe .`, a następnie `minimap-lab.exe -maps "C:\sciezka\do\minimap"`. Ten sam kod działa bez natywnych bibliotek; przechwytywanie obrazu obsługuje przeglądarka.
+
+## Test z grą
+
+1. Ustaw stały zoom minimapy i wycentruj ją na postaci.
+2. Kliknij **Wczytaj screenshot** (najlepiej PNG) albo **Udostępnij ekran** i wybierz źródło w oknie przeglądarki. Dostęp do obrazu wymaga zgody przeglądarki/systemu. Jeżeli źródło daje czarny obraz, lokalizator nie będzie z niego działał.
+3. Przeciągnij po podglądzie, zaznaczając teren minimapy bez ramki, przycisków i podpisów. Współrzędne zaznaczenia odnoszą się do oryginalnego obrazu, również na ekranach Retina.
+4. Kliknij środek znacznika postaci na powiększonym wycinku. Różowy kwadrat maskuje znacznik.
+5. Zostaw **piksele na kratkę → Auto**. Program sprawdza kolejno skale `1–4`, a pierwszą dającą jednoznaczne dopasowanie zachowuje w panelu. To kalibracja heurystyczna, nie porównanie wszystkich skal jednocześnie. Po zmianie zoomu gry wybierz Auto ponownie. Ręcznie dostępne są skale całkowite `1–8`; skala ułamkowa lub oddalenie poniżej 1 px/kratkę wymaga zmiany źródła.
+6. Wybierz właściwe piętro Z, kliknij **Znajdź pozycję**. Obok współrzędnych zobaczysz fragment atlasu z zaznaczonym kandydatem. Przy wyniku niejednoznacznym współrzędne pozostają nieznane, a JSON pokazuje kandydatów diagnostycznych.
+7. Wybierz **10 odczytów/s** albo **5 odczytów/s** i zaznacz **Włącz śledzenie XYZ**. Podczas pierwszego wyszukiwania pozostań w miejscu; po potwierdzeniu lokalnej pozycji przejdź ręcznie kilka kratek. Zmiana rozdzielczości zatrzymuje odczyt i wymaga ponownego zaznaczenia.
+8. Gdy pozycja jest stabilna, przejdź do sekcji **4. Trasa**: zaznacz **Nagrywaj trasę** i przejdź planowaną drogę, potem **Pobierz JSON**. Do prowadzenia po zapisanej trasie wczytaj plik i zaznacz **Podążaj za trasą**.
+
+## Tester 5–10 Hz
+
+Pierwszy odczyt przeszukuje całe piętro. Kolejne wysyłają ostatnie XYZ i promień wyszukiwania, zwykle 5 kratek przy 10 Hz: 121 możliwych pozycji. Promień rośnie z wiekiem ostatniej pozycji i ustawioną maksymalną prędkością, do 64 kratek. Wynik z długiego pierwszego wyszukiwania zachowuje rzeczywisty wiek obrazu, więc pierwsze lokalne potwierdzenie może wymagać większego promienia.
+
+Po nieudanym odczycie pole XYZ pokazuje **Pozycja nieznana**. Tester próbuje szerszego lokalnego obszaru; po trzech niepowodzeniach wykonuje jedno pełne wyszukiwanie. Jeśli ono też zawiedzie, zatrzymuje powtarzanie. Przycisk **Szukaj od nowa na całej mapie** pozwala ręcznie odrzucić poprzednią lokalizację. Wynik leżący dokładnie na granicy promienia wymaga szerszego potwierdzenia.
+
+Domyślnie włączone jest **Rozpoznawaj przejścia Z ±1**. Jeżeli dopasowanie na aktualnym piętrze zawiedzie, ten sam odczyt sprawdza Z−1 i Z+1 w obszarze **±8 kratek XY** od ostatniej potwierdzonej pozycji. Promień przejścia można zmienić w **Zakres śledzenia → Zmiana piętra: promień XY** (1–32). Oba sąsiednie piętra są porównywane ze sobą oraz z kandydatem na pierwotnym piętrze; podobne wyniki pozostawiają pozycję nieznaną. Potwierdzenie nowego Z automatycznie aktualizuje selektor i kolejne odczyty pozostają lokalne.
+
+Ręczna zmiana selektora Z o jeden poziom również zachowuje ostatnie XY i nie zatrzymuje uruchomionej pętli. Wtedy sprawdzane jest tylko wybrane piętro. Zmiana ręczna większa niż jeden poziom wymaga pełnego wyszukiwania. Po trzech nieudanych odczytach obejmujących sąsiednie piętra pełny skan odbywa się na piętrze wskazanym w panelu; przy nieznanym, dalszym Z trzeba je wskazać ręcznie.
+
+Na nowym piętrze wczytywane są wyłącznie kafle obejmujące lokalny obszar i cały wycinek minimapy. Do trzech takich małych atlasów pozostaje w pamięci obok atlasu pełnego. Brak danych na sąsiednim piętrze jest raportowany w `unavailable_floors`. Domyślnie poprawne dopasowanie na aktualnym Z kończy odczyt bez sprawdzania innych pięter: identyczny obraz na dwóch piętrach może więc uniemożliwić wykrycie przejścia. W takiej sytuacji Z można wybrać ręcznie.
+
+Panel pokazuje:
+
+- **Odczyty/s** — zmierzoną częstotliwość zakończonych lokalnych odczytów z ostatnich 3 sekund; pełne wyszukiwanie nie jest wliczane do tego pomiaru.
+- **Cały odczyt** — czas przechwycenia wycinka, kodowania PNG, żądania i odbioru odpowiedzi.
+- **Dopasowanie Go** — czas samego algorytmu i przygotowania próbek na serwerze.
+- **Wiek pozycji** — czas od przechwycenia ostatniego poprawnie dopasowanego obrazu, a nie od końca obliczeń.
+- **Poprawne odczyty** — udział zaakceptowanych lokalnych dopasowań w ostatnich 3 sekundach.
+- **Obszar** — lokalne wyszukiwanie albo całe piętro i liczbę możliwych pozycji.
+
+Pętla odejmuje czas obliczeń od okresu 100/200 ms i nigdy nie kolejkuje równoległych żądań. Przy wolnym przetwarzaniu pokazuje niższą rzeczywistą częstotliwość. Nie liczy ponownie klatki o tym samym czasie odtwarzania źródła; po sekundzie bez nowej klatki ukrywa stare XYZ. Ograniczenia przechwytywania i harmonogramu przeglądarki nadal mogą obniżać częstotliwość — sprawdzaj pomiar w panelu. Jest to tester odczytu podczas ręcznego chodzenia, także między sąsiednimi piętrami; nie wysyła klawiszy.
+
+Benchmarki na zapisanym prawdziwym wycinku:
+
+```sh
+go test -run '^$' -bench 'Benchmark(HTTP)?TrackActualCapture' -benchtime=2s -benchmem
+node --test ui_test.cjs tracker_test.cjs route_test.cjs recorder_test.cjs follower_test.cjs
+```
+
+Benchmark HTTP obejmuje dekodowanie PNG, obsługę żądania i odpowiedź JSON wewnątrz procesu. Nie obejmuje przeglądarki ani sieci; rzeczywisty czas całego odczytu pokazuje panel.
+
+Najpierw sprawdź znane miejsce, pojedyncze kroki w czterech kierunkach i granicę kafli. Nie obniżaj progów tylko po to, żeby wymusić wynik. Duży wycinek z charakterystycznymi ścianami/ścieżkami pomaga bardziej niż jednolita przestrzeń. Odsuń kursor i wybierz obszar z niewielką liczbą oznaczeń; dodatkowe ikony nie są automatycznie wykrywane.
+
+## Trasy waypointów
+
+Sekcja **4. Trasa** nagrywa waypointy i prowadzi po nich w trybie podglądu. Panel liczy trasę i pokazuje kierunek następnego kroku; postać prowadzisz sam.
+
+Waypointy żyją w przeglądarce i w pliku JSON, który sam wczytujesz i pobierasz. Serwer nie zapisuje tras na dysku i nie pamięta sesji. Robocza trasa jest przechowywana w `localStorage`, żeby odświeżenie karty nie skasowało nagrywania; na dysk trafia dopiero po kliknięciu **Pobierz JSON**.
+
+```json
+{
+  "version": 1,
+  "name": "Venore → Cyclopolis",
+  "waypoints": [
+    {"x": 32958, "y": 32077, "z": 7, "type": "walk", "label": "depo"},
+    {"x": 32960, "y": 32090, "z": 7, "type": "rope", "label": "lina w dół"},
+    {"x": 32960, "y": 32090, "z": 8, "type": "walk", "label": "po zejściu"}
+  ]
+}
+```
+
+`type` przyjmuje `walk`, `rope`, `ladder`, `stairs`, `hole` i `shovel`; brak pola oznacza `walk`, więc ręcznie pisany plik może zawierać samo XYZ. Limity: `x` i `y` w zakresie 0–65535, `z` 0–15, `label` do 64 znaków, do 1000 punktów na trasę. Plik z inną wartością `version` jest odrzucany, a komunikat wskazuje numer wadliwego punktu.
+
+### Nagrywanie
+
+**Dodaj waypoint** zapisuje aktualne XYZ; przycisk jest aktywny tylko wtedy, gdy śledzenie podało pozycję w ciągu ostatniej sekundy. **Nagrywaj trasę** dopisuje punkt co zadaną liczbę kratek — mierzoną po przekątnej jak w grze, więc dziesięć kroków na ukos to dziesięć kratek, nie dwadzieścia. Podczas nagrywania focus ma klient gry, więc tryb automatyczny jest jedynym wygodnym sposobem zapisania długiej trasy.
+
+Zmiana piętra zawsze zapisuje **parę** punktów: kratkę sprzed przejścia z typem akcji oraz pierwszą kratkę po nim jako `walk`. Tracker rozpoznaje przejście dopiero na nowym piętrze, a trasa potrzebuje miejsca, w którym użyto liny — stąd para. Typ jest zgadywany: ruch w górę bez zmiany XY to `rope`, w dół bez zmiany XY to `hole`, a przesunięcie o kratkę to `stairs`. Minimapa nie koduje rodzaju przejścia, więc lina, drabina i schody wyglądają identycznie — popraw typ na liście. Przy linie i dziurze punkt wychodzi dokładnie, przy schodach bywa o kratkę obok.
+
+Jeżeli obraz pasuje równie dobrze na starym piętrze, przejście może w ogóle nie zostać wykryte. Wtedy zmień Z ręcznie w selektorze; recorder zapisze parę punktów w momencie tej zmiany.
+
+### Podążanie
+
+**Podążaj za trasą** po każdym potwierdzonym odczycie sprawdza bieżący waypoint:
+
+- Waypoint z typem innym niż `walk`, na którym już stoisz — panel pokazuje instrukcję akcji („Użyj liny") i czeka. Taki punkt **nie jest zaliczany przez samo dojście**: uznaje się go za wykonany dopiero wtedy, gdy tracker potwierdzi zmianę piętra. Bez tego para punktów nagrana przy linie zostałaby przejechana jako zwykłe chodzenie i instrukcja przepadłaby. Gdy przejście zdarzy się między dwoma odczytami i panel nigdy nie zobaczy Cię stojącego na tym punkcie, dowodem jest stanięcie na piętrze kolejnego waypointa — punkt również zostaje zaliczony.
+- Waypoint na innym piętrze niż pozycja — panel pokazuje instrukcję wynikającą z typu („Użyj liny → piętro 6") i czeka na potwierdzenie nowego Z. Trasa nie jest liczona, bo przejścia się nie przechodzi krokami.
+- Odległość nie większa niż tolerancja (domyślnie 1 kratka, także po skosie; 0 oznacza dokładnie tę samą kratkę) — punkt zaliczony, panel przechodzi do następnego. Po ostatnim pokazuje „Trasa ukończona" albo wraca na początek, jeśli włączysz **Zapętl trasę**.
+- W pozostałych przypadkach panel prosi serwer o ścieżkę, nie częściej niż raz na 500 ms i nigdy dwa żądania naraz, po czym pokazuje kierunek następnego kroku, liczbę kratek do celu i rysuje trasę na podglądzie mapy referencyjnej. Podgląd odświeża się najwyżej raz na sekundę, więc nakładka jest kotwiczona do pozycji, dla której ten obraz powstał — inaczej rozjeżdżałaby się z mapą pod spodem.
+
+Nieudane wyliczenie trasy — zerwane połączenie, timeout, waypoint chwilowo poza wczytanym obszarem — nie jest wyrokiem: panel pokazuje powód i ponawia próbę, gdy przejdziesz na inną kratkę albo po kilku sekundach. Zmiana tolerancji i zapętlenia działa od następnego odczytu i **nie cofa trasy** do pierwszego punktu; robi to dopiero wyłączenie i włączenie podążania.
+
+Zejście z zaplanowanej ścieżki, zmiana bieżącego waypointa i edycja listy unieważniają trasę i wymuszają przeliczenie. Odpowiedź, która dotrze po zmianie celu, jest odrzucana — inaczej ścieżka policzona do poprzedniego waypointa kierowałaby w złą stronę. Żądanie trasy biegnie obok pętli śledzenia i nigdy jej nie opóźnia.
+
+## Jak działa
+
+- Ładuje `Minimap_Color_X_Y_Z.png` (256×256, jedna kratka na piksel) i scala piętro z zachowaniem początku współrzędnych. Wycinek może przechodzić przez granice kafli. Brakujące kafle są przezroczyste i nie mogą być uznane za zgodny teren.
+- Próbkuje kratki względem wskazanego znacznika, pomijając maskę i przezroczystość. Zachowuje czarne ściany, które opisują kształt jaskiń. Używa do 1024 próbek z pierwszeństwem granic kolorów. Wymaga co najmniej 64 nieczarnych kratek i zróżnicowania kolorów.
+- Szuka najmniejszego średniego błędu bezwzględnego RGB. Wynik `1 − błąd/255` to podobieństwo kolorów **próbek**, nie prawdopodobieństwo poprawnej pozycji. Domyślny próg: `0.85`, uwzględniający różnice kolorów w przechwytywaniu; demo używa `0.94`. Po wyjściu z demo przywracane są ustawienia rzeczywistego źródła.
+- Pokazuje najlepszego kandydata i wynik także poniżej progu, ale nie uznaje go wtedy za pozycję postaci.
+- Drugie wyszukiwanie sprawdza, czy inna kratka pasuje z wynikiem bliższym niż `0.015`. Jeśli tak, zwraca `found: false` i `position: null`.
+- Współrzędne dotyczą znacznika postaci, nie lewego górnego rogu wycinka. Piętro startowe jest podane ręcznie; późniejsze przejścia Z ±1 mogą być potwierdzane lokalnie z obrazu.
+
+Pełne wyszukiwanie ma limit 45 s; przy wolnym działaniu podaj katalog z mapami mniejszego obszaru. Limit atlasu: 32 mln pikseli. Lokalne śledzenie zakłada ciągłość ruchu w wybranym obszarze; nie potwierdza unikalności miejsca na całej mapie. Powtarzalne otoczenie, zmiany palety, skala ułamkowa i ikony mogą powodować brak dopasowania lub błędnego kandydata; sprawdź odczyty na własnych zrzutach.
+
+## HTTP API
+
+`POST /api/locate`, multipart:
+
+- `image`: **już wycięta** minimapa PNG/JPEG, bok 8–1024 px, formularz do 8 MB.
+- `options`: JSON, np. `{"floor":7,"demo":false,"zoom":0,"marker_x":52,"marker_y":57,"mask_radius":5,"min_score":0.85,"min_gap":0.015}`. `zoom:0` oznacza automatyczną kalibrację 1–4. Pole `zoom` w odpowiedzi wskazuje użytą skalę; `scale_scores` pokazuje sprawdzone skale.
+- Kolejny, lokalny odczyt: ustaw wykrytą skalę `zoom:1` i dodaj `"near":{"x":32958,"y":32077,"z":7},"radius":5,"no_preview":true`. Wymagane Z zgodne z `near.z` lub różniące się o 1, znana skala i promień ruchu 1–64. Odpowiedź zawiera `mode`, `search_positions`, `match_ms`. Brak `near` oznacza pełne wyszukiwanie.
+- Automatyczne przejścia: dodaj `"adjacent_floors":true,"floor_radius":8`. Gdy `floor == near.z` i bieżące dopasowanie zawodzi, serwer sprawdza sąsiednie poziomy. Gdy `floor` różni się od `near.z` o 1, sprawdza tylko wskazane piętro wokół poprzedniego XY. `floor_radius:0` oznacza domyślne 8. Odpowiedź dodaje `searched_floors`, `unavailable_floors` i `floor_changed`.
+
+`POST /api/path`, czysty JSON (bez obrazu i bez multipart):
+
+```json
+{"from":{"x":32786,"y":32061,"z":7},"to":{"x":32786,"y":32121,"z":7},"margin":64}
+```
+
+Odpowiedź: `{"found":true,"status":"ok","steps":[[32786,32061],[32786,32062]],"tiles":63,"cost":102.6,"reason":"","elapsed_ms":5.2}`. Pole `status` przyjmuje `ok`, `blocked_start`, `blocked_goal`, `no_route`, `different_floor`, `limit` i `cancelled`; `reason` opisuje to samo słowami. Żadna z tych sytuacji nie jest błędem HTTP.
+
+Kod 400 zwracany jest wyłącznie przy niepoprawnym wejściu: brakujące lub niepełne `from`/`to` (każde wymaga `x`, `y` i `z`), współrzędne poza 0–65535, piętro poza 0–15, `margin` poza 0–256, uszkodzony JSON, treść z doklejonym drugim dokumentem oraz obszar wyszukiwania przekraczający 4 mln kratek — same współrzędne nie są ograniczeniem, dwa poprawne punkty na przeciwległych krańcach mapy alokowałyby gigabajty. Żądanie porzucone przez przeglądarkę kończy się kodem 408 i nie wczytuje kafli.
+
+A* działa na kaflach `Minimap_WaypointCost_X_Y_Z.png` z katalogu podanego przez `-maps`, w prostokącie rozpiętym na obu punktach i powiększonym o `margin` (0 oznacza domyślne 64, maksimum 256), z limitem 5 s. Trasa wymagająca objazdu poza tym prostokątem zwróci `no_route` — zwiększ margines albo dodaj waypoint pośredni. Ruch po przekątnej między dwiema ścianami jest niemożliwy, tak jak w grze. Koszt kratki pochodzi wprost z indeksu palety: 255 to teren nieprzechodni, niższe wartości to koszt chodzenia, gdzie 100 odpowiada jednemu krokowi. W danych występują kratki tańsze niż 100, więc oszacowanie odległości jest skalowane najtańszą kratką w obszarze — inaczej A* przestaje zwracać najtańszą trasę. Brakujące kafle są nieprzechodnie. Zapytania o trasę mają własny zamek i własny cache, więc nie odbierają przepustowości pętli `/api/locate`.
+
+`GET /api/demo` zwraca demonstracyjną minimapę PNG; `GET /api/info` listę dostępnych pięter. W `options` użyj `demo:true`, aby dopasować obraz demonstracyjny do atlasu syntetycznego.
+
+Testy obejmują znane współrzędne, przesunięcie, skalę i maskę, brak dopasowania, niejednoznaczność, brak map, granicę kafli i żądania HTTP. Wyszukiwanie trasy sprawdzane jest osobno: odczyt kosztów z palety (konwersja do skali szarości zamieniłaby blokadę 255 na teren przechodni), brakujące kafle, granica kafli, obejście ściany, zakaz przecinania zamkniętego rogu, wybór tańszego terenu, zablokowany start i cel, limit kroków, anulowanie oraz walidacja `/api/path` wraz z dowodem, że zapytanie o trasę nie czeka na zamek śledzenia. Optymalność sprawdzana jest przez porównanie z Dijkstrą na dwustu losowych siatkach mieszanego terenu. Testy nie wymagają gry.
+
+Dodatkowy test na mapach obecnych w repozytorium: `MINIMAP_REAL_MAP_TEST=1 go test -run TestLocalMapIntegration -v`. Porównuje wycinek atlasu ze znaną pozycją `(32369,32241,7)`; nadal nie jest to test zrzutu z klienta gry.
+
+Test prawdziwego wycinka z przechwytywania: `MINIMAP_REAL_MAP_TEST=1 go test -run TestActualCaptureAgainstWholeFloor -v`. Dla zapisanej minimapy z Venore znajduje wskazany punkt `(32958,32077,7)` przy skali 1 i wyniku około 86,5%. Zwykłe `go test ./...` sprawdza też ten obraz na mniejszym atlasie oraz jego wariant powiększony 2×. `node --test ui_test.cjs` sprawdza przepływ demo → screenshot/udostępnianie, przywracanie kalibracji oraz wczytanie trasy, nagrywanie i podążanie; nie wymaga zainstalowanej przeglądarki. `route_test.cjs`, `recorder_test.cjs` i `follower_test.cjs` obejmują format pliku, nagrywanie z parowaniem punktów przejścia oraz stan podążania.
+
+Testy trasy na mapach z repozytorium: `MINIMAP_REAL_MAP_TEST=1 go test -run TestRealMap -v`. Prowadzą 63-kratkową trasę przez największy spójny obszar powierzchni Venore i sprawdzają, że każdy krok stoi na terenie przechodnim, sąsiaduje z poprzednim i nie przecina zamkniętego rogu. Sprawdzają też, że ściana jako waypoint zwraca `blocked_goal`, a teren odgrodzony murem — `no_route`.
+
+Test lokalnego przejścia na rzeczywistych mapach: `MINIMAP_REAL_MAP_TEST=1 go test -run TestFloorTransitionRealAtlas -v`. Używa zapisanego wycinka oraz zasymulowanej ostatniej pozycji na Z=8; szuka właściwego Z=7 w pobliżu XY. Nie wymaga nagrania prawdziwego przejścia. Przy pierwszej próbie z wczytaniem kafli zmierzono około 36 ms na tym Macu. `go test -run '^$' -bench BenchmarkAdjacentFloorCold -benchtime=2s` mierzy osobno wyszukiwanie i wczytywanie małego atlasu z fixture.
+
+## Diagnostyka
+
+Ostatni rzeczywisty wycinek jest zapisywany lokalnie w `.debug/last-input.png`, jego ustawienia w `.debug/last-options.json`, a wynik w `.debug/last-result.json`. Podczas lokalnego śledzenia zapis i logowanie są ograniczone do raz na sekundę; pełne wyszukiwania są zapisywane za każdym razem. Podgląd referencyjny również jest odświeżany najwyżej raz na sekundę podczas śledzenia. Pliki nie są udostępniane przez HTTP i są wyłączone z Gita. Pełny ekran nie jest zapisywany.

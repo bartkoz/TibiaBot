@@ -8,3 +8,7 @@ wheels/
 
 # Virtual environments
 .venv
+
+# macOS
+.DS_Store
+minimap-lab/.idea/

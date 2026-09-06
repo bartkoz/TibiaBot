@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="pl">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Minimap Lab</title>
+<link rel="stylesheet" href="/style.css">
+<link rel="stylesheet" href="/tracking.css">
+<main>
+  <header><span class="tag">TIBIA · LOKALIZACJA Z OBRAZU</span><h1>Minimap Lab</h1><p>Zaznacz minimapę. Wskaż postać. Sprawdź współrzędne.</p></header>
+  <section class="toolbar">
+    <button id="demo">Uruchom demo</button>
+    <label class="button">Wczytaj screenshot<input id="file" type="file" accept="image/png,image/jpeg,image/webp" hidden></label>
+    <button id="share" class="secondary">Udostępnij ekran</button>
+    <button id="snapshot" class="secondary" disabled>Pobierz klatkę</button>
+    <button id="stop" class="secondary" disabled>Zakończ udostępnianie</button>
+  </section>
+  <p id="source">Zacznij od demo lub własnego zrzutu. Obrazy są analizowane na tym komputerze.</p>
+  <div class="layout">
+    <section class="panel">
+      <h2>1. Wybierz obszar</h2>
+      <p>Przeciągnij po obrazie, aby wyciąć sam teren minimapy, bez ramki i przycisków.</p>
+      <div class="canvas-wrap"><canvas id="screen" width="800" height="420"></canvas></div>
+      <p id="roi-info">Brak obrazu.</p>
+      <h2>2. Wskaż środek znacznika postaci</h2>
+      <p>Kliknij na powiększonym wycinku. Różowy kwadrat wskazuje pomijany obszar.</p>
+      <canvas id="crop" width="190" height="190"></canvas>
+    </section>
+    <aside class="panel">
+      <h2>3. Dopasuj do mapy</h2>
+      <label>Piętro Z<select id="floor"></select></label>
+      <label class="check"><input id="floor-auto" type="checkbox" checked>Rozpoznawaj przejścia Z ±1</label>
+      <label>Piksele na kratkę <select id="zoom"><option value="0">Auto · sprawdź 1–4</option><option value="1">1 px / kratkę</option><option value="2">2 px / kratkę</option><option value="3">3 px / kratkę</option><option value="4">4 px / kratkę</option><option value="5">5 px / kratkę</option><option value="6">6 px / kratkę</option><option value="7">7 px / kratkę</option><option value="8">8 px / kratkę</option></select></label>
+      <p class="hint">Auto sprawdza skale od 1 do 4 i zachowuje pierwszą dającą jednoznaczne dopasowanie. Po zmianie zoomu gry wybierz Auto ponownie.</p>
+      <label>Promień maski znacznika (px)<input id="mask" type="number" min="0" max="64" value="5"></label>
+      <details><summary>Progi dopasowania</summary>
+        <label>Minimalny wynik<input id="threshold" type="number" min="0.5" max="1" step="0.005" value="0.85"></label>
+        <label>Minimalny odstęp od konkurenta<input id="gap" type="number" min="0.001" max="0.2" step="0.001" value="0.015"></label>
+      </details>
+      <button id="locate" disabled>Znajdź pozycję</button>
+      <button id="relocalize" class="secondary" disabled>Szukaj od nowa na całej mapie</button>
+      <label>Częstotliwość testera<select id="hz"><option value="10">10 odczytów / s</option><option value="5">5 odczytów / s</option></select></label>
+      <label class="check"><input id="live" type="checkbox" disabled>Włącz śledzenie XYZ</label>
+      <details><summary>Zakres śledzenia</summary><label>Zakładana maks. prędkość (kratki/s)<input id="speed" type="number" min="1" max="100" value="20"></label><label>Zmiana piętra: promień XY (kratki)<input id="floor-radius" type="number" min="1" max="32" value="8"></label><p class="hint">Zwykły ruch: obszar rośnie do 64 kratek. Przejścia Z ±1: sprawdzany jest mały obszar wokół ostatniego XY. Po trzech nieudanych odczytach tester ponownie przeszuka mapę.</p></details>
+      <p class="hint">Podczas pierwszego, pełnego wyszukiwania pozostań w miejscu. Potem możesz chodzić ręcznie, również po schodach. Po zmianie zoomu wybierz Auto. Z możesz też wskazać ręcznie.</p>
+      <div class="telemetry"><div>Odczyty/s <strong id="actual-hz">—</strong></div><div>Cały odczyt <strong id="round-trip">—</strong></div><div>Dopasowanie Go <strong id="match-time">—</strong></div><div>Wiek pozycji <strong id="position-age">—</strong></div><div>Poprawne odczyty <strong id="success-rate">—</strong></div><div>Obszar <strong id="search-area">—</strong></div></div>
+      <div id="status" role="status" aria-live="polite">Gotowy do testu.</div>
+      <div id="coordinates">—, —, —</div>
+      <p id="metrics"></p>
+      <div class="reference-wrap"><img id="reference" alt="Fragment mapy referencyjnej z kandydatem pozycji" hidden><canvas id="route-overlay" width="129" height="129" hidden></canvas></div>
+      <details><summary>Wynik JSON</summary><pre id="json">{}</pre></details>
+    </aside>
+  </div>
+  <section class="panel route">
+    <h2>4. Trasa</h2>
+    <p>Waypointy żyją w tym panelu i w pliku JSON, który sam wczytujesz i pobierasz. Serwer ich nie przechowuje.</p>
+    <div class="toolbar">
+      <label class="button">Wczytaj JSON<input id="route-file" type="file" accept="application/json,.json" hidden></label>
+      <button id="route-save" class="secondary" disabled>Pobierz JSON</button>
+      <button id="route-clear" class="secondary" disabled>Wyczyść</button>
+    </div>
+    <div class="route-grid">
+      <label>Nazwa trasy<input id="route-name" type="text" maxlength="64" placeholder="np. Venore → Cyclopolis"></label>
+      <label>Nagrywaj co ile kratek<input id="route-every" type="number" min="1" max="100" value="10"></label>
+      <label>Tolerancja dojścia (kratki)<input id="route-tolerance" type="number" min="0" max="10" value="1"></label>
+      <label>Margines szukania trasy (kratki)<input id="route-margin" type="number" min="0" max="256" value="64"></label>
+    </div>
+    <div class="route-switches">
+      <button id="route-add" disabled>Dodaj waypoint</button>
+      <label class="check"><input id="route-record" type="checkbox">Nagrywaj trasę</label>
+      <label class="check"><input id="route-follow" type="checkbox">Podążaj za trasą</label>
+      <label class="check"><input id="route-loop" type="checkbox">Zapętl trasę</label>
+    </div>
+    <p class="hint">Nagrywanie automatyczne dopisuje punkt co zadaną liczbę kratek i zawsze przy zmianie piętra — wtedy zapisuje kratkę sprzed przejścia oraz pierwszą po nim. Typ przejścia jest zgadywany z kierunku; popraw go na liście, bo minimapa nie odróżnia liny od drabiny.</p>
+    <div id="route-status" role="status" aria-live="polite">Brak trasy.</div>
+    <div id="route-next">—</div>
+    <ol id="route-list"></ol>
+  </section>
+  <footer><p id="maps"></p><p>Wynik dopasowania nie jest prawdopodobieństwem. Wybierz piętro startowe; dalsze przejścia Z ±1 mogą być rozpoznawane z obrazu. Pierwszy test na grze wymaga kalibracji i sprawdzenia znanego miejsca.</p></footer>
+</main>
+<video id="video" autoplay muted playsinline hidden></video>
+<script src="/tracker.js"></script>
+<script src="/route.js"></script>
+<script src="/recorder.js"></script>
+<script src="/follower.js"></script>
+<script src="/app.js"></script>
+</html>
