@@ -61,7 +61,7 @@ Benchmarki na zapisanym prawdziwym wycinku:
 
 ```sh
 go test -run '^$' -bench 'Benchmark(HTTP)?TrackActualCapture' -benchtime=2s -benchmem
-node --test ui_test.cjs tracker_test.cjs route_test.cjs recorder_test.cjs follower_test.cjs
+node --test ui_test.cjs tracker_test.cjs route_test.cjs recorder_test.cjs follower_test.cjs blocks_test.cjs
 ```
 
 Benchmark HTTP obejmuje dekodowanie PNG, obsługę żądania i odpowiedź JSON wewnątrz procesu. Nie obejmuje przeglądarki ani sieci; rzeczywisty czas całego odczytu pokazuje panel.
@@ -108,6 +108,28 @@ Jeżeli obraz pasuje równie dobrze na starym piętrze, przejście może w ogól
 Nieudane wyliczenie trasy — zerwane połączenie, timeout, waypoint chwilowo poza wczytanym obszarem — nie jest wyrokiem: panel pokazuje powód i ponawia próbę, gdy przejdziesz na inną kratkę albo po kilku sekundach. Zmiana tolerancji i zapętlenia działa od następnego odczytu i **nie cofa trasy** do pierwszego punktu; robi to dopiero wyłączenie i włączenie podążania.
 
 Zejście z zaplanowanej ścieżki, zmiana bieżącego waypointa i edycja listy unieważniają trasę i wymuszają przeliczenie. Odpowiedź, która dotrze po zmianie celu, jest odrzucana — inaczej ścieżka policzona do poprzedniego waypointa kierowałaby w złą stronę. Żądanie trasy biegnie obok pętli śledzenia i nigdy jej nie opóźnia.
+
+## Nauczone blokady
+
+Trasy liczy A* na kaflach `Minimap_WaypointCost`, a te znają teren i ściany budynków — nie znają mebli. Lada w sklepie, stół i zamknięte drzwi stoją na kratkach opisanych jako w pełni przechodnie, więc trasa prowadzi wprost przez nie: postać dostaje kolejne klawisze, nie rusza się, a przeliczenie trasy zwraca dokładnie tę samą drogę. Wykonawca uczy się takich miejsc sam, z nieudanych kroków.
+
+Krok prosty, po którym trzy kolejne świeże klatki pokazują postać wciąż na kratce startowej, tworzy **blokadę tymczasową** na 60 sekund. Drugi taki epizod — liczony dopiero po wygaśnięciu pierwszego, nie z ponowionej próby w ramach tego samego zdarzenia — awansuje kratkę na **blokadę trwałą**, zapisywaną w pliku wskazanym przez `-blocks` (domyślnie `blocks.json` w katalogu uruchomienia). Katalog map nie jest tu domyślną lokalizacją celowo: to pobrana paczka danych i nasze wpisy nie powinny się z nią mieszać ani ginąć przy jej podmianie.
+
+Blokada tymczasowa **nie jest ścianą** — podnosi koszt kratki o 500. Gracz stojący w jednokratkowych drzwiach nie odcina wtedy trasy: jeśli objazd istnieje, zostanie wybrany, a jeśli nie — trasa nadal prowadzi tamtędy, bot czeka i próbuje ponownie, zamiast ogłosić brak drogi i stanąć. Dopiero blokada trwała czyni kratkę nieprzechodnią, tak samo jak 255 w danych mapy.
+
+Wykonawca nie uczy się ze wszystkiego. Nieudany **skos** blokuje samo przejście na 20 sekund, nigdy kratkę: skos zawodzi także na zamkniętym rogu, gdzie oba kafle ortogonalne są zablokowane, a kratka docelowa bywa wtedy zupełnie pusta — nauka z takich prób stopniowo wycinałaby z mapy przechodnie skrzyżowania. Zmiana piętra nie uczy niczego, inaczej schody dostałyby blokadę: wejście na nie zmienia Z, więc kratka startowa i docelowa mają te same X i Y i krok wygląda na nieudany. Odmowa drivera, błąd połączenia i utrata pozycji też nie uczą — to problemy sterowania, nie mapy. Wejście na kratkę do 600 ms po upływie timeoutu odwołuje naukę: to był lag albo paraliż.
+
+Limit czasu na krok wynosi 1800 ms. Czas przejścia kratki w Tibii zależy od prędkości postaci i kosztu terenu; krok na błocie albo pod paraliżem trwa dłużej niż sekundę, a timeout krótszy od samego kroku zamieniałby zwykły powolny ruch w fałszywe blokady.
+
+Blokada jest odwoływalna. Postać stojąca na kratce kasuje jej wpis, także trwały — obecność jest mocniejszym dowodem niż jakakolwiek nauczona hipoteza. Sprawdza to każde żądanie trasy, bez osobnego zapytania.
+
+### Podgląd przechodności
+
+Sekcja **6. Podgląd przechodności** rysuje okno 65×65 kratek wokół postaci. Ciemna zieleń to teren przejezdny, czerwień — nieprzechodni w danych mapy, grafit — brak danych (nie ma kafla PNG; to nie to samo co ściana), żółć — blokada nauczona tymczasowa, fiolet — trwała. Kliknięcie kratki z nauczoną blokadą usuwa ją; kratki opisanej przez dane mapy nie da się w ten sposób ruszyć.
+
+Okno odświeża się po zmianie kratki postaci albo co pół sekundy i nigdy nie ma dwóch żądań naraz. Endpoint nie korzysta z zamka pętli `/api/locate` i ma własny cache kafli — planer trasy pyta o prostokąt rozpięty na całej trasie, podgląd o małe okno wokół postaci, a jeden wspólny cache kazałby im wypierać się nawzajem przy każdym odczycie. Podgląd działa niezależnie od podążania za trasą; przydaje się właśnie wtedy, gdy żadna trasa nie jest uruchomiona.
+
+To także narzędzie diagnostyczne: lada, przez którą postać nie przejdzie, a która świeci na zielono, jest dowodem, że dane mapy jej nie znają.
 
 ## Sterowanie
 
@@ -198,7 +220,7 @@ Zapisz wynik każdego punktu w opisie commita — to jedyna weryfikacja emiteró
 
 ```sh
 go test ./...
-node --test ui_test.cjs tracker_test.cjs route_test.cjs recorder_test.cjs follower_test.cjs executor_test.cjs input_client_test.cjs
+node --test ui_test.cjs tracker_test.cjs route_test.cjs recorder_test.cjs follower_test.cjs executor_test.cjs input_client_test.cjs blocks_test.cjs
 ```
 
 ## Jak działa
@@ -227,13 +249,23 @@ Pełne wyszukiwanie ma limit 45 s; przy wolnym działaniu podaj katalog z mapami
 {"from":{"x":32786,"y":32061,"z":7},"to":{"x":32786,"y":32121,"z":7},"margin":64}
 ```
 
-Odpowiedź: `{"found":true,"status":"ok","steps":[[32786,32061],[32786,32062]],"tiles":63,"cost":102.6,"reason":"","elapsed_ms":5.2}`. Pole `status` przyjmuje `ok`, `blocked_start`, `blocked_goal`, `no_route`, `different_floor`, `limit` i `cancelled`; `reason` opisuje to samo słowami. Żadna z tych sytuacji nie jest błędem HTTP.
+Odpowiedź: `{"found":true,"status":"ok","steps":[[32786,32061],[32786,32062]],"tiles":63,"cost":102.6,"reason":"","elapsed_ms":5.2,"overlay_revision":12}`. `overlay_revision` rośnie z każdą zmianą warstwy nauczonych blokad, więc panel odróżni trasę policzoną przed swoją ostatnią obserwacją od tej po niej. Pole `status` przyjmuje `ok`, `blocked_start`, `blocked_goal`, `no_route`, `different_floor`, `limit` i `cancelled`; `reason` opisuje to samo słowami. Żadna z tych sytuacji nie jest błędem HTTP.
 
 Kod 400 zwracany jest wyłącznie przy niepoprawnym wejściu: brakujące lub niepełne `from`/`to` (każde wymaga `x`, `y` i `z`), współrzędne poza 0–65535, piętro poza 0–15, `margin` poza 0–256, uszkodzony JSON, treść z doklejonym drugim dokumentem oraz obszar wyszukiwania przekraczający 4 mln kratek — same współrzędne nie są ograniczeniem, dwa poprawne punkty na przeciwległych krańcach mapy alokowałyby gigabajty. Żądanie porzucone przez przeglądarkę kończy się kodem 408 i nie wczytuje kafli.
 
+Przed wyszukiwaniem serwer robi jedno zdjęcie warstwy nauczonych blokad dla całego obszaru — A* zakłada, że koszt zamkniętego wierzchołka się nie zmienia, więc graf nie może się przesunąć w trakcie. Kratka `from` jest przy okazji kasowana z tej warstwy: skoro postać tam stoi, wpis jest po prostu błędny. Bazowa siatka kosztów nigdy nie jest modyfikowana, bo współdzieli tablicę pikseli z cache'em piętra.
+
 A* działa na kaflach `Minimap_WaypointCost_X_Y_Z.png` z katalogu podanego przez `-maps`, w prostokącie rozpiętym na obu punktach i powiększonym o `margin` (0 oznacza domyślne 64, maksimum 256), z limitem 5 s. Trasa wymagająca objazdu poza tym prostokątem zwróci `no_route` — zwiększ margines albo dodaj waypoint pośredni. Ruch po przekątnej między dwiema ścianami jest niemożliwy, tak jak w grze. Koszt kratki pochodzi wprost z indeksu palety: 255 to teren nieprzechodni, niższe wartości to koszt chodzenia, gdzie 100 odpowiada jednemu krokowi. W danych występują kratki tańsze niż 100, więc oszacowanie odległości jest skalowane najtańszą kratką w obszarze — inaczej A* przestaje zwracać najtańszą trasę. Brakujące kafle są nieprzechodnie. Zapytania o trasę mają własny zamek i własny cache, więc nie odbierają przepustowości pętli `/api/locate`.
 
+`POST /api/blocks/observe`, czysty JSON: `{"from":{"x":…,"y":…,"z":…},"to":{…},"outcome":"no_motion","still_frames":3,"last_frame_age_ms":140}`. `outcome` przyjmuje `no_motion` i `entered`. Decyzję podejmuje serwer i zwraca ją jako `{"result":"temp","reason":"Pierwszy epizod; blokada tymczasowa."}`; `result` to `ignored`, `temp`, `promoted` albo `cleared`, a `reason` zawsze tłumaczy dlaczego — odrzucona obserwacja nie może wyglądać jak zgubione żądanie.
+
+`GET /api/blocks?x=&y=&z=&r=` zwraca nauczone blokady w oknie (promień 1–64) jako listę `{"x","y","z","kind","episodes","expires_in_ms"}`. `DELETE /api/blocks` z ciałem `{"x":…,"y":…,"z":…}` kasuje jedną, także trwałą, i odpowiada `{"cleared":true}`.
+
+`GET /api/grid?x=&y=&z=&r=` zwraca `application/octet-stream`: po jednym bajcie na kratkę, wierszami od lewego górnego rogu okna, `(2r+1)²` bajtów. Bity: `1` teren nieprzechodni w danych mapy, `2` brak danych, `4` blokada tymczasowa, `8` trwała. Nagłówki `X-Grid-Origin` i `X-Grid-Revision` mówią, gdzie zaczyna się okno i w jakiej rewizji warstwy powstało. Wszystkie trzy trasy blokad odpowiadają kodem 503, gdy magazyn nie jest włączony.
+
 `GET /api/demo` zwraca demonstracyjną minimapę PNG; `GET /api/info` listę dostępnych pięter. W `options` użyj `demo:true`, aby dopasować obraz demonstracyjny do atlasu syntetycznego.
+
+Warstwa blokad testowana jest osobno, na wstrzykniętym zegarze: czas życia wpisu, liczenie epizodów, awans na trwały, zapominanie historii, odrzucanie obserwacji bez dowodu, skos blokujący przejście zamiast kratki, odwołanie wpisu przez wejście na kratkę, atomowy zapis pliku i odrzucenie obcej wersji. Po stronie tras sprawdzane są objazd wokół nauczonej blokady, przepuszczenie trasy przez blokadę tymczasową tam, gdzie objazdu nie ma, zakaz skosu obok nauczonego mebla oraz to, że bazowa siatka kosztów nie zmienia się przy równoległych zapytaniach.
 
 Testy obejmują znane współrzędne, przesunięcie, skalę i maskę, brak dopasowania, niejednoznaczność, brak map, granicę kafli i żądania HTTP. Wyszukiwanie trasy sprawdzane jest osobno: odczyt kosztów z palety (konwersja do skali szarości zamieniłaby blokadę 255 na teren przechodni), brakujące kafle, granica kafli, obejście ściany, zakaz przecinania zamkniętego rogu, wybór tańszego terenu, zablokowany start i cel, limit kroków, anulowanie oraz walidacja `/api/path` wraz z dowodem, że zapytanie o trasę nie czeka na zamek śledzenia. Optymalność sprawdzana jest przez porównanie z Dijkstrą na dwustu losowych siatkach mieszanego terenu. Testy nie wymagają gry.
 
