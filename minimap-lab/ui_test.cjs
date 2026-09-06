@@ -5,8 +5,8 @@ const vm = require('node:vm');
 
 // Exercise UI event flows and submitted options, with only browser drawing and
 // media permission APIs stubbed. The Go tests verify the actual image matcher.
-function app({respond, respondPath, latency=3} = {}) {
-  const elements = new Map(), requests = [], pathRequests = [];
+function app({respond, respondPath, respondInput, latency=3} = {}) {
+  const elements = new Map(), requests = [], pathRequests = [], sendRequests = [];
   let clock = 100, timerID = 0;
   const timers = new Map();
   const context2d = new Proxy({}, {get: () => () => {}});
@@ -38,6 +38,11 @@ function app({respond, respondPath, latency=3} = {}) {
       // No test arms a session, so control simply reports itself unavailable,
       // the same reply the Go server gives when started without -input.
       if (url === '/api/input/status') return {async json() {return {available:false, platform:'test'};}};
+      if (url === '/api/input') {
+        const body = JSON.parse(options.body); sendRequests.push(body);
+        const result = respondInput?.(body, sendRequests.length) || {status:'emitted', key:'numpad6'};
+        return {ok:true, async json() {return result;}};
+      }
       if (url === '/api/path') {
         const req = JSON.parse(options.body); pathRequests.push(req);
         const steps = [[req.from.x, req.from.y], [req.from.x+1, req.from.y]];
@@ -57,7 +62,12 @@ function app({respond, respondPath, latency=3} = {}) {
   vm.runInContext(readFileSync('web/executor.js','utf8'), sandbox);
   vm.runInContext(readFileSync('web/input.js','utf8'), sandbox);
   vm.runInContext(readFileSync('web/app.js','utf8'), sandbox);
-  return {get:id=>document.getElementById(id), requests, pathRequests, timers, normalisedPoint:sandbox.normalisedPoint,
+  // app.js's own const declarations do not become properties of the sandbox
+  // (unlike its function declarations, e.g. normalisedPoint), so pull the two
+  // control objects out explicitly - test-only, nothing app.js itself needs.
+  vm.runInContext('globalThis.__inputClient = inputClient; globalThis.__executor = executor;', sandbox);
+  return {get:id=>document.getElementById(id), requests, pathRequests, sendRequests, timers,
+    normalisedPoint:sandbox.normalisedPoint, inputClient:sandbox.__inputClient, executor:sandbox.__executor,
     async loadRoute(route) {
       const input = document.getElementById('route-file');
       input.files = [{name:'route.json', async text() {return typeof route === 'string' ? route : JSON.stringify(route);}}];
@@ -310,4 +320,68 @@ test('kalibracja odrzuca punkt poza podglądem', () => {
 
 test('kalibracja odrzuca podgląd o zerowym rozmiarze', () => {
   assert.equal(normalisedPoint({offsetX: 1, offsetY: 1}, {clientWidth: 0, clientHeight: 0}), null);
+});
+
+test('walk automation stays off while the checkbox is unticked, even with an armed client', async () => {
+  const a = app();
+  await new Promise(setImmediate); await a.get('share').onclick();
+  await a.loadRoute(routeFile({x:32970,y:32100,z:7}));
+  a.get('route-follow').checked = true; a.get('live').checked = true;
+  a.inputClient.armed = true; a.inputClient.session = 'test-session';
+  await a.get('locate').onclick();
+  await a.tick();
+  await new Promise(setImmediate);
+  assert.match(a.get('route-next').textContent, /E/, 'the preview keeps working exactly as before');
+  assert.equal(a.sendRequests.length, 0, 'nothing is sent while the walk checkbox is unticked');
+});
+
+test('walk ticked on an armed client sends the intent and confirms it by the captured step id', async () => {
+  const a = app();
+  await new Promise(setImmediate); await a.get('share').onclick();
+  await a.loadRoute(routeFile({x:32970,y:32100,z:7}));
+  a.get('route-follow').checked = true; a.get('live').checked = true;
+  a.get('input-walk').checked = true;
+  a.inputClient.armed = true; a.inputClient.session = 'test-session';
+  await a.get('locate').onclick();
+  await a.tick();
+  await new Promise(setImmediate);
+  assert.equal(a.sendRequests.length, 1, 'exactly one intent sent for the walk step');
+  assert.equal(a.sendRequests[0].action, 'walk');
+  assert.equal(a.executor.state().awaitingEmit, false,
+    'the reply was confirmed against the step id captured for that step');
+});
+
+test('floor actions unticked leaves a transition waypoint unsent, with no pending step behind it', async () => {
+  // Regression for the bug where the old post-intentFor gate discarded an
+  // already-created pending step: re-ticking floor actions never recovered
+  // it, because a block only clears once the follower's target changes,
+  // which cannot happen while stuck on that same waypoint.
+  const a = app();
+  await new Promise(setImmediate); await a.get('share').onclick();
+  await a.loadRoute(routeFile({x:32958, y:32077, z:6, type:'rope'}));
+  a.get('route-follow').checked = true;
+  a.get('input-walk').checked = true;
+  a.inputClient.armed = true; a.inputClient.session = 'test-session';
+  // input-actions stays unticked: floor actions are paused.
+  await a.get('locate').onclick();
+  await new Promise(setImmediate);
+  assert.equal(a.sendRequests.length, 0, 'the transition is never sent while actions are paused');
+  assert.equal(a.executor.state().waiting, false, 'no pending step was left behind for it to get stuck on');
+});
+
+test('a disarmed reply from the server leaves the panel showing disarmed controls', async () => {
+  const a = app({respondInput: () => ({status: 'disarmed', reason: 'zmiana okna aktywnego'})});
+  await new Promise(setImmediate); await a.get('share').onclick();
+  await a.loadRoute(routeFile({x:32970,y:32100,z:7}));
+  a.get('route-follow').checked = true; a.get('live').checked = true;
+  a.get('input-walk').checked = true;
+  a.inputClient.armed = true; a.inputClient.session = 'test-session';
+  await a.get('locate').onclick();
+  await a.tick();
+  await new Promise(setImmediate);
+  assert.equal(a.inputClient.armed, false);
+  assert.equal(a.get('input-arm').disabled, false, 'arm is available again');
+  assert.equal(a.get('input-disarm').disabled, true);
+  assert.equal(a.get('input-walk').checked, false, 'walk is unticked when control stops');
+  assert.match(a.get('input-status').textContent, /zmiana okna aktywnego/);
 });

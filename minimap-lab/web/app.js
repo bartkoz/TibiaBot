@@ -58,6 +58,9 @@ function setSource(image, reset = true) {
   if (!reset && (source.width !== w || source.height !== h)) {
     // Without a fresh position further movement is not permissible.
     roi = marker = null; invalidate(); executor.reset(); inputClient.disarm();
+    // disarm() never calls onState and stops the heartbeat, so nothing else
+    // would ever refresh the toolbar - it would keep showing armed controls.
+    renderInputStatus({reason: 'zmieniła się rozdzielczość źródła'});
     status('Rozdzielczość źródła zmieniła się. Zaznacz minimapę ponownie.', 'error');
   }
   source.width = w; source.height = h; source.getContext('2d').drawImage(image, 0, 0);
@@ -77,7 +80,11 @@ function point(event, element, width, height) {
     y:Math.max(0, Math.min(height-1, Math.floor((event.clientY-r.top)*height/r.height)))};
 }
 screen.addEventListener('pointerdown', e => {
-  if (!ready) return; invalidate(); dragging = point(e, screen, source.width, source.height); screen.setPointerCapture(e.pointerId);
+  // A calibration click must only calibrate: invalidating the current
+  // reading (and unticking live tracking) here would be a surprising side
+  // effect of pointing at the character's tile.
+  if (!ready || calibrating) return;
+  invalidate(); dragging = point(e, screen, source.width, source.height); screen.setPointerCapture(e.pointerId);
 });
 screen.addEventListener('pointermove', e => {
   if (!dragging) return; const p = point(e, screen, source.width, source.height);
@@ -377,9 +384,15 @@ function followStep(position, now) {
   if (!$('input-walk').checked || !inputClient.armed) return out;
   executor.observe(position, lastPositionAt, now);
   if (executor.state().actionDone) inputClient.actionDone();
+  // Decided from the follower's own output, before the executor is asked for
+  // anything: asking first would create a pending step that this gate then
+  // discarded without confirming or resetting it, leaving it to time out into
+  // a retry and then a permanent block - stalling the route at that waypoint
+  // even after the checkbox is re-ticked, since a block only clears when the
+  // target changes, which it cannot while stuck there.
+  if (out.action === 'transition' && !$('input-actions').checked) return out;
   const intent = executor.intentFor(out, now);
   if (!intent) return out;
-  if (intent.action === 'transition' && !$('input-actions').checked) return out;
   // The id ties the confirmation to this step: a reply that arrives after the
   // step was abandoned must not stamp its successor.
   const stepId = executor.state().stepId;
@@ -495,11 +508,11 @@ $('input-calibrate').addEventListener('click', () => {
 $('screen').addEventListener('click', async event => {
   if (!calibrating) return;
   calibrating = false;
-  const point = normalisedPoint(event, event.currentTarget);
-  if (!point) { $('input-status').textContent = 'Punkt poza podglądem.'; return; }
-  const ok = await inputClient.calibrate(point.x, point.y);
+  const frac = normalisedPoint(event, event.currentTarget);
+  if (!frac) { $('input-status').textContent = 'Punkt poza podglądem.'; return; }
+  const ok = await inputClient.calibrate(frac.x, frac.y);
   $('input-status').textContent = ok
-    ? `Kratka postaci: ${point.x.toFixed(3)}, ${point.y.toFixed(3)}`
+    ? `Kratka postaci: ${frac.x.toFixed(3)}, ${frac.y.toFixed(3)}`
     : 'Nie udało się zapisać kalibracji.';
 });
 $('input-walk').addEventListener('change', () => { if (!$('input-walk').checked) executor.reset(); });
