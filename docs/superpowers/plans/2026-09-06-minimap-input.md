@@ -1020,7 +1020,8 @@ func TestInputAPIStatusActsAsHeartbeat(t *testing.T) {
 	s, _ := inputServer(t)
 	session := armSession(t, s)
 
-	r := httptest.NewRequest("GET", "http://127.0.0.1:8095/api/input/status?session="+session, nil)
+	r := httptest.NewRequest("GET", "http://127.0.0.1:8095/api/input/status", nil)
+	r.Header.Set("X-Input-Session", session)
 	w := httptest.NewRecorder()
 	s.routes().ServeHTTP(w, r)
 
@@ -1256,7 +1257,7 @@ func (s *server) inputStatus(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{"available": false, "platform": runtime.GOOS})
 		return
 	}
-	state := s.driver.Beat(r.URL.Query().Get("session"))
+	state := s.driver.Beat(r.Header.Get("X-Input-Session"))
 	// The token is a bearer secret; it leaves the server once, in the arm reply.
 	state.Session = ""
 	writeJSON(w, state)
@@ -2464,7 +2465,9 @@ class InputClient {
     this.stopHeartbeat();
     const beat = async () => {
       if (!this.armed || !this.session) return;
-      const r = await this.fetch('/api/input/status?session=' + encodeURIComponent(this.session));
+      // The token travels in a header, never in the URL: query strings land in
+      // logs, history and Referer.
+      const r = await this.fetch('/api/input/status', {headers: {'X-Input-Session': this.session}});
       const state = await r.json();
       if (!state.armed) { this.armed = false; this.stopHeartbeat(); }
       this.onState(state);
