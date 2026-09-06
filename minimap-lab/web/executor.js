@@ -24,15 +24,20 @@ class StepExecutor {
     this.stepTimeoutMS = options.stepTimeoutMS ?? 1200;
     this.actionTimeoutMS = options.actionTimeoutMS ?? 5000;
     this.maxFailedCycles = options.maxFailedCycles ?? 3;
+    // Ids are never reused, including across reset(), so a late emitted()
+    // for a step from before a reset can never be mistaken for a new one.
+    this.nextId = 1;
     this.reset();
   }
   reset() {
-    this.pending = null; // {kind, target, x, y, z, from, viaHotkey, emittedAt, sentAt}
+    this.pending = null; // {kind, target, x, y, z, from, viaHotkey, emittedAt, sentAt, id}
     this.last = null;
     this.retries = 0;
     this.cycles = 0;
     this.blocked = false;
     this.blockedTarget = null;
+    // The target the current retries count is charging failures against.
+    this.currentTarget = null;
     this.halted = false;
     this.stopped = false;
     this.actionDone = false;
@@ -45,7 +50,17 @@ class StepExecutor {
       // True while a step is pending but emitted() has not yet confirmed the
       // key left the driver - distinct from waiting on the character to move.
       awaitingEmit: !!this.pending && this.pending.emittedAt === null,
+      // Id of the pending step, for the caller to pass back into emitted().
+      stepId: this.pending ? this.pending.id : null,
     };
+  }
+  // startTarget marks which tile the current retries count applies to. A
+  // target that differs from whatever it was tracking - the route was
+  // recomputed - gets a fresh retry allowance instead of inheriting a
+  // failure count that was never charged against it.
+  startTarget(target) {
+    if (!sameTarget(target, this.currentTarget)) this.retries = 0;
+    this.currentTarget = target;
   }
   // Consequence of a pending step that did not pan out, whether it timed out
   // waiting for movement or was never confirmed as emitted at all: charge a
@@ -96,7 +111,8 @@ class StepExecutor {
       // from is where the character stood when the key was sent. Taking it
       // from the first observation after the press would make "did not move"
       // and "moved somewhere unexpected" indistinguishable.
-      this.pending = {kind: 'walk', target: out.next, from: this.last, emittedAt: null, sentAt: now};
+      this.startTarget(targetFromOut(out));
+      this.pending = {kind: 'walk', target: out.next, from: this.last, emittedAt: null, sentAt: now, id: this.nextId++};
       return {action: 'walk', direction: out.direction};
     }
     if (out.action === 'transition') {
@@ -105,20 +121,25 @@ class StepExecutor {
       // onto it moves the character. The next waypoint says which way that is.
       if (wp.type === 'stairs') {
         if (!out.next || !this.last) return null;
-        this.pending = {kind: 'transition', x: wp.x, y: wp.y, z: wp.z, viaHotkey: false, from: this.last, emittedAt: null, sentAt: now};
+        this.startTarget(targetFromOut(out));
+        this.pending = {kind: 'transition', x: wp.x, y: wp.y, z: wp.z, viaHotkey: false, from: this.last, emittedAt: null, sentAt: now, id: this.nextId++};
         return {action: 'walk', direction: stepDirection(this.last, out.next)};
       }
       this.actionDone = false;
-      this.pending = {kind: 'transition', x: wp.x, y: wp.y, z: wp.z, viaHotkey: true, from: this.last, emittedAt: null, sentAt: now};
+      this.startTarget(targetFromOut(out));
+      this.pending = {kind: 'transition', x: wp.x, y: wp.y, z: wp.z, viaHotkey: true, from: this.last, emittedAt: null, sentAt: now, id: this.nextId++};
       return {action: 'transition', type: wp.type, waypoint: out.index ?? 0};
     }
     return null;
   }
-  // emitted records when the key actually left the driver. It is taken after
-  // the reply arrives, so no frame captured before the press can be mistaken
-  // for proof that the step happened.
-  emitted(now) {
-    if (this.pending) {
+  // emitted records when the key actually left the driver, correlated by id
+  // so a late confirmation for a step already dropped (see the emission
+  // grace period in intentFor) cannot be mistaken for proof about whatever
+  // pending replaced it. id is required: the only caller is the panel driver,
+  // written to always pass the id it captured from state() right after
+  // intentFor returned the intent.
+  emitted(now, id) {
+    if (this.pending && this.pending.id === id) {
       this.pending.emittedAt = now;
     }
   }

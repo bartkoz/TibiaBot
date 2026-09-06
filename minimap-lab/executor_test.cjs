@@ -13,7 +13,7 @@ test('pierwszy krok jest wysyłany od razu', () => {
 test('drugi krok nie idzie, dopóki pierwszy nie jest potwierdzony', () => {
   const ex = new StepExecutor();
   ex.intentFor(walk(), 0);
-  ex.emitted(10);
+  ex.emitted(10, ex.state().stepId);
 
   assert.equal(ex.intentFor(walk(), 20), null);
 });
@@ -21,7 +21,7 @@ test('drugi krok nie idzie, dopóki pierwszy nie jest potwierdzony', () => {
 test('klatka sprzed emisji nie jest dowodem wykonania kroku', () => {
   const ex = new StepExecutor();
   ex.intentFor(walk('N', [100, 99]), 0);
-  ex.emitted(100);
+  ex.emitted(100, ex.state().stepId);
 
   // Captured before the key was sent, even though it arrived after.
   ex.observe(at(100, 99), 50, 120);
@@ -32,7 +32,7 @@ test('klatka sprzed emisji nie jest dowodem wykonania kroku', () => {
 test('klatka po emisji z docelową kratką kończy krok', () => {
   const ex = new StepExecutor();
   ex.intentFor(walk('N', [100, 99]), 0);
-  ex.emitted(100);
+  ex.emitted(100, ex.state().stepId);
 
   ex.observe(at(100, 99), 150, 160);
 
@@ -44,7 +44,7 @@ test('brak ruchu przed timeoutem nie powtarza kroku', () => {
   const ex = new StepExecutor({stepTimeoutMS: 1000});
   ex.observe(at(100, 100), 0, 0);
   ex.intentFor(walk('N', [100, 99]), 0);
-  ex.emitted(0);
+  ex.emitted(0, ex.state().stepId);
   ex.observe(at(100, 100), 500, 510);
 
   assert.equal(ex.intentFor(walk('N', [100, 99]), 900), null);
@@ -54,7 +54,7 @@ test('brak ruchu po timeoucie powtarza krok raz', () => {
   const ex = new StepExecutor({stepTimeoutMS: 1000});
   ex.observe(at(100, 100), 0, 0);
   ex.intentFor(walk('N', [100, 99]), 0);
-  ex.emitted(0);
+  ex.emitted(0, ex.state().stepId);
   ex.observe(at(100, 100), 500, 510);
 
   const retry = ex.intentFor(walk('N', [100, 99]), 1100);
@@ -66,9 +66,9 @@ test('brak ruchu po timeoucie powtarza krok raz', () => {
 test('druga porażka tego samego kroku zgłasza blokadę', () => {
   const ex = new StepExecutor({stepTimeoutMS: 1000});
   ex.intentFor(walk('N', [100, 99]), 0);
-  ex.emitted(0);
+  ex.emitted(0, ex.state().stepId);
   ex.intentFor(walk('N', [100, 99]), 1100); // retry
-  ex.emitted(1100);
+  ex.emitted(1100, ex.state().stepId);
 
   const third = ex.intentFor(walk('N', [100, 99]), 2200);
 
@@ -84,11 +84,11 @@ test('trzy różne cele nieudane pod rząd zatrzymują wykonawcę', () => {
   const ex = new StepExecutor({stepTimeoutMS: 100, maxFailedCycles: 3});
 
   assert.ok(ex.intentFor(walk('N', [100, 99]), 0));
-  ex.emitted(0);
+  ex.emitted(0, ex.state().stepId);
   assert.ok(ex.intentFor(walk('N', [101, 99]), 200)); // first target timed out
-  ex.emitted(200);
-  assert.ok(ex.intentFor(walk('N', [102, 99]), 400)); // second timed out, third differs so it is not blocked
-  ex.emitted(400);
+  ex.emitted(200, ex.state().stepId);
+  assert.ok(ex.intentFor(walk('N', [102, 99]), 400)); // second timed out; a fresh target gets its own retry, not a block
+  ex.emitted(400, ex.state().stepId);
 
   assert.equal(ex.intentFor(walk('N', [102, 99]), 600), null); // third timed out too
   assert.equal(ex.state().stopped, true);
@@ -100,9 +100,9 @@ test('maxFailedCycles inny niż domyślny zatrzymuje wcześniej', () => {
   // this proves the option actually takes effect rather than being ignored.
   const ex = new StepExecutor({stepTimeoutMS: 100, maxFailedCycles: 2});
   ex.intentFor(walk('N', [100, 99]), 0);
-  ex.emitted(0);
+  ex.emitted(0, ex.state().stepId);
   assert.ok(ex.intentFor(walk('N', [100, 99]), 200)); // first failure -> one retry allowed
-  ex.emitted(200);
+  ex.emitted(200, ex.state().stepId);
 
   // Second failure hits maxFailedCycles: 2 and stops, instead of reporting
   // blocked the way the default of 3 would at this point.
@@ -113,9 +113,9 @@ test('maxFailedCycles inny niż domyślny zatrzymuje wcześniej', () => {
 test('blokada trzyma cel, ale inny cel ją czyści', () => {
   const ex = new StepExecutor({stepTimeoutMS: 1000});
   ex.intentFor(walk('N', [100, 99]), 0);
-  ex.emitted(0);
+  ex.emitted(0, ex.state().stepId);
   ex.intentFor(walk('N', [100, 99]), 1100); // retry
-  ex.emitted(1100);
+  ex.emitted(1100, ex.state().stepId);
   ex.intentFor(walk('N', [100, 99]), 2200); // blocked
   assert.equal(ex.state().blocked, true);
 
@@ -128,10 +128,30 @@ test('blokada trzyma cel, ale inny cel ją czyści', () => {
   assert.equal(ex.state().blocked, false);
 });
 
+test('inny cel po jednej porażce dostaje własną szansę, nie od razu blokadę', () => {
+  // Reproduces the bug where retries carried over across a replan: target A
+  // fails once, the follower moves on to a brand-new target B, and B's own
+  // first failure must not inherit A's already-spent retry.
+  const ex = new StepExecutor({stepTimeoutMS: 100});
+  ex.intentFor(walk('N', [100, 99]), 0);
+  ex.emitted(0, ex.state().stepId);
+
+  const forB = ex.intentFor(walk('N', [101, 99]), 200); // A timed out, follower replans to B
+  assert.ok(forB);
+  ex.emitted(200, ex.state().stepId);
+
+  // B's first failure: must be retried, not blocked.
+  const retryForB = ex.intentFor(walk('N', [101, 99]), 400);
+
+  assert.deepEqual(retryForB, {action: 'walk', direction: 'N'});
+  assert.equal(ex.state().blocked, false);
+  assert.equal(ex.state().retries, 1);
+});
+
 test('nieznana pozycja natychmiast wstrzymuje ruch', () => {
   const ex = new StepExecutor();
   ex.intentFor(walk(), 0);
-  ex.emitted(10);
+  ex.emitted(10, ex.state().stepId);
 
   ex.observe(null, 100, 110);
 
@@ -142,7 +162,7 @@ test('nieznana pozycja natychmiast wstrzymuje ruch', () => {
 test('powrót poprawnego odczytu odblokowuje wykonawcę', () => {
   const ex = new StepExecutor();
   ex.intentFor(walk(), 0);
-  ex.emitted(10);
+  ex.emitted(10, ex.state().stepId);
   ex.observe(null, 100, 110);
 
   ex.observe(at(100, 100), 200, 210);
@@ -155,7 +175,7 @@ test('nieoczekiwana kratka porzuca krok zamiast liczyć go jako nieudany', () =>
   const ex = new StepExecutor();
   ex.observe(at(100, 100), 0, 0);
   ex.intentFor(walk('N', [100, 99]), 0);
-  ex.emitted(10);
+  ex.emitted(10, ex.state().stepId);
 
   // Pushed by a creature, or the player took over: not a failed step.
   ex.observe(at(105, 120), 100, 110);
@@ -174,7 +194,7 @@ test('schody są pokonywane krokiem w stronę następnego waypointa', () => {
   // The stairs tile is on the current floor, so this is a walk. What makes it
   // a transition is that the proof is a changed floor, not a reached tile.
   assert.deepEqual(ex.intentFor(stairs, 10), {action: 'walk', direction: 'E'});
-  ex.emitted(20);
+  ex.emitted(20, ex.state().stepId);
 
   ex.observe(at(101, 100, 6), 100, 110);
 
@@ -208,7 +228,7 @@ test('akcja piętra czeka na zmianę Z, nie na kratkę', () => {
   const rope = {action: 'transition', index: 3, waypoint: {x: 100, y: 100, z: 7, type: 'rope'}};
 
   assert.deepEqual(ex.intentFor(rope, 0), {action: 'transition', type: 'rope', waypoint: 3});
-  ex.emitted(10);
+  ex.emitted(10, ex.state().stepId);
 
   ex.observe(at(100, 100, 7), 200, 210);
   assert.equal(ex.intentFor(rope, 220), null, 'to samo piętro nie kończy akcji');
@@ -224,7 +244,7 @@ test('nieoczekiwana kratka podczas akcji piętra porzuca krok zamiast liczyć po
   ex.observe(at(100, 100, 7), 0, 0);
 
   ex.intentFor(rope, 10);
-  ex.emitted(20);
+  ex.emitted(20, ex.state().stepId);
 
   // Pushed elsewhere on the same floor: no floor change, so no proof either
   // way, but the situation changed - this must not be charged as a failure.
@@ -248,4 +268,29 @@ test('krok bez potwierdzenia emisji jest porzucany po czasie i liczy się jako p
   assert.deepEqual(retry, {action: 'walk', direction: 'N'});
   assert.equal(ex.state().retries, 1);
   assert.equal(ex.state().awaitingEmit, true);
+});
+
+test('spóźnione potwierdzenie porzuconego kroku nie przesuwa terminu następnego', () => {
+  const ex = new StepExecutor({stepTimeoutMS: 100});
+  ex.intentFor(walk('N', [100, 99]), 0);
+  const id1 = ex.state().stepId;
+  // No emitted(id1): the confirmation for step 1 never arrives in time.
+
+  // Grace period (2 * stepTimeoutMS = 200ms) expires: step 1 is dropped as a
+  // failed cycle, and step 2 (its retry) is sent in the same call.
+  ex.intentFor(walk('N', [100, 99]), 250);
+  const id2 = ex.state().stepId;
+  assert.notEqual(id2, id1);
+  ex.emitted(300, id2);
+
+  // Step 1's late confirmation finally arrives, long after it was abandoned.
+  ex.emitted(310, id1);
+
+  // Had that stamped step 2's emittedAt to 310 instead of being ignored,
+  // step 2 would still look in flight here (310 + stepTimeoutMS = 410 > 405).
+  // It must instead have timed out from its real baseline of 300
+  // (300 + 100 = 400 <= 405), reporting its second failure as blocked.
+  ex.intentFor(walk('N', [100, 99]), 405);
+  assert.equal(ex.state().blocked, true);
+  assert.equal(ex.state().waiting, false);
 });
