@@ -163,8 +163,20 @@ func (d *Driver) Submit(in Intent) InputResult {
 		d.disarmLocked("panel przestał odpowiadać")
 		return InputResult{Status: "disarmed", Reason: d.reason}
 	}
-	if in.Seq != 0 && in.Seq == d.lastSeq {
+	// Sequence numbers start at 1 - the panel's client increments before
+	// sending, so nothing legitimate sends 0. A stuck-at-zero client would
+	// otherwise bypass replay protection entirely.
+	if in.Seq == 0 {
+		return InputResult{Status: "refused", Reason: "brak numeru sekwencyjnego"}
+	}
+	if in.Seq == d.lastSeq {
 		return d.lastResult
+	}
+	// A Seq lower than the last accepted one is a replay out of order (e.g.
+	// 5, 3, 5): refuse it outright rather than let it slip past the equality
+	// check above and emit again.
+	if in.Seq < d.lastSeq {
+		return InputResult{Status: "refused", Reason: "numer sekwencyjny cofnął się"}
 	}
 	if in.AgeMS < 0 || in.AgeMS > maxObservationAgeMS {
 		return d.record(in.Seq, InputResult{Status: "refused",
@@ -199,8 +211,7 @@ func (d *Driver) walkLocked(in Intent) InputResult {
 		return InputResult{Status: "refused", Reason: "nieznany kierunek"}
 	}
 	if err := d.em.TapKey(key, holdMS); err != nil {
-		d.disarmLocked(err.Error())
-		return InputResult{Status: "disarmed", Reason: err.Error()}
+		return d.emitterFailureLocked(err)
 	}
 	d.taps = append(d.taps, d.now())
 	return InputResult{Status: "emitted", Key: key}
@@ -219,8 +230,7 @@ func (d *Driver) transitionLocked(in Intent) InputResult {
 		return InputResult{Status: "refused", Reason: "brak hotkeya dla akcji " + in.Type}
 	}
 	if err := d.em.TapKey(key, holdMS); err != nil {
-		d.disarmLocked(err.Error())
-		return InputResult{Status: "disarmed", Reason: err.Error()}
+		return d.emitterFailureLocked(err)
 	}
 	d.taps = append(d.taps, d.now())
 	d.inFlight = &want
@@ -230,6 +240,16 @@ func (d *Driver) transitionLocked(in Intent) InputResult {
 func (d *Driver) record(seq uint64, r InputResult) InputResult {
 	d.lastSeq, d.lastResult = seq, r
 	return r
+}
+
+// emitterFailureLocked disarms the driver on a failed OS call and produces a
+// user-facing result. The Reason always starts in Polish, regardless of what
+// the underlying OS binding's error text says; Status() and the returned
+// result therefore always agree.
+func (d *Driver) emitterFailureLocked(err error) InputResult {
+	msg := fmt.Sprintf("nie udało się wysłać zdarzenia: %v", err)
+	d.disarmLocked(msg)
+	return InputResult{Status: "disarmed", Reason: msg}
 }
 
 func (d *Driver) expiredLocked() bool {

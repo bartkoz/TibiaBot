@@ -1,6 +1,8 @@
 package main
 
 import (
+	"errors"
+	"strings"
 	"testing"
 	"time"
 )
@@ -21,6 +23,17 @@ func driverAt(t *testing.T, start time.Time) (*Driver, *DryEmitter, *time.Time) 
 
 func walk(seq uint64, session string) Intent {
 	return Intent{Session: session, Seq: seq, Action: "walk", Direction: "N", AgeMS: 100}
+}
+
+// failingEmitter wraps a DryEmitter but fails every TapKey call, so a test can
+// exercise the driver's OS-failure path without touching input.go.
+type failingEmitter struct {
+	*DryEmitter
+	err error
+}
+
+func (e *failingEmitter) TapKey(key string, holdMS int) error {
+	return e.err
 }
 
 func TestDriverRefusesEverythingWhileDisarmed(t *testing.T) {
@@ -196,5 +209,56 @@ func TestDriverDisarmReleasesHeldKeys(t *testing.T) {
 
 	if em.Released() != 1 {
 		t.Error("disarming must release keys even though emitting is otherwise forbidden")
+	}
+}
+
+func TestDriverRefusesSeqGoingBackwards(t *testing.T) {
+	d, em, _ := driverAt(t, time.Unix(0, 0))
+	session := d.Status().Session
+
+	d.Submit(walk(5, session))
+	got := d.Submit(walk(3, session))
+
+	if got.Status != "refused" {
+		t.Fatalf("got %+v", got)
+	}
+	if len(em.Events()) != 1 {
+		t.Fatalf("a Seq going backwards must not press a key: %v", em.Events())
+	}
+}
+
+func TestDriverRefusesMissingSeq(t *testing.T) {
+	d, em, _ := driverAt(t, time.Unix(0, 0))
+	session := d.Status().Session
+
+	got := d.Submit(walk(0, session))
+
+	if got.Status != "refused" {
+		t.Fatalf("got %+v", got)
+	}
+	if len(em.Events()) != 0 {
+		t.Error("Seq 0 must not press a key")
+	}
+}
+
+func TestDriverEmitterFailureDisarmsWithPolishReason(t *testing.T) {
+	inner := &DryEmitter{Window: Window{PID: 42, Path: "/Applications/Tibia.app"}}
+	em := &failingEmitter{DryEmitter: inner, err: errors.New("boom")}
+	d := NewDriver(em)
+	if _, err := d.Arm(); err != nil {
+		t.Fatal(err)
+	}
+	session := d.Status().Session
+
+	got := d.Submit(walk(1, session))
+
+	if got.Status != "disarmed" {
+		t.Fatalf("got %+v", got)
+	}
+	if !strings.HasPrefix(got.Reason, "nie udało się wysłać zdarzenia") {
+		t.Fatalf("got %+v", got)
+	}
+	if d.Status().Armed {
+		t.Error("a failed emitter call must leave the driver disarmed")
 	}
 }
