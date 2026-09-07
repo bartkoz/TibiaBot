@@ -2,6 +2,7 @@ package testenv
 
 import (
 	"image"
+	"image/draw"
 	"os"
 	"testing"
 )
@@ -77,4 +78,19 @@ func CombatCapture(t testing.TB) image.Image {
 		t.Skip("brak testdata/combat-capture.png — zgraj klatkę z gry przyciskiem „Zapisz klatkę PNG”")
 	}
 	return LoadFixture(t, "combat-capture.png")
+}
+
+// NRGBACrop cuts a rectangle out of a fixture and converts it to NRGBA - the
+// layout the frame protocol delivers, and the one every detector expects.
+// Going through draw.Draw rather than asserting the decoded type matters: a
+// PNG can decode as paletted, and reading a paletted image's bytes as if they
+// were colours is how this project once made every wall look walkable.
+func NRGBACrop(t testing.TB, im image.Image, r image.Rectangle) *image.NRGBA {
+	t.Helper()
+	if r.Empty() {
+		t.Fatalf("prostokąt wycinka jest pusty: %v — zmierz go w CombatCalibration", r)
+	}
+	out := image.NewNRGBA(image.Rect(0, 0, r.Dx(), r.Dy()))
+	draw.Draw(out, out.Bounds(), im, r.Min, draw.Src)
+	return out
 }
