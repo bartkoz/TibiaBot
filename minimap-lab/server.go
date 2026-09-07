@@ -85,6 +85,7 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("GET /api/route", s.getRoute)
 	mux.HandleFunc("POST /api/route/waypoint", s.addWaypoint)
 	mux.HandleFunc("GET /api/preview", s.preview)
+	mux.HandleFunc("GET /api/vision", s.visionView)
 	mux.HandleFunc("POST /api/blocks/observe", s.observeBlock)
 	mux.HandleFunc("GET /api/blocks", s.listBlocks)
 	mux.HandleFunc("DELETE /api/blocks", s.deleteBlock)

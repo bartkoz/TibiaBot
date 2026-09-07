@@ -4,15 +4,19 @@ import (
 	"context"
 	"fmt"
 	"image"
+	"math"
 	"sync/atomic"
 	"time"
 
+	"minimap-lab/internal/battle"
 	"minimap-lab/internal/frame"
 	"minimap-lab/internal/input"
 	"minimap-lab/internal/locate"
 	"minimap-lab/internal/mapdata"
 	"minimap-lab/internal/nav"
 	"minimap-lab/internal/route"
+	"minimap-lab/internal/vision"
+	"minimap-lab/internal/vitals"
 )
 
 const (
@@ -27,6 +31,10 @@ const (
 	logDepth = 50
 	// planMargin of zero lets the planner pick its own default.
 	planMargin = 0
+	// maxVisionBars bounds the diagnostic payload. A crop calibrated onto the
+	// wrong part of the screen can match hundreds of things; the panel needs
+	// to see that it went wrong, not to receive all of it.
+	maxVisionBars = 64
 )
 
 // Controls is the keyboard the loop drives. It is an interface so the loop can
@@ -163,6 +171,13 @@ type Loop struct {
 	positionAt  time.Time
 	hasPosition bool
 	match       MatchState
+
+	combat CombatState
+	view   VisionView
+	// bars is what the detector found on the last frame, kept raw so the map
+	// sieve can be applied again once the position for that frame is known.
+	bars       []vision.Bar
+	visionGrid vision.Grid
 
 	previewRev  uint64
 	recSkipped  int
@@ -346,18 +361,30 @@ func (l *Loop) watchdog() {
 func (l *Loop) handleFrame(ctx context.Context, env frameEnvelope) {
 	l.lastFrameSeq = env.f.Seq
 	l.lastFrameAt = env.receivedAt
-	im, ok := env.f.Image(frame.RegionMinimap)
-	if !ok {
+	// Vision is finished and the snapshot published on every path out of this
+	// function, including the early returns. The two go together because the
+	// map sieve needs the position this frame produced - or the absence of it -
+	// and that is only settled once the match is over.
+	defer func() {
+		l.finishVision()
 		l.publish()
-		return
-	}
-	// The same video frame sent twice is one observation, not two. Network
-	// traffic is no proof that the picture moved.
+	}()
+	// The duplicate check comes before the vision detector runs: the same
+	// video frame sent twice is one observation for vision as much as for the
+	// match, so a repeat must not be counted as a fresh look at the screen.
+	// Network traffic is no proof that the picture moved.
 	if l.hasVideoUS && env.f.VideoTimeUS == l.lastVideoUS {
-		l.publish()
 		return
 	}
 	l.lastVideoUS, l.hasVideoUS = env.f.VideoTimeUS, true
+	// Detection runs before the match and regardless of it: the client's
+	// camera is centred on the character, so counting the creatures around her
+	// needs no world position whatsoever.
+	l.observeVision(env.f)
+	im, ok := env.f.Image(frame.RegionMinimap)
+	if !ok {
+		return
+	}
 
 	capturedAt := env.receivedAt.Add(-time.Duration(env.f.AgeMS) * time.Millisecond)
 	req := locate.Request{
@@ -375,7 +402,6 @@ func (l *Loop) handleFrame(ctx context.Context, env frameEnvelope) {
 		l.match = MatchState{Reason: err.Error()}
 		l.logf("dopasowanie nie powiodło się: %v", err)
 		l.noPosition(capturedAt, completedAt)
-		l.publish()
 		return
 	}
 	l.tracker.Observe(result, capturedAt, completedAt, completedAt.Sub(capturedAt))
@@ -383,7 +409,6 @@ func (l *Loop) handleFrame(ctx context.Context, env frameEnvelope) {
 
 	if !result.Found || result.Position == nil {
 		l.noPosition(capturedAt, completedAt)
-		l.publish()
 		return
 	}
 	pos := *result.Position
@@ -400,12 +425,130 @@ func (l *Loop) handleFrame(ctx context.Context, env frameEnvelope) {
 	l.record(pos)
 	l.pumpBlocks()
 	l.follow(ctx, pos, capturedAt, completedAt)
-	l.publish()
 }
 
 func (l *Loop) noPosition(capturedAt, now time.Time) {
 	l.position, l.hasPosition = nil, false
 	l.executor.Observe(nil, capturedAt, now)
+}
+
+// observeVision reads the client's own panels and finds the creature bars. It
+// is pure with respect to the world: nothing here consults the position.
+func (l *Loop) observeVision(f frame.Frame) {
+	l.combat, l.view, l.bars = CombatState{}, VisionView{}, nil
+	cc := l.cfg.Combat
+	if !cc.Enabled() {
+		return
+	}
+	l.combat.Calibrated = true
+	if im, ok := f.Image(frame.RegionHP); ok {
+		r := vitals.Read(im, cc.vitalsOptions())
+		l.combat.HPPct, l.combat.HPOK = r.Percent, r.OK
+		l.view.HP, l.view.HPOK = r.Percent, r.OK
+		if !r.OK {
+			l.combat.Reason = r.Reason
+		}
+	}
+	if im, ok := f.Image(frame.RegionMana); ok {
+		r := vitals.Read(im, cc.vitalsOptions())
+		l.combat.ManaPct, l.combat.ManaOK = r.Percent, r.OK
+		l.view.Mana, l.view.ManaOK = r.Percent, r.OK
+		if !r.OK && l.combat.Reason == "" {
+			l.combat.Reason = r.Reason
+		}
+	}
+	if im, ok := f.Image(frame.RegionBattle); ok {
+		o, err := cc.battleOptions()
+		if err != nil {
+			l.combat.Reason = err.Error()
+		} else {
+			list := battle.Read(im, o)
+			l.combat.BattleRows = len(list.Rows)
+			l.combat.BattleTruncated, l.view.Truncated = list.Truncated, list.Truncated
+			for i, row := range list.Rows {
+				if row.Targeted && l.combat.TargetRow == nil {
+					idx := i
+					l.combat.TargetRow = &idx
+				}
+				l.view.Battle = append(l.view.Battle, RowView{
+					X: row.Bar.X, Y: row.Bar.Y, HP: row.HP, Targeted: row.Targeted,
+				})
+			}
+		}
+	}
+	im, ok := f.Image(frame.RegionViewport)
+	if !ok {
+		return
+	}
+	o, err := cc.barOptions()
+	if err != nil {
+		l.combat.Reason = err.Error()
+		return
+	}
+	l.visionGrid = cc.grid()
+	l.bars = vision.Find(im, o)
+	l.view.Have = true
+	l.view.CropW, l.view.CropH = im.Bounds().Dx(), im.Bounds().Dy()
+}
+
+// finishVision turns the raw bars into counts. It is separate from
+// observeVision because it needs the position, and it recomputes from the raw
+// bars rather than accumulating, so running it twice on one frame - which a
+// repeated video frame does - cannot double any count.
+func (l *Loop) finishVision() {
+	if !l.combat.Calibrated {
+		return
+	}
+	cc := l.cfg.Combat
+	l.combat.BarsTotal, l.combat.MonstersInRange, l.combat.RejectedByMap = 0, 0, 0
+	l.view.Bars = nil
+	for _, b := range l.bars {
+		dx, dy := l.visionGrid.Offset(b)
+		if l.blockedTile(dx, dy) {
+			l.combat.RejectedByMap++
+			continue
+		}
+		dist := vision.Distance(dx, dy)
+		l.combat.BarsTotal++
+		if dist <= cc.DecisionRadius+0.5 {
+			l.combat.MonstersInRange++
+		}
+		if len(l.view.Bars) < maxVisionBars {
+			l.view.Bars = append(l.view.Bars, BarView{
+				X: b.X, Y: b.Y, Fill: b.Fill, HP: b.HP(cc.geometry()),
+				DX: dx, DY: dy, Dist: dist,
+			})
+		}
+	}
+	// One-sided on purpose: more bars than rows proves a non-monster is in the
+	// crop, but equal or fewer proves nothing, because the rows cover the whole
+	// screen while the bars cover only the crop.
+	l.combat.MixedCrowd = !l.combat.BattleTruncated &&
+		l.combat.BattleRows > 0 && l.combat.BarsTotal > l.combat.BattleRows
+}
+
+// blockedTile is the cheap sieve against creatures the client drew from
+// another floor: a creature cannot stand in a wall. It does nothing while the
+// position is unknown, which costs nothing - counting never needed it.
+func (l *Loop) blockedTile(dx, dy float64) bool {
+	if l.position == nil {
+		return false
+	}
+	p := *l.position
+	return l.deps.Tile(mapdata.Position{
+		X: p.X + int(math.Round(dx)), Y: p.Y + int(math.Round(dy)), Z: p.Z,
+	}) == TileBlocked
+}
+
+// VisionSnapshot hands the panel the diagnostic picture of the last frame.
+func (l *Loop) VisionSnapshot(ctx context.Context) VisionView {
+	var out VisionView
+	l.do(ctx, func() {
+		out = l.view
+		out.Bars = append([]BarView(nil), l.view.Bars...)
+		out.Battle = append([]RowView(nil), l.view.Battle...)
+	})
+	return out
 }
 
 func (l *Loop) recordMatch(r locate.Result, now time.Time) {
@@ -606,6 +749,7 @@ func (l *Loop) publish() {
 		StateVersion:    l.version,
 		LastFrameSeq:    l.lastFrameSeq,
 		Match:           l.match,
+		Combat:          l.combat,
 		Executor:        l.executor.State(),
 		PreviewRevision: l.previewRev,
 		LastAction:      l.lastAction,

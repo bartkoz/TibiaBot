@@ -89,12 +89,22 @@ type scriptedLocator struct {
 	mu    sync.Mutex
 	pos   *mapdata.Position
 	calls int
+	// missed forces Locate to answer "not found" regardless of pos - set by
+	// miss(), the way a match in the dark does.
+	missed bool
 }
 
 func (s *scriptedLocator) set(p mapdata.Position) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.pos = &p
+}
+
+// miss makes the locator answer "not found", the way a match in the dark does.
+func (s *scriptedLocator) miss() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.missed = true
 }
 
 func (s *scriptedLocator) matches() int {
@@ -107,7 +117,7 @@ func (s *scriptedLocator) Locate(context.Context, image.Image, locate.Request) (
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.calls++
-	if s.pos == nil {
+	if s.missed || s.pos == nil {
 		return locate.Result{Found: false, Mode: "local", Reason: "brak"}, nil, nil
 	}
 	p := *s.pos
@@ -228,14 +238,20 @@ func (h *harness) tick(t *testing.T) *State {
 	t.Helper()
 	f := h.minimapFrame()
 	h.loop.Submit(f, h.clock.now())
+	return h.await(t, f.Seq)
+}
+
+// await waits until the loop has published its answer to one frame.
+func (h *harness) await(t *testing.T, seq uint64) *State {
+	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
 	for {
 		s := h.loop.Snapshot()
-		if s.LastFrameSeq == f.Seq {
+		if s.LastFrameSeq == seq {
 			return s
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("pętla nie przetworzyła klatki %d", f.Seq)
+			t.Fatalf("pętla nie przetworzyła klatki %d", seq)
 		}
 		time.Sleep(time.Millisecond)
 	}

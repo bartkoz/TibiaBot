@@ -28,13 +28,16 @@ const (
 type RegionID uint8
 
 const (
-	RegionMinimap RegionID = 1
-	RegionHP      RegionID = 2
-	RegionMana    RegionID = 3
+	RegionMinimap  RegionID = 1
+	RegionHP       RegionID = 2
+	RegionMana     RegionID = 3
+	RegionViewport RegionID = 4
+	RegionBattle   RegionID = 5
 )
 
 func knownRegion(id RegionID) bool {
-	return id == RegionMinimap || id == RegionHP || id == RegionMana
+	return id == RegionMinimap || id == RegionHP || id == RegionMana ||
+		id == RegionViewport || id == RegionBattle
 }
 
 type Region struct {
