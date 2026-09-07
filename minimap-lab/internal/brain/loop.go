@@ -13,6 +13,7 @@ import (
 	"minimap-lab/internal/mapdata"
 	"minimap-lab/internal/nav"
 	"minimap-lab/internal/route"
+	"minimap-lab/internal/vision"
 )
 
 const (
@@ -70,6 +71,11 @@ type Config struct {
 	Tolerance       int  `json:"tolerance"`
 	ActionTolerance int  `json:"action_tolerance"`
 	LoopRoute       bool `json:"loop_route"`
+
+	// Combat is the whole vision calibration. Zero value means "not
+	// calibrated", which is legal: the panel is meant to be calibrated one
+	// rectangle at a time, with each one checked before the next.
+	Combat CombatConfig `json:"combat"`
 }
 
 func (c Config) validate() error {
@@ -96,6 +102,9 @@ func (c Config) validate() error {
 	}
 	if c.Tolerance < 0 || c.Tolerance > 32 || c.ActionTolerance < 0 || c.ActionTolerance > 32 {
 		return fmt.Errorf("tolerancje muszą mieścić się w zakresie 0–32 kratek")
+	}
+	if err := c.Combat.withDefaults().validate(); err != nil {
+		return err
 	}
 	return nil
 }
@@ -157,6 +166,13 @@ type Loop struct {
 	positionAt  time.Time
 	hasPosition bool
 	match       MatchState
+
+	combat CombatState
+	view   VisionView
+	// bars is what the detector found on the last frame, kept raw so the map
+	// sieve can be applied again once the position for that frame is known.
+	bars       []vision.Bar
+	visionGrid vision.Grid
 
 	previewRev  uint64
 	recSkipped  int
@@ -256,6 +272,14 @@ func (l *Loop) SetConfig(ctx context.Context, c Config) error {
 		}
 		l.searchStopped = false
 		l.cfg = c
+		l.cfg.Combat = c.Combat.withDefaults()
+		if !l.cfg.Combat.Enabled() {
+			// Combat is only reset inside observeVision, which runs once per
+			// frame. Without this, turning calibration off would leave the
+			// old counts (and Calibrated: true) published until the next
+			// non-duplicate frame arrives - indefinitely if frames stopped.
+			l.combat, l.view, l.bars = CombatState{}, VisionView{}, nil
+		}
 		l.recorder.Auto, l.recorder.Every = c.RecordAuto, c.RecordEvery
 		// Options are updated in place rather than by rebuilding the follower:
 		// a user nudging the tolerance mid-route must not lose their progress.
@@ -363,20 +387,35 @@ func (l *Loop) handleFrame(ctx context.Context, env frameEnvelope) {
 	}
 	l.lastFrameSeq = env.f.Seq
 	l.lastFrameAt = env.receivedAt
-	im, ok := env.f.Image(frame.RegionMinimap)
-	if !ok {
+	// Vision is finished and the snapshot published on every path out of this
+	// function, including the early returns. The two go together because the
+	// map sieve needs a position to work with, and normally that is this
+	// frame's own - settled only once the match is over. On the duplicate-
+	// frame and no-minimap paths below, the match never runs at all, so the
+	// sieve falls back to whatever position the previous frame left: at frame
+	// cadence that lag is sub-tile, and there is no better candidate anyway.
+	defer func() {
+		l.finishVision()
 		l.publish()
-		return
-	}
-	// The same video frame sent twice is one observation, not two. Network
-	// traffic is no proof that the picture moved.
+	}()
+	// The duplicate check comes before the vision detector runs: the same
+	// video frame sent twice is one observation for vision as much as for the
+	// match, so a repeat must not be counted as a fresh look at the screen.
+	// Network traffic is no proof that the picture moved.
 	if l.hasVideoUS && env.f.VideoTimeUS == l.lastVideoUS {
-		l.publish()
 		return
 	}
 	l.lastVideoUS, l.hasVideoUS = env.f.VideoTimeUS, true
+	// Detection runs before the match and regardless of it: the client's
+	// camera is centred on the character, so counting the creatures around her
+	// needs no world position whatsoever - which is also why it stays in front
+	// of the gate below: a search that has given up must not blind the bot.
+	l.observeVision(env.f)
 	if l.searchStopped {
-		l.publish()
+		return
+	}
+	im, ok := env.f.Image(frame.RegionMinimap)
+	if !ok {
 		return
 	}
 
@@ -399,7 +438,6 @@ func (l *Loop) handleFrame(ctx context.Context, env frameEnvelope) {
 		l.logf("dopasowanie nie powiodło się: %v", err)
 		l.noPosition(capturedAt, completedAt)
 		l.searchStopped = true
-		l.publish()
 		return
 	}
 	l.tracker.Observe(result, capturedAt, completedAt, completedAt.Sub(capturedAt))
@@ -412,7 +450,6 @@ func (l *Loop) handleFrame(ctx context.Context, env frameEnvelope) {
 			l.searchStopped = true
 		}
 		l.noPosition(capturedAt, completedAt)
-		l.publish()
 		return
 	}
 	pos := *result.Position
@@ -430,7 +467,6 @@ func (l *Loop) handleFrame(ctx context.Context, env frameEnvelope) {
 	l.record(pos)
 	l.pumpBlocks()
 	l.follow(ctx, pos, capturedAt, completedAt)
-	l.publish()
 }
 
 func (l *Loop) noPosition(capturedAt, now time.Time) {
@@ -637,6 +673,7 @@ func (l *Loop) publish() {
 		StateVersion:    l.version,
 		LastFrameSeq:    l.lastFrameSeq,
 		Match:           l.match,
+		Combat:          l.combat,
 		Executor:        l.executor.State(),
 		PreviewRevision: l.previewRev,
 		LastAction:      l.lastAction,

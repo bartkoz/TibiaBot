@@ -179,6 +179,21 @@ func TestImageWrapsPixelsWithoutCopying(t *testing.T) {
 	}
 }
 
+// The vision layer reads the game window and the battle list through their
+// own region ids, alongside the minimap the tracker already used.
+func TestParseAcceptsViewportAndBattleRegions(t *testing.T) {
+	for _, id := range []RegionID{RegionViewport, RegionBattle} {
+		body := build(1, 1, 0, 0, []Region{{ID: id, W: 2, H: 2, Pix: pixels(2, 2)}})
+		f, err := Parse(body)
+		if err != nil {
+			t.Fatalf("region %d odrzucony: %v", id, err)
+		}
+		if _, ok := f.Image(id); !ok {
+			t.Errorf("region %d nie wrócił jako obraz", id)
+		}
+	}
+}
+
 func TestImageReportsMissingRegion(t *testing.T) {
 	f, err := Parse(build(1, 1, 0, 0, nil))
 	if err != nil {

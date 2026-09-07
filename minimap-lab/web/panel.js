@@ -30,10 +30,16 @@ function drawScreen() {
   c.clearRect(0, 0, screenCanvas.width, screenCanvas.height);
   if (!ready) return;
   c.drawImage(source, 0, 0, screenCanvas.width, screenCanvas.height);
+  const sx = screenCanvas.width / source.width, sy = screenCanvas.height / source.height;
   if (roi) {
-    const sx = screenCanvas.width / source.width, sy = screenCanvas.height / source.height;
     c.strokeStyle = '#ff6e94'; c.lineWidth = 2;
     c.strokeRect(roi.x * sx, roi.y * sy, roi.w * sx, roi.h * sy);
+  }
+  for (const key of VISION_RECTS) {
+    const r = rects[key];
+    if (!r) continue;
+    c.strokeStyle = '#7cf';
+    c.strokeRect(r.x * sx, r.y * sy, r.w * sx, r.h * sy);
   }
 }
 
@@ -67,6 +73,8 @@ function setSource(image, reset = true) {
     sourceRevision++;
     stopTracking();
     camera.setRegion(FRAME_REGION.minimap, null);
+    rects = {viewport: null, battle: null, hp: null, mana: null};
+    applyVisionRegions();
     disarm();
     status('Rozdzielczość źródła zmieniła się. Zaznacz minimapę ponownie.', 'error');
   }
@@ -93,7 +101,7 @@ function stopShare() {
   if (stream) stream.getTracks().forEach(t => t.stop());
   stream = null; video.srcObject = null;
   lastDrawTime = null;
-  $('snapshot').disabled = $('stop').disabled = $('live').disabled = true;
+  $('snapshot').disabled = $('stop').disabled = $('live').disabled = $('frame-save').disabled = true;
 }
 
 async function readImage(url) {
@@ -137,7 +145,7 @@ $('share').onclick = async () => {
       stopShare(); status('Udostępnianie zakończone.');
     });
     setSource(video);
-    $('snapshot').disabled = $('stop').disabled = $('live').disabled = false;
+    $('snapshot').disabled = $('stop').disabled = $('live').disabled = $('frame-save').disabled = false;
     $('source').textContent = 'Udostępniony ekran · wybierz minimapę i skalibruj znacznik.';
     status('Pobrano klatkę. Zaznacz minimapę.');
     startLoop();
@@ -145,6 +153,20 @@ $('share').onclick = async () => {
 };
 
 $('snapshot').onclick = () => { try { setSource(video, false); } catch (e) { status(e.message, 'error'); } };
+// Zapis idzie z kanwy źródłowej, a nie z podglądu: podgląd jest przeskalowany
+// do 800 px szerokości, a pomiary pikselowe pasków wymagają rozdzielczości,
+// w jakiej klient je narysował.
+$('frame-save').onclick = () => {
+  if (!ready) { status('Najpierw udostępnij ekran albo wczytaj obraz.', 'error'); return; }
+  source.toBlob(blob => {
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'combat-capture.png';
+    link.click();
+    URL.revokeObjectURL(url);
+  }, 'image/png');
+};
 $('stop').onclick = () => { stopShare(); status('Udostępnianie zakończone.'); };
 
 async function locateOnce() {
@@ -257,19 +279,33 @@ screenCanvas.addEventListener('pointerdown', e => {
     return;
   }
   dragging = point(e, screenCanvas, source.width, source.height);
-  if ($('live').checked) stopTracking();
+  // Only a new minimap rectangle invalidates the anchor, so only that one
+  // stops tracking. The vision rectangles - game window, battle list, bars -
+  // are read from the same frames and say nothing about where the character
+  // is, so calibrating them mid-run must leave the run alone.
+  if (calibTarget() === 'minimap' && $('live').checked) stopTracking();
   sourceRevision++;
   screenCanvas.setPointerCapture(e.pointerId);
 });
 screenCanvas.addEventListener('pointermove', e => {
   if (!dragging) return;
   const p = point(e, screenCanvas, source.width, source.height);
-  roi = {x: Math.min(p.x, dragging.x), y: Math.min(p.y, dragging.y),
+  const box = {x: Math.min(p.x, dragging.x), y: Math.min(p.y, dragging.y),
     w: Math.abs(p.x - dragging.x) + 1, h: Math.abs(p.y - dragging.y) + 1};
-  marker = {x: Math.floor(roi.w / 2), y: Math.floor(roi.h / 2)};
+  if (calibTarget() === 'minimap') {
+    roi = box;
+    marker = {x: Math.floor(roi.w / 2), y: Math.floor(roi.h / 2)};
+  } else {
+    rects[calibTarget()] = box;
+  }
   drawScreen();
 });
-screenCanvas.addEventListener('pointerup', () => { dragging = null; drawCrop(); });
+screenCanvas.addEventListener('pointerup', () => {
+  dragging = null;
+  if (calibTarget() === 'minimap') { drawCrop(); return; }
+  applyVisionRegions();
+  pushConfig();
+});
 screenCanvas.addEventListener('pointercancel', () => { dragging = null; });
 cropCanvas.addEventListener('pointerdown', e => {
   if (!roi) return;
@@ -305,6 +341,7 @@ function brainConfig() {
     tolerance: num('route-tolerance'),
     action_tolerance: 0,
     loop_route: $('route-loop').checked,
+    combat: combatConfig(),
   };
 }
 
@@ -337,6 +374,11 @@ async function pushConfig(tile) {
 // not a workflow. Only the fields are remembered; the server stays the truth.
 const REMEMBERED = ['floor', 'zoom', 'mask', 'threshold', 'gap', 'floor-auto', 'floor-radius',
   'speed', 'route-every', 'route-tolerance', 'route-loop', 'input-own-tile',
+  'calib-target', 'grid-cols', 'grid-rows', 'decision-radius',
+  'bar-width', 'bar-height', 'bar-border', 'bar-tolerance', 'black-max',
+  'bar-colors', 'self-bar-on', 'self-bar-x', 'self-bar-y',
+  'battle-bar-width', 'battle-bar-height', 'battle-bar-border', 'battle-pitch',
+  'battle-frame', 'battle-frame-coverage',
   ...Object.values(HOTKEYS), ...Object.values(DIRECTIONS)];
 const STORAGE_KEY = 'minimap-lab.panel';
 
@@ -366,6 +408,11 @@ function restoreForm() {
 for (const id of ['zoom', 'mask', 'threshold', 'gap', 'floor', 'floor-auto', 'floor-radius',
   'speed', 'route-every', 'route-tolerance', 'route-loop', 'route-record', 'route-follow',
   'input-walk', 'input-actions', 'input-own-tile',
+  'calib-target', 'grid-cols', 'grid-rows', 'decision-radius',
+  'bar-width', 'bar-height', 'bar-border', 'bar-tolerance', 'black-max',
+  'bar-colors', 'self-bar-on', 'self-bar-x', 'self-bar-y',
+  'battle-bar-width', 'battle-bar-height', 'battle-bar-border', 'battle-pitch',
+  'battle-frame', 'battle-frame-coverage',
   ...Object.values(HOTKEYS), ...Object.values(DIRECTIONS)]) {
   $(id).addEventListener('change', () => { saveForm(); pushConfig(); });
 }
@@ -380,6 +427,161 @@ function applyPreset(preset) {
 }
 $('dir-preset-numpad').onclick = () => applyPreset(NUMPAD);
 $('dir-preset-wsad').onclick = () => applyPreset(WSAD);
+
+// --- widzenie ---
+
+const VISION_RECTS = ['viewport', 'battle', 'hp', 'mana'];
+const VISION_RECT_LABELS = {viewport: 'okno gry', battle: 'battle lista', hp: 'pasek HP', mana: 'pasek many'};
+const EMPTY_RECT = {x: 0, y: 0, w: 0, h: 0};
+let rects = {viewport: null, battle: null, hp: null, mana: null};
+let visionPending = false;
+
+function calibTarget() { return $('calib-target').value || 'minimap'; }
+
+// cropRect is the window the brain actually looks at: the character's tile
+// grown by the decision radius plus one tile of margin, clipped to the game
+// window. The margin is what lets a creature at the very edge of the radius
+// still show its whole health bar - a clipped bar is not detected at all.
+//
+// The same formula lives in Go as CombatConfig.RecommendedCrop, but the value
+// travels inside the config rather than being recomputed there, so the two
+// sides cannot drift by a pixel.
+function cropRect() {
+  const v = rects.viewport;
+  if (!v) return null;
+  const cols = num('grid-cols') || 15, rows = num('grid-rows') || 11;
+  const tw = v.w / cols, th = v.h / rows;
+  const reach = Math.ceil(num('decision-radius') || 4) + 1;
+  const col = Math.floor(cols / 2), row = Math.floor(rows / 2);
+  const x0 = Math.max(0, col - reach), x1 = Math.min(cols, col + reach + 1);
+  const y0 = Math.max(0, row - reach), y1 = Math.min(rows, row + reach + 1);
+  return {
+    x: v.x + Math.round(x0 * tw), y: v.y + Math.round(y0 * th),
+    w: Math.round((x1 - x0) * tw), h: Math.round((y1 - y0) * th),
+  };
+}
+
+function applyVisionRegions() {
+  camera.setRegion(FRAME_REGION.viewport, cropRect());
+  camera.setRegion(FRAME_REGION.battle, rects.battle);
+  camera.setRegion(FRAME_REGION.hp, rects.hp);
+  camera.setRegion(FRAME_REGION.mana, rects.mana);
+  const named = VISION_RECTS.filter(k => rects[k]);
+  $('vision-rects').textContent = named.length
+    ? named.map(k => `${VISION_RECT_LABELS[k]}: ${rects[k].w} × ${rects[k].h} px`).join(' · ')
+    : 'Nic jeszcze nie zaznaczone.';
+}
+
+function combatConfig() {
+  return {
+    viewport: rects.viewport ?? EMPTY_RECT,
+    crop: cropRect() ?? EMPTY_RECT,
+    battle: rects.battle ?? EMPTY_RECT,
+    hp: rects.hp ?? EMPTY_RECT,
+    mana: rects.mana ?? EMPTY_RECT,
+    grid_cols: num('grid-cols'),
+    grid_rows: num('grid-rows'),
+    bar_width: num('bar-width'),
+    bar_height: num('bar-height'),
+    bar_border: num('bar-border'),
+    bar_tolerance: num('bar-tolerance'),
+    black_max: num('black-max'),
+    bar_colors: $('bar-colors').value.split(/[\s,]+/).filter(Boolean),
+    has_self_bar: $('self-bar-on').checked,
+    self_bar_x: num('self-bar-x'),
+    self_bar_y: num('self-bar-y'),
+    decision_radius: num('decision-radius'),
+    battle_bar_width: num('battle-bar-width'),
+    battle_bar_height: num('battle-bar-height'),
+    battle_bar_border: num('battle-bar-border'),
+    battle_row_pitch: num('battle-pitch'),
+    battle_frame: $('battle-frame').value.trim(),
+    // The target frame shares its tolerance field with the bar colours: two
+    // different thresholds in Go, one dial in the panel, because tuning them
+    // separately has no practical benefit and every extra field is one more
+    // thing to get wrong.
+    battle_frame_tolerance: num('bar-tolerance'),
+    battle_frame_coverage: num('battle-frame-coverage'),
+  };
+}
+
+// fetchVision is diagnostics, so its failures are swallowed: a broken preview
+// must never stop the frame loop that the actual bot depends on.
+async function fetchVision() {
+  if (visionPending) return;
+  visionPending = true;
+  try {
+    const r = await fetch('/api/vision');
+    if (r.ok) drawVision(await r.json());
+  } catch { /* the preview is diagnostics, not a condition for the loop */ }
+  finally { visionPending = false; }
+}
+
+// VISION_STATE_IDS covers every telemetry field the indicator fills - kept as
+// a list so the "everything shows a dash" branch cannot forget one of them.
+const VISION_STATE_IDS = [
+  'vision-monsters', 'vision-bars', 'vision-rejected', 'vision-rows', 'vision-target', 'vision-hp', 'vision-mana',
+];
+
+// renderVisionState is the aggregate readout the spec's panel section calls
+// for and phase 1's acceptance criterion depends on: monster count, HP/mana.
+// It reads only state.combat, which rides on every snapshot - unlike the
+// per-bar preview from /api/vision, this needs no extra request.
+function renderVisionState(combat) {
+  const c = combat?.calibrated ? combat : null;
+  if (!c) {
+    for (const id of VISION_STATE_IDS) $(id).textContent = '—';
+    return;
+  }
+  $('vision-monsters').textContent = `${c.monsters_in_range}${c.mixed_crowd ? ' (mieszany tłum)' : ''}`;
+  $('vision-bars').textContent = String(c.bars_total);
+  $('vision-rejected').textContent = String(c.rejected_by_map);
+  $('vision-rows').textContent = `${c.battle_rows}${c.battle_truncated ? ' (przewinięta)' : ''}`;
+  // target_row counts from zero in the wire format, because that is what a
+  // click into the battle list's row array needs; a human reading the panel
+  // counts rows from one.
+  $('vision-target').textContent = c.target_row == null ? 'brak' : String(c.target_row + 1);
+  // An unreliable reading must not look like a real one: hp_ok/mana_ok false
+  // means the calibration has likely slipped, and a dash says so where a
+  // plausible-looking 0% would not.
+  $('vision-hp').textContent = c.hp_ok ? `${Math.round(c.hp_pct * 100)}%` : '—';
+  $('vision-mana').textContent = c.mana_ok ? `${Math.round(c.mana_pct * 100)}%` : '—';
+}
+
+function drawVision(view) {
+  const crop = cropRect();
+  if (!crop || !view?.have) return;
+  const canvas = $('vision-canvas');
+  canvas.width = crop.w; canvas.height = crop.h;
+  const c = canvas.getContext('2d');
+  if (stream) c.drawImage(video, crop.x, crop.y, crop.w, crop.h, 0, 0, crop.w, crop.h);
+  else c.clearRect(0, 0, crop.w, crop.h);
+  // Go marshals a nil slice as JSON null, and there is no creature bar at all
+  // for most of a frame's life - an empty screen must not throw here.
+  const bars = view.bars ?? [];
+  // in_range is Go's own answer to the same radius threshold that decides
+  // MonstersInRange - the preview colours by it rather than recomputing the
+  // comparison, so the two can never silently drift apart.
+  for (const b of bars) {
+    c.strokeStyle = b.in_range ? '#ff2bd1' : '#8899aa';
+    c.strokeRect(b.x + 0.5, b.y + 0.5, num('bar-width') - 1, num('bar-height') - 1);
+  }
+  $('vision-info').textContent = bars.length
+    ? bars.map(b => `${b.dx.toFixed(2)},${b.dy.toFixed(2)} · ${b.dist.toFixed(2)} kratki · HP ${Math.round(100 * b.hp)}%`).join('  |  ')
+    : 'Nie widzę żadnego stwora.';
+}
+
+$('vision-canvas').addEventListener('pointerdown', e => {
+  const crop = cropRect();
+  if (!crop) { status('Najpierw zaznacz okno gry.', 'error'); return; }
+  const p = point(e, $('vision-canvas'), crop.w, crop.h);
+  // The click lands on the bar's centre; the detector operates on its
+  // top-left corner, so that is what gets stored.
+  $('self-bar-x').value = Math.max(0, p.x - Math.floor(num('bar-width') / 2));
+  $('self-bar-y').value = Math.max(0, p.y - Math.floor(num('bar-height') / 2));
+  saveForm();
+  pushConfig();
+});
 
 // --- uzbrajanie i pętla klatek ---
 
@@ -637,6 +839,9 @@ function render(state) {
     lastPreviewRev = -1;
   }
   if ($('grid-preview-on').checked && state.position) refreshGrid(state.position);
+
+  renderVisionState(state.combat);
+  if ($('vision-preview').checked && state.combat?.calibrated) fetchVision();
 }
 
 // --- podgląd przechodności ---

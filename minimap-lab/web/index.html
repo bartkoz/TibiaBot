@@ -11,6 +11,7 @@
     <label class="button">Wczytaj screenshot<input id="file" type="file" accept="image/png,image/jpeg,image/webp" hidden></label>
     <button id="share" class="secondary">Udostępnij ekran</button>
     <button id="snapshot" class="secondary" disabled>Pobierz klatkę</button>
+    <button id="frame-save" class="secondary" disabled>Zapisz klatkę PNG</button>
     <button id="stop" class="secondary" disabled>Zakończ udostępnianie</button>
   </section>
   <p id="source">Zacznij od demo lub własnego zrzutu. Obrazy są analizowane na tym komputerze.</p>
@@ -126,6 +127,49 @@
     </p>
     <div id="blocks-status" role="status" aria-live="polite">—</div>
     <p>Kliknij kratkę z nauczoną blokadą, żeby ją usunąć. Wejście na kratkę własnymi nogami też ją kasuje — obecność postaci jest mocniejszym dowodem niż hipoteza wykonawcy.</p>
+  </section>
+  <section class="panel vision">
+    <h2>7. Widzenie: potwory, battle lista, paski</h2>
+    <p>Bot liczy potwory z pasków życia, które klient rysuje nad każdym stworem. Kamera klienta jest wyśrodkowana na postaci, więc do policzenia, ile ich stoi wokół, nie jest potrzebna żadna pozycja na mapie — wystarczy okno gry.</p>
+    <label>Kalibruję<select id="calib-target">
+      <option value="minimap">minimapę</option>
+      <option value="viewport">okno gry</option>
+      <option value="battle">battle listę</option>
+      <option value="hp">pasek HP</option>
+      <option value="mana">pasek many</option>
+    </select></label>
+    <p class="hint">Przeciągnij po obrazie u góry, żeby zaznaczyć wybrany prostokąt. Okno gry zaznacz bez ramki klienta — z niego wyliczy się rozmiar kratki i wycinek, który naprawdę jedzie do bota. Paski HP i many zaznacz bez obwódki i bez cyfr.</p>
+    <div id="vision-rects">Nic jeszcze nie zaznaczone.</div>
+    <div class="route-grid">
+      <label>Kolumn kratek<input id="grid-cols" type="number" min="3" max="64" value="15"></label>
+      <label>Wierszy kratek<input id="grid-rows" type="number" min="3" max="64" value="11"></label>
+      <label>Promień decyzji (kratki)<input id="decision-radius" type="number" min="0.5" max="16" step="0.5" value="4"></label>
+      <label>Pasek: szerokość<input id="bar-width" type="number" min="3" max="256" value="27"></label>
+      <label>Pasek: wysokość<input id="bar-height" type="number" min="3" max="64" value="4"></label>
+      <label>Pasek: obwódka<input id="bar-border" type="number" min="1" max="8" value="1"></label>
+      <label>Tolerancja barw<input id="bar-tolerance" type="number" min="1" max="128" value="12"></label>
+      <label>Próg czerni<input id="black-max" type="number" min="1" max="128" value="48"></label>
+    </div>
+    <label>Barwy wypełnienia paska<input id="bar-colors" type="text" value="#00bc00,#50a150,#a1a100,#bf0a0a,#910f0f,#850c0c"></label>
+    <p class="hint">Sześć wartości, do których klient kwantuje życie stwora. To punkt startowy zdjęty z klienta odniesienia, nie prawda objawiona — jeśli podgląd nie obrysowuje pasków, popraw barwy albo podnieś tolerancję.</p>
+    <label class="check"><input id="self-bar-on" type="checkbox" checked>Klient rysuje własny pasek postaci</label>
+    <p class="hint">Zaznaczone: kliknij własny pasek na podglądzie niżej. Z tego jednego punktu wylicza się zakotwiczenie paska nad kratką — nie trzeba go mierzyć z oka. Odznaczone: wypełnij zakotwiczenie ręcznie w polach obok.</p>
+    <div class="route-grid">
+      <label>Własny pasek: x<input id="self-bar-x" type="number" min="0" max="4096" value="0"></label>
+      <label>Własny pasek: y<input id="self-bar-y" type="number" min="0" max="4096" value="0"></label>
+      <label>Battle: szerokość paska<input id="battle-bar-width" type="number" min="3" max="256" value="27"></label>
+      <label>Battle: wysokość paska<input id="battle-bar-height" type="number" min="3" max="64" value="4"></label>
+      <label>Battle: obwódka<input id="battle-bar-border" type="number" min="1" max="8" value="1"></label>
+      <label>Battle: odstęp wierszy<input id="battle-pitch" type="number" min="3" max="256" value="22"></label>
+      <label>Battle: barwa ramki celu<input id="battle-frame" type="text" value="#ff5050"></label>
+      <label>Battle: pokrycie ramki<input id="battle-frame-coverage" type="number" min="0.05" max="1" step="0.05" value="0.8"></label>
+    </div>
+    <label class="check"><input id="vision-preview" type="checkbox">Pokazuj podgląd widzenia</label>
+    <canvas id="vision-canvas" class="grid-canvas" width="176" height="176"></canvas>
+    <div class="telemetry"><div>Potwory w promieniu <strong id="vision-monsters">—</strong></div><div>Widziane paski <strong id="vision-bars">—</strong></div><div>Odrzucone przez mapę <strong id="vision-rejected">—</strong></div><div>Wiersze battle listy <strong id="vision-rows">—</strong></div><div>Cel <strong id="vision-target">—</strong></div><div>HP <strong id="vision-hp">—</strong></div><div>Mana <strong id="vision-mana">—</strong></div></div>
+    <p class="hint">Flaga mieszanego tłumu działa w jedną stronę: więcej pasków niż wierszy battle listy dowodzi, że coś w wycinku nie jest potworem, ale jej brak niczego nie dowodzi. Odrzucone przez mapę to paski zmapowane na kratkę, którą dane mapy uważają za nieprzechodnią — najpewniej stwór z innego piętra.</p>
+    <div id="vision-info" role="status" aria-live="polite">—</div>
+    <p class="hint">Różowy obrys: stwór w promieniu decyzji. Szary: widziany, ale za daleko. Pasek przycięty krawędzią wycinka nie jest obrysowywany wcale — dlatego wycinek bierze jedną kratkę zapasu.</p>
   </section>
   <footer><p id="maps"></p><p>Wynik dopasowania nie jest prawdopodobieństwem. Wybierz piętro startowe; dalsze przejścia Z ±1 mogą być rozpoznawane z obrazu. Pierwszy test na grze wymaga kalibracji i sprawdzenia znanego miejsca.</p></footer>
 </main>

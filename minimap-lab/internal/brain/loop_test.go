@@ -2,7 +2,6 @@ package brain
 
 import (
 	"context"
-	"encoding/binary"
 	"image"
 	"strings"
 	"sync"
@@ -89,12 +88,22 @@ type scriptedLocator struct {
 	mu    sync.Mutex
 	pos   *mapdata.Position
 	calls int
+	// missed forces Locate to answer "not found" regardless of pos - set by
+	// miss(), the way a match in the dark does.
+	missed bool
 }
 
 func (s *scriptedLocator) set(p mapdata.Position) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.pos = &p
+}
+
+// miss makes the locator answer "not found", the way a match in the dark does.
+func (s *scriptedLocator) miss() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.missed = true
 }
 
 func (s *scriptedLocator) matches() int {
@@ -107,7 +116,7 @@ func (s *scriptedLocator) Locate(context.Context, image.Image, locate.Request) (
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.calls++
-	if s.pos == nil {
+	if s.missed || s.pos == nil {
 		return locate.Result{Found: false, Mode: "local", Reason: "brak"}, nil, nil
 	}
 	p := *s.pos
@@ -201,41 +210,33 @@ func newHarness(t *testing.T) *harness {
 	return h
 }
 
-// minimapFrame builds the smallest body carrying a minimap region.
-func (h *harness) minimapFrame() frame.Frame {
-	h.seq++
-	h.videoUS += 100_000
-	body := make([]byte, frame.HeaderSize+frame.RegionHeader)
-	copy(body[0:4], frame.Magic)
-	body[4], body[5] = frame.FormatVersion, 1
-	binary.LittleEndian.PutUint64(body[16:], h.seq)
-	binary.LittleEndian.PutUint64(body[24:], h.videoUS)
-	hdr := body[frame.HeaderSize:]
-	hdr[0] = byte(frame.RegionMinimap)
-	binary.LittleEndian.PutUint16(hdr[4:], 2)
-	binary.LittleEndian.PutUint16(hdr[6:], 2)
-	binary.LittleEndian.PutUint32(hdr[8:], 16)
-	body = append(body, make([]byte, 16)...)
-	f, err := frame.Parse(body)
-	if err != nil {
-		panic(err)
-	}
-	return f
+// minimapFrame builds the smallest body carrying a minimap region. It is
+// visionFrame with no extra regions - kept as its own name because most of
+// this file's tests only care about the minimap, but built through the same
+// wire-format code so the two can never drift apart from each other.
+func (h *harness) minimapFrame(t *testing.T) frame.Frame {
+	return h.visionFrame(t)
 }
 
 // tick submits one frame and waits until the loop has finished with it.
 func (h *harness) tick(t *testing.T) *State {
 	t.Helper()
-	f := h.minimapFrame()
+	f := h.minimapFrame(t)
 	h.loop.Submit(f, h.clock.now())
+	return h.await(t, f.Seq)
+}
+
+// await waits until the loop has published its answer to one frame.
+func (h *harness) await(t *testing.T, seq uint64) *State {
+	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
 	for {
 		s := h.loop.Snapshot()
-		if s.LastFrameSeq == f.Seq {
+		if s.LastFrameSeq == seq {
 			return s
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("pętla nie przetworzyła klatki %d", f.Seq)
+			t.Fatalf("pętla nie przetworzyła klatki %d", seq)
 		}
 		time.Sleep(time.Millisecond)
 	}
@@ -376,10 +377,10 @@ func TestRepeatedVideoFrameIsNotASecondObservation(t *testing.T) {
 	h.tick(t)
 	before := h.locator.matches()
 
-	f := h.minimapFrame()
+	f := h.minimapFrame(t)
 	// Same picture as the previous frame, only a new sequence number.
 	h.videoUS -= 100_000
-	f2 := h.minimapFrame()
+	f2 := h.minimapFrame(t)
 	_ = f
 	h.loop.Submit(f2, h.clock.now())
 	deadline := time.Now().Add(2 * time.Second)

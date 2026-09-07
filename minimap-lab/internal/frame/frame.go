@@ -13,13 +13,16 @@ import (
 const (
 	Magic         = "MLF1"
 	FormatVersion = 1
-	// MaxBody bounds one request. Two bar crops and a minimap are a few tens
-	// of kilobytes; four megabytes is room for a mistake, not for a payload.
+	// MaxBody bounds one request. At the calibration in internal/brain's own
+	// tests, the viewport crop is roughly 124 KB and the battle list roughly
+	// 141 KB; at a 32 px/tile client with a decision radius of 8 tiles the
+	// viewport crop alone is roughly 1.5 MB. Four megabytes is real headroom
+	// for a larger client, not slack four orders of magnitude wide.
 	MaxBody = 4 << 20
 	// HeaderSize and RegionHeader are the fixed layout described in the spec.
 	HeaderSize   = 36
 	RegionHeader = 12
-	// MaxRegions is deliberately larger than the three ids in use, so a future
+	// MaxRegions is deliberately larger than the five ids in use, so a future
 	// region does not need a protocol bump - only a new constant.
 	MaxRegions    = 8
 	MaxRegionSide = 1024
@@ -28,13 +31,16 @@ const (
 type RegionID uint8
 
 const (
-	RegionMinimap RegionID = 1
-	RegionHP      RegionID = 2
-	RegionMana    RegionID = 3
+	RegionMinimap  RegionID = 1
+	RegionHP       RegionID = 2
+	RegionMana     RegionID = 3
+	RegionViewport RegionID = 4
+	RegionBattle   RegionID = 5
 )
 
 func knownRegion(id RegionID) bool {
-	return id == RegionMinimap || id == RegionHP || id == RegionMana
+	return id == RegionMinimap || id == RegionHP || id == RegionMana ||
+		id == RegionViewport || id == RegionBattle
 }
 
 type Region struct {
