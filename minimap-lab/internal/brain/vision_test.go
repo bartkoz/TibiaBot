@@ -270,3 +270,29 @@ func TestVisionSnapshotCarriesOffsetsButStateDoesNot(t *testing.T) {
 		}
 	}
 }
+
+// Disabling calibration through SetConfig must clear Combat right away,
+// rather than leaving the stale counts published until the next frame -
+// which may never arrive if the camera has stopped sending. This is why the
+// test reads the snapshot straight after SetConfig, with no frame submitted
+// in between: going through submit/await first would hide exactly the bug
+// this test exists to catch.
+func TestCombatClearsOnConfigDisable(t *testing.T) {
+	h := newHarness(t)
+	h.config(t, func(c *Config) { c.Combat = visionCalibration() })
+	h.at(1000, 1000)
+	s := h.submit(t, h.visionFrame(t, region{frame.RegionViewport, crop(image.Pt(1, 0))}))
+	if !s.Combat.Calibrated || s.Combat.MonstersInRange == 0 {
+		t.Fatalf("test wymaga skalibrowanego stanu z niezerową liczbą potworów, dostał: %+v", s.Combat)
+	}
+
+	h.config(t, func(c *Config) {})
+
+	got := h.loop.Snapshot()
+	if got.Combat.Calibrated {
+		t.Error("Calibrated wciąż true po wyłączeniu kalibracji, mimo że nie doszła żadna nowa klatka")
+	}
+	if got.Combat.BarsTotal != 0 || got.Combat.MonstersInRange != 0 {
+		t.Errorf("stan walki po wyłączeniu kalibracji = %+v, oczekiwano samych zer", got.Combat)
+	}
+}
