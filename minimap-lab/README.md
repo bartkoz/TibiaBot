@@ -237,6 +237,40 @@ node --test webtests/*.cjs
 
 Pięć testów pomija się, dopóki `testdata/combat-capture.png` nie trafi do repo — patrz sekcja **Testy** niżej i `docs/superpowers/plans/2026-09-07-vision-layer-measurements.md`. Jeden z nich, `TestRealCaptureOffsets`, przy okazji zapisuje `.debug/vision-fixture.png` — rysunek diagnostyczny: wycinek z purpurową linią na górnej i dolnej krawędzi każdego wykrytego paska, do sprawdzenia na oko, czy detektor trafia w prawdziwe stwory.
 
+## Leczenie
+
+Bot pilnuje własnego HP i many i wciska hotkey według listy reguł. Reguły
+sprawdzane są od góry i wygrywa **pierwsza wykonalna** — nie pierwsza, która
+pasuje progiem. Reguła, która pasuje, ale nie ma pokrycia w manie albo ma
+klawisz w cooldownie, jest pomijana, więc tani potion niżej na liście dalej
+ratuje postać.
+
+Jedna reguła to: zasób (HP albo mana), próg procentowy (1–99, działa jako
+„nie więcej niż"), hotkey, cooldown w milisekundach i minimalna mana. Potion
+i czar to ta sama konstrukcja, bo w grze jedno i drugie jest hotkeyem.
+
+**Hotkeye muszą być w kliencie ustawione na „użyj na sobie".** Po stuknięciu
+panel niczego nie klika — jeśli hotkey wymaga wskazania celu, nic się nie
+wydarzy.
+
+Trzy bariery, o których warto wiedzieć, zanim uznasz, że leczenie „nie działa":
+
+- **Odstęp 500 ms** między dowolnymi dwoma leczeniami, liczony czasem zgrania
+  klatki. Pasek w kliencie pokazuje skutek z opóźnieniem, więc bez tego bot
+  wypiłby drugi raz, patrząc na obraz sprzed pierwszego łyku.
+- **HP na dokładnym zerze nie leczy.** Żywa postać nigdy tyle nie pokazuje —
+  takie zero znaczy albo śmierć, albo prostokąt paska zsunięty na czarne tło.
+- **Nieufny odczyt paska blokuje reguły tego zasobu** i mówi o tym w linijce
+  stanu. Reguła HP, która nie potrzebuje many, celowo nie przejmuje się
+  nieczytelnym paskiem many.
+
+Leczenie **wywłaszcza krok**: w klatce, w której poleciał klawisz leczenia, bot
+nie idzie. Działa też wtedy, gdy pozycja na mapie jest nieznana — paski są
+w tych samych pikselach niezależnie od tego, gdzie stoi postać.
+
+Klawisz reguły nie może być tym samym klawiszem, co lina, drabina, dziura albo
+łopata; taka konfiguracja jest odrzucana z podaniem, z czym jest kolizja.
+
 ## Sterowanie
 
 Flaga `-input` wybiera tryb: `off` (domyślny — odczyt XYZ i trasy działają, sterownik klawiatury pozostaje wyłączony, a `/api/arm` odpowiada 503), `dry` (emiter zapamiętuje zdarzenia w pamięci i nic nie wysyła do systemu — cały przepływ da się przećwiczyć bez ryzyka) albo `system` (prawdziwe zdarzenia klawiatury i myszy). `-input system` ma emiter tylko na macOS (CoreGraphics przez `purego`) i Windows (`user32.dll`/`SendInput`); na Linuksie i innych platformach nie ma jeszcze emitera systemowego, więc start z `-input system` tam kończy się błędem — dostępne pozostają `off` i `dry`.
@@ -254,6 +288,17 @@ Każdy krok niesie wiek pozycji, na której się opiera; wykonawca odrzuca krok 
 `-stale-ms` przyjmuje wyłącznie **100–600**; poza tym zakresem program kończy się błędem przy starcie zamiast po cichu rozstroić bramkę. Dolna granica to najszybszy takt śledzenia (10 Hz = 100 ms) — poniżej niej żaden odczyt nie miałby szans zmieścić się w budżecie. Górna zostaje wyraźnie poniżej watchdoga klatek (750 ms): przy wartości bliskiej temu progowi wykonawca i tak rozbroiłby się z powodu ciszy kamery, zanim obserwacja zdążyłaby aż tak się zestarzeć, więc bramka świeżości przestałaby cokolwiek znaczyć.
 
 **Wiek liczony jest od ostatniej dobrej obserwacji pozycji**, a nie od ostatniej klatki. To rozróżnienie ma znaczenie, odkąd klatka może nieść więcej niż jeden region: świeży obraz paska nie odmładza pozycji odczytanej z minimapy.
+
+### Budżet klawiszy
+
+Sterownik ogranicza, ile klawiszy może nacisnąć na sekundę, rozdzielając budżet na przeznaczenia — chodzenie, akcje pięter, leczenie i reszta — żeby jedno przeznaczenie nie mogło zagłodzić drugiego.
+
+Sufit wynosi osiem stuknięć na sekundę, z podbudżetami: chodzenie trzy, akcje
+pięter trzy, leczenie dwa i wszystko nieleczące sześć razem. Ten ostatni wiersz
+jest tym, co naprawdę wygradza rezerwę leczenia — bez niego chodzenie i akcje
+pięter wybrałyby sufit między sobą. Niewykorzystanej rezerwy nikt nie pożycza,
+a historia stuknięć przeżywa przezbrojenie: inaczej przezbrojenie po utracie
+focusu kasowałoby limit.
 
 ### macOS: zgoda Accessibility
 
@@ -403,9 +448,9 @@ Pełne wyszukiwanie ma limit 45 s; przy wolnym działaniu podaj katalog z mapami
 36  ..  nagłówki regionów: id, format, 2 bajty wyrównania, w, h, len
 ```
 
-Identyfikatory regionów: `1` minimapa, `2` pasek HP, `3` pasek many (dwa ostatnie czekają na moduł leczenia). `len` musi się zgadzać z `w × h × 4` — tak wygląda ucięty upload, a zaufanie zadeklarowanej długości oznaczałoby czytanie poza buforem. Ciało jest ograniczone do 4 MB, powtórzony region i nieznany identyfikator są odrzucane.
+Identyfikatory regionów: `1` minimapa, `2` pasek HP, `3` pasek many (regiony 2 i 3 zasilają leczenie). `len` musi się zgadzać z `w × h × 4` — tak wygląda ucięty upload, a zaufanie zadeklarowanej długości oznaczałoby czytanie poza buforem. Ciało jest ograniczone do 4 MB, powtórzony region i nieznany identyfikator są odrzucane.
 
-Odpowiedzią jest **snapshot stanu bota**, ten sam, który zwraca `GET /api/state`: pozycja i jej wiek, metryki dopasowania, postęp trasy, stan wykonawcy, licznik nagrywania, ostatnia akcja i ogon logu. Snapshot ma stały, ograniczony rozmiar — nie ma w nim waypointów ani atlasu, bo jedzie przy każdej klatce. Pola `state_version` i `last_frame_seq` mówią, czego dotyczy: handler nigdy nie czeka na dopasowanie, więc snapshot **nie** opisuje właśnie przesłanej klatki.
+Odpowiedzią jest **snapshot stanu bota**, ten sam, który zwraca `GET /api/state`: pozycja i jej wiek, metryki dopasowania, postęp trasy, stan wykonawcy, licznik nagrywania, ostatnia akcja i ogon logu. Snapshot ma stały, ograniczony rozmiar — nie ma w nim waypointów ani atlasu, bo jedzie przy każdej klatce. Pola `state_version` i `last_frame_seq` mówią, czego dotyczy: handler nigdy nie czeka na dopasowanie, więc snapshot **nie** opisuje właśnie przesłanej klatki; `last_match_seq` mówi, czy pozycja w snapshocie odpowiada tej klatce.
 
 Klatka ze złym tokenem sesji przechwytywania dostaje 403. Token wydaje `POST /api/capture` (także `POST /api/arm`, gdy nie ma jeszcze sesji) i **jest napisem dziesiętnym**, nie liczbą: to uint64, a liczby JSON tracą precyzję powyżej 2⁵³ w każdej przeglądarce — zaokrąglony w drodze nigdy by już nie pasował.
 

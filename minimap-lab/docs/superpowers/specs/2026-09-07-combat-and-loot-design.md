@@ -460,7 +460,7 @@ przesuwne per przeznaczenie plus twardy sufit globalny:
 | globalnie | 8 stuknięć/s |
 | chodzenie | 3 stuknięcia/s |
 | czary | 3 stuknięcia/s |
-| leczenie (rezerwa, użyta w projekcie następnym) | 2 stuknięcia/s |
+| leczenie (wdrożone, patrz spec leczenia) | 2 stuknięcia/s |
 | kliknięcia | 2/s, liczone osobno |
 
 Suma podbudżetów przekracza sufit **celowo**: sufit jest twardą granicą, a
@@ -647,3 +647,7 @@ Tabelkowe, ze wstrzykniętym zegarem, jak w całym projekcie.
 Moduł leczenia, zamówiony 2026-09-06 i odłożony dwa razy. Po tym projekcie
 zostaje z niego sama lista reguł: czytnik pasków, budżet klawiszy z rezerwą i
 wywłaszczanie kroku będą już gotowe.
+
+**Zrobione 2026-09-07:** `docs/superpowers/specs/2026-09-07-healing-design.md`.
+Budżet klawiszy, ścieżka dosłownego hotkeya i wywłaszczanie kroku są już w kodzie;
+fazom 2–5 zostaje dołożenie przeznaczenia „czary" do istniejących okien.
