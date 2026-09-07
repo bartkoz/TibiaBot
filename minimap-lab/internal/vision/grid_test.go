@@ -26,8 +26,8 @@ func TestPlayerCentreIsMiddleTile(t *testing.T) {
 	}
 }
 
-// Przesunięcie paska o dokładnie jedną kratkę musi zmieniać offset o dokładnie
-// jeden. To jest właściwość, która nie zależy od żadnego pomiaru.
+// Moving a bar by exactly one tile must change the offset by exactly one.
+// That property holds regardless of any measurement.
 func TestOffsetMovesOneTilePerTile(t *testing.T) {
 	g := grid()
 	ax, ay := g.Offset(vision.Bar{X: 100, Y: 100})
@@ -37,6 +37,17 @@ func TestOffsetMovesOneTilePerTile(t *testing.T) {
 	}
 	if math.Abs((by-ay)-2) > 1e-9 {
 		t.Errorf("dwie kratki w dół zmieniły dy o %.9f, oczekiwano 2", by-ay)
+	}
+}
+
+// A difference test cancels CropX and the bar's own width away, and pairing
+// AnchorFrom with Offset cancels barCentre against itself, so neither would
+// notice if the crop offset were applied with the wrong sign. This pins the
+// absolute mapping: flipping CropX's sign moves dx from about -1.95 to -5.95.
+func TestOffsetMapsAbsolutePosition(t *testing.T) {
+	dx, dy := grid().Offset(vision.Bar{X: 100, Y: 100})
+	if dx != -1.953125 || dy != -2.3125 {
+		t.Errorf("offset %.6f,%.6f, oczekiwano -1.953125,-2.3125", dx, dy)
 	}
 }
 
@@ -77,10 +88,14 @@ func TestNieskalibrowanaSiatkaNieWybucha(t *testing.T) {
 	}
 }
 
-// TestRealCaptureOffsets rysuje diagnostykę i sprawdza, że żaden stwór nie
-// wypada dalej, niż wycinek fizycznie pozwala.
+// TestRealCaptureOffsets draws a diagnostic overlay and checks that no
+// creature's offset falls further out than the crop can physically show.
 func TestRealCaptureOffsets(t *testing.T) {
 	fx := testenv.CombatCalibration()
+	if fx.SelfBar == (image.Point{}) {
+		t.Skip("brak pomiaru własnego paska w CombatCalibration — bez niego nie ma z czego wyliczyć " +
+			"zakotwiczenia; zmierz go albo wypełnij AnchorDX/AnchorDY ręcznie")
+	}
 	im := testenv.NRGBACrop(t, testenv.CombatCapture(t), fx.Crop)
 	g := vision.Grid{
 		Cols: fx.GridCols, Rows: fx.GridRows,
@@ -107,8 +122,8 @@ func TestRealCaptureOffsets(t *testing.T) {
 				"zakotwiczenie albo prostokąt wycinka są złe", dx, dy, 2*limitX, 2*limitY)
 		}
 	}
-	// Diagnostyka do oczu: obrysy pasków na wycinku. Katalog .debug jest
-	// ignorowany przez gita, więc na świeżym klonie go nie ma.
+	// Eyeball diagnostics: bar outlines drawn onto the crop. The .debug
+	// directory is gitignored, so a fresh clone won't have it.
 	debugDir := filepath.Join(testenv.RepoRoot(t), ".debug")
 	if err := os.MkdirAll(debugDir, 0o700); err != nil {
 		t.Fatal(err)

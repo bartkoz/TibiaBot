@@ -263,9 +263,9 @@ func TestBarHP(t *testing.T) {
 	}
 }
 
-// TestFindOnRealCapture is a regression floor against the real capture: once
-// the character's own bar can be excluded, the detector must find exactly as
-// many creature bars as a human counted, not merely at least that many.
+// TestFindOnRealCapture checks the detector against the real capture: once
+// the character's own bar can be excluded, it must find exactly as many
+// creature bars as a human counted.
 func TestFindOnRealCapture(t *testing.T) {
 	fx := testenv.CombatCalibration()
 	im := testenv.NRGBACrop(t, testenv.CombatCapture(t), fx.Crop)
