@@ -14,8 +14,11 @@ import (
 
 type Options struct {
 	// Rows are the image rows to sample; empty means every row. The answer is
-	// their median, so one row crossing a number the client draws over the bar
-	// cannot swing the reading.
+	// their median, so one row whose fill boundary differs from the rest -
+	// antialiasing, a rounded end cap, a border row - cannot swing the
+	// reading. A row with anything filled past its own prefix is a different
+	// case: the prefix rule in Read discards it outright, before the median
+	// ever sees it, rather than letting the median out-vote it.
 	Rows []int
 	// MinSaturation and MinValue are what a pixel must clear to count as
 	// filled, both 0-1.
@@ -51,6 +54,12 @@ type Reading struct {
 // OK: true} is reported for both. Zero mana is an ordinary game state, so
 // this is not treated as an error: a caller that acts on a 0% reading (for
 // example, gating a spell on a mana threshold) must tolerate that ambiguity.
+//
+// Percent is the filled median divided by the image width, so the rectangle
+// passed in must be the bar and nothing but the bar. A calibrated rectangle
+// wider than the real bar understates the reading proportionally - a 120px
+// rectangle over a 100px bar that is 60% full reports 50%, not 60% - because
+// the extra dark pixels count toward the width but never toward the fill.
 func Read(im *image.NRGBA, o Options) Reading {
 	if im == nil || im.Bounds().Empty() {
 		return Reading{Reason: "brak obrazu paska"}
@@ -104,6 +113,11 @@ func (o Options) prefix(im *image.NRGBA, y int) (int, bool) {
 	return n, true
 }
 
+// filled reads only R, G and B and ignores alpha entirely. That is safe as
+// long as the frame came from an opaque source - a browser canvas capturing
+// the screen, the only producer these images have - because a non-
+// premultiplied NRGBA pixel can otherwise carry an arbitrary colour behind
+// A == 0.
 func (o Options) filled(im *image.NRGBA, x, y int) bool {
 	c := im.NRGBAAt(x, y)
 	hi, lo := int(c.R), int(c.R)

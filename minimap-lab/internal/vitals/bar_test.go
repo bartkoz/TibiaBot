@@ -74,9 +74,11 @@ func TestReadRejectsScatteredFill(t *testing.T) {
 	}
 }
 
-// One row cut by a digit the client draws over the bar must not move the
-// result - hence the median across many rows.
-func TestReadSurvivesOneCorruptedRow(t *testing.T) {
+// A row with a hit past its own prefix - a digit the client draws over the
+// empty part of the bar, say - is discarded outright by the contiguous-prefix
+// rule. The reading survives because the other seven rows are still clean,
+// not because the median smooths the bad row in.
+func TestReadRejectsRowWithHitPastItsPrefix(t *testing.T) {
 	im := bar(100, 8, 60, green)
 	for _, x := range []int{80, 81, 82} {
 		im.SetNRGBA(x, 4, green)
@@ -87,6 +89,24 @@ func TestReadSurvivesOneCorruptedRow(t *testing.T) {
 	}
 	if math.Abs(got.Percent-0.6) > 0.02 {
 		t.Errorf("odczyt %.3f, oczekiwano 0,6", got.Percent)
+	}
+}
+
+// The median's real work is out-voting a row whose fill boundary sits
+// elsewhere - an antialiased edge, a rounded end cap, a border row. Taking the
+// minimum would report 20%, the mean 50%; only a median reports the 60% the
+// other three rows agree on.
+func TestReadMedianOutvotesDivergentRow(t *testing.T) {
+	im := bar(100, 4, 60, green)
+	for x := 20; x < 60; x++ {
+		im.SetNRGBA(x, 2, color.NRGBA{R: 20, G: 20, B: 20, A: 255})
+	}
+	got := vitals.Read(im, vitals.DefaultOptions())
+	if !got.OK {
+		t.Fatalf("odczyt odrzucony: %s", got.Reason)
+	}
+	if math.Abs(got.Percent-0.6) > 0.02 {
+		t.Errorf("odczyt %.3f, oczekiwano 0,6 — mediana ma przegłosować odstający wiersz", got.Percent)
 	}
 }
 
