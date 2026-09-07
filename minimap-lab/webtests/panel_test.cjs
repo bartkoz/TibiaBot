@@ -40,8 +40,15 @@ function panel({state = {}, onRequest = () => null, storage = {}} = {}) {
   for (const [id, value] of Object.entries({
     zoom: '1', mask: '5', floor: '7', threshold: '0.85', gap: '0.015', speed: '20',
     'floor-radius': '8', 'route-every': '10', 'route-tolerance': '1',
+    'grid-cols': '15', 'grid-rows': '11', 'decision-radius': '4',
+    'bar-width': '27', 'bar-height': '4', 'bar-border': '1',
+    'bar-tolerance': '12', 'black-max': '48',
+    'battle-bar-width': '27', 'battle-bar-height': '4', 'battle-bar-border': '1',
+    'battle-pitch': '22', 'battle-frame-coverage': '0.8',
   })) document.getElementById(id).value = value;
   document.getElementById('floor-auto').checked = true;
+  document.getElementById('bar-colors').value = '#00bc00,#50a150,#a1a100,#bf0a0a,#910f0f,#850c0c';
+  document.getElementById('battle-frame').value = '#ff5050';
 
   class Worker {
     constructor(url) { this.url = url; workerTick = () => this.onmessage?.({data: 'tick'}); }
@@ -120,6 +127,29 @@ const drag = (el, from, to) => {
   el.fire('pointermove', {clientX: to[0], clientY: to[1]});
   el.fire('pointerup', {});
 };
+
+// pixelPerfect strips the preview's own scaling: the canvas stub reports its
+// own size from getBoundingClientRect, and the panel maps clicks onto the
+// source resolution. Making the two equal gives a one-to-one mapping, without
+// which exact rectangle coordinates could not be checked.
+function pixelPerfect(p) {
+  p.el('screen').width = 800;
+  p.el('screen').height = 600;
+}
+
+async function shareOnly(p) {
+  p.el('share').click();
+  await p.settled();
+  pixelPerfect(p);
+}
+
+async function calibrate(p, target, from, to) {
+  p.el('calib-target').value = target;
+  drag(p.el('screen'), from, to);
+  await p.settled();
+}
+
+const lastConfig = p => JSON.parse(p.requests.filter(r => r.url === '/api/config').at(-1).body);
 
 test('panel pyta o piętra i stan zaraz po starcie', async () => {
   const p = panel();
@@ -371,4 +401,121 @@ test('przełączniki, które każą botowi działać, nie są zapamiętywane', a
   for (const id of ['input-walk', 'input-actions', 'route-follow', 'route-record']) {
     assert.equal(second.el(id).checked, false, `${id} wrócił zaznaczony po odświeżeniu`);
   }
+});
+
+test('zaznaczenie okna gry wysyła wycinek jedenastu kratek', async () => {
+  const p = panel();
+  await p.settled();
+  await shareOnly(p);
+  await calibrate(p, 'viewport', [100, 50], [339, 225]);
+
+  const combat = lastConfig(p).brain.combat;
+  assert.deepEqual(combat.viewport, {x: 100, y: 50, w: 240, h: 176});
+  // A radius of 4 reaches 5 tiles, i.e. 11 columns of 16 px. The window only
+  // has 11 rows, so vertically the crop is clipped to the full height - which
+  // is why the crop saves one quarter here, not a multiple of it.
+  assert.deepEqual(combat.crop, {x: 132, y: 50, w: 176, h: 176});
+});
+
+test('cztery nowe regiony trafiają do klatki', async () => {
+  const p = panel();
+  await p.settled();
+  await shareOnly(p);
+  await calibrate(p, 'viewport', [100, 50], [339, 225]);
+  await calibrate(p, 'battle', [400, 60], [559, 279]);
+  await calibrate(p, 'hp', [20, 300], [119, 307]);
+  await calibrate(p, 'mana', [20, 312], [119, 319]);
+  await calibrate(p, 'minimap', [0, 0], [105, 108]);
+  await armNow(p);
+
+  p.el('video').currentTime = 1.5;
+  p.el('live').checked = true;
+  p.el('live').fire('change');
+  p.tick();
+  await p.settled();
+
+  const frame = p.requests.find(r => r.url === '/api/frame');
+  assert.ok(frame, 'nie wysłano żadnej klatki');
+  // Header byte 5 is the region count: the minimap plus the four new ones.
+  assert.equal(new Uint8Array(frame.body)[5], 5);
+});
+
+test('kalibracja minimapy nie rusza prostokątów widzenia', async () => {
+  const p = panel();
+  await p.settled();
+  await shareOnly(p);
+  await calibrate(p, 'viewport', [100, 50], [339, 225]);
+  const before = lastConfig(p).brain.combat.viewport;
+  await calibrate(p, 'minimap', [0, 0], [105, 108]);
+  assert.deepEqual(lastConfig(p).brain.combat.viewport, before);
+});
+
+test('podgląd widzenia nie jest pobierany, dopóki nie jest włączony', async () => {
+  const seen = {combat: {calibrated: true}};
+  const p = panel({
+    state: seen,
+    onRequest: url => url === '/api/frame'
+      ? {ok: true, async json() { return seen; }}
+      : null,
+  });
+  await p.settled();
+  await shareOnly(p);
+  await calibrate(p, 'minimap', [0, 0], [105, 108]);
+  await armNow(p);
+  const visionCalls = () => p.requests.filter(r => r.url === '/api/vision').length;
+  assert.equal(visionCalls(), 0, 'podgląd pobrany, choć wyłączony');
+
+  p.el('vision-preview').checked = true;
+  p.el('video').currentTime = 1.5;
+  p.el('live').checked = true;
+  p.el('live').fire('change');
+  p.tick();
+  await p.settled();
+  assert.ok(visionCalls() >= 1, 'włączony podgląd nie pobrał widzenia');
+});
+
+test('kliknięcie własnego paska na podglądzie wypełnia jego pozycję', async () => {
+  const p = panel();
+  await p.settled();
+  await shareOnly(p);
+  await calibrate(p, 'viewport', [100, 50], [339, 225]);
+  p.el('bar-width').value = '13';
+  p.el('bar-height').value = '4';
+  // The preview has not received any data yet, so the canvas still has the
+  // size from the HTML; the test sets it explicitly so the click maps 1:1.
+  p.el('vision-canvas').width = 176;
+  p.el('vision-canvas').height = 176;
+  p.el('vision-canvas').fire('pointerdown', {clientX: 88, clientY: 76});
+  await p.settled();
+  // The click lands on the bar's centre; its top-left corner is what is stored.
+  assert.equal(p.el('self-bar-x').value, 82);
+  assert.equal(p.el('self-bar-y').value, 74);
+});
+
+// Go marshals an unset creature list as JSON null (vision.Find returns a nil
+// slice when the screen holds no creature bar, which is the common case), so
+// the preview must render an empty screen instead of throwing on it.
+test('podgląd widzenia nie wywraca się na pustym ekranie (bars: null)', async () => {
+  const p = panel({
+    onRequest: url => {
+      if (url === '/api/frame') return {ok: true, async json() { return {combat: {calibrated: true}}; }};
+      if (url === '/api/vision') {
+        return {ok: true, async json() { return {have: true, crop_w: 176, crop_h: 176, bars: null}; }};
+      }
+      return null;
+    },
+  });
+  await p.settled();
+  await shareOnly(p);
+  await calibrate(p, 'viewport', [100, 50], [339, 225]);
+  p.el('vision-preview').checked = true;
+  await armNow(p);
+
+  p.el('video').currentTime = 1.5;
+  p.el('live').checked = true;
+  p.el('live').fire('change');
+  p.tick();
+  await p.settled();
+
+  assert.equal(p.el('vision-info').textContent, 'Nie widzę żadnego stwora.');
 });

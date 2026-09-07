@@ -7,7 +7,7 @@ const FORMAT_VERSION = 1;
 const HEADER_SIZE = 36;
 const REGION_HEADER = 12;
 
-const REGION = {minimap: 1, hp: 2, mana: 3};
+const REGION = {minimap: 1, hp: 2, mana: 3, viewport: 4, battle: 5};
 
 // defaultCut copies one rectangle out of a video frame as RGBA. It is replaced
 // in tests, which have no canvas.
