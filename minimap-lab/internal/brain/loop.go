@@ -158,9 +158,16 @@ type Loop struct {
 	routeName string
 	routeNext string
 
-	lastFrameSeq   uint64
-	lastMatchSeq   uint64
-	matchPending   bool
+	lastFrameSeq uint64
+	lastMatchSeq uint64
+	matchPending bool
+	// anchorEpoch counts every time SetConfig invalidates the current anchor
+	// (tracker reset, position cleared because zoom, marker, score or a big
+	// floor jump changed). A match started before the bump is stamped with the
+	// epoch it saw; landing after the bump, applying it would resurrect
+	// exactly what SetConfig just cleared, including overwriting the zoom the
+	// user just chose with one derived from the old configuration.
+	anchorEpoch    uint64
 	lastVideoUS    uint64
 	hasVideoUS     bool
 	captureSession uint64
@@ -274,6 +281,10 @@ func (l *Loop) SetConfig(ctx context.Context, c Config) error {
 		if c.Zoom != l.cfg.Zoom || c.MarkerX != l.cfg.MarkerX || c.MarkerY != l.cfg.MarkerY || c.MaskRadius != l.cfg.MaskRadius || c.MinScore != l.cfg.MinScore || c.MinGap != l.cfg.MinGap || abs(c.Floor-l.cfg.Floor) > 1 {
 			l.tracker.Reset()
 			l.position, l.hasPosition = nil, false
+			// A match already in flight was built from the anchor just
+			// invalidated; bumping the epoch here is what tells apply() to
+			// drop its answer instead of reviving what this just cleared.
+			l.anchorEpoch++
 		}
 		l.searchStopped = false
 		l.cfg = c
@@ -426,9 +437,11 @@ func (l *Loop) handleFrame(ctx context.Context, env frameEnvelope) {
 
 	capturedAt := env.receivedAt.Add(-time.Duration(env.f.AgeMS) * time.Millisecond)
 	// One match at a time. Frames arriving while one runs still feed vision
-	// above; the newest of them starts the next match when this one lands.
-	// Queuing them would answer with a picture of where the character used to
-	// be, which is the same reason Submit keeps only one frame.
+	// above; each is simply dropped here, without being kept for later, and
+	// the next match starts only once a future frame arrives after this one
+	// has landed. Queuing them would answer with a picture of where the
+	// character used to be, which is the same reason Submit keeps only one
+	// frame.
 	if l.matchPending {
 		return
 	}
@@ -448,19 +461,35 @@ func (l *Loop) handleFrame(ctx context.Context, env frameEnvelope) {
 // command, exactly the way requestPlan does with a path. The frame's pixels are
 // safe to read from another goroutine: frameapi deliberately does not pool the
 // request body, so each frame owns its buffer for as long as anyone holds it.
+//
+// The match is stamped with the capture session and anchor epoch in effect
+// right now, on the loop goroutine. ResetCapture or a SetConfig that resets
+// the anchor can both run before this match lands; apply() compares the
+// stamp against the current values to tell a still-relevant answer from a
+// stale one.
 func (l *Loop) startMatch(ctx context.Context, im *image.NRGBA, req locate.Request, capturedAt time.Time, seq uint64) {
 	l.matchPending = true
+	session, epoch := l.captureSession, l.anchorEpoch
 	go func() {
 		matchCtx, cancel := context.WithTimeout(ctx, matchTimeout)
 		result, _, err := l.deps.Locator.Locate(matchCtx, im, req)
 		cancel()
 		apply := func() {
+			// Cleared and advanced unconditionally: a superseded match must
+			// still free the gate for the next one, and the harness's await
+			// waits on this seq regardless of whether the answer is used -
+			// otherwise a dropped result would hang it forever.
 			l.matchPending = false
 			l.lastMatchSeq = seq
-			l.applyMatch(ctx, result, err, req, capturedAt)
-			// The map sieve is run again now that this frame's position is
-			// settled. finishVision recomputes from the raw bars rather than
-			// accumulating, so running it twice cannot double any count.
+			if l.captureSession == session && l.anchorEpoch == epoch {
+				l.applyMatch(ctx, result, err, req, capturedAt)
+			}
+			// The map sieve pairs the newest bars observeVision collected
+			// with whichever position is currently known - this match's, if
+			// it was just applied, or an older (possibly nil) one if it was
+			// dropped as stale. finishVision recomputes from the raw bars
+			// rather than accumulating, so running it again cannot double
+			// any count.
 			l.finishVision()
 			l.publish()
 		}

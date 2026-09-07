@@ -95,7 +95,7 @@ func (h *harness) visionFrame(t *testing.T, regions ...region) frame.Frame {
 	return f
 }
 
-// submit posts one frame and waits until the loop has finished with it.
+// submit posts one frame and waits until its match has landed (see await).
 func (h *harness) submit(t *testing.T, f frame.Frame) *State {
 	t.Helper()
 	h.loop.Submit(f, h.clock.now())

@@ -246,7 +246,8 @@ func (h *harness) minimapFrame(t *testing.T) frame.Frame {
 	return h.visionFrame(t)
 }
 
-// tick submits one frame and waits until the loop has finished with it.
+// tick submits one frame and waits until its match has been applied (or
+// dropped as stale - see await).
 func (h *harness) tick(t *testing.T) *State {
 	t.Helper()
 	f := h.minimapFrame(t)
@@ -258,18 +259,21 @@ func (h *harness) tick(t *testing.T) *State {
 // about the match that frame may have started - use await for that.
 func (h *harness) awaitFrame(t *testing.T, seq uint64) *State {
 	t.Helper()
-	return h.awaitState(t, seq, func(s *State) bool { return s.LastFrameSeq >= seq })
+	return h.awaitState(t, seq, "pętla nie przetworzyła klatki %d",
+		func(s *State) bool { return s.LastFrameSeq >= seq })
 }
 
-// await waits until the answer to one frame's match has been applied. The
-// match runs off the loop goroutine, so a published snapshot carrying the
-// frame's own sequence number does not yet describe its position.
+// await waits until the answer to one frame's match has landed - applied, or
+// dropped as stale by ResetCapture/SetConfig invalidating it first. The match
+// runs off the loop goroutine, so a published snapshot carrying the frame's
+// own sequence number does not yet describe its position.
 func (h *harness) await(t *testing.T, seq uint64) *State {
 	t.Helper()
-	return h.awaitState(t, seq, func(s *State) bool { return s.LastMatchSeq >= seq })
+	return h.awaitState(t, seq, "dopasowanie dla klatki %d nie odpowiedziało",
+		func(s *State) bool { return s.LastMatchSeq >= seq })
 }
 
-func (h *harness) awaitState(t *testing.T, seq uint64, done func(*State) bool) *State {
+func (h *harness) awaitState(t *testing.T, seq uint64, failMsg string, done func(*State) bool) *State {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
 	for {
@@ -278,7 +282,7 @@ func (h *harness) awaitState(t *testing.T, seq uint64, done func(*State) bool) *
 			return s
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("pętla nie przetworzyła klatki %d", seq)
+			t.Fatalf(failMsg, seq)
 		}
 		time.Sleep(time.Millisecond)
 	}
@@ -630,5 +634,75 @@ func TestSnapshotSaysWhichFrameTheMatchAnswers(t *testing.T) {
 	s := h.await(t, f.Seq)
 	if s.LastMatchSeq != f.Seq {
 		t.Fatalf("last_match_seq = %d, oczekiwano %d", s.LastMatchSeq, f.Seq)
+	}
+}
+
+// A SetConfig that resets the anchor (here: a zoom change) can land while a
+// match started under the old configuration is still in flight. Applying
+// that match afterwards would resurrect exactly what SetConfig just cleared
+// - the position, and the zoom the user just chose.
+func TestStaleMatchIsDroppedWhenSetConfigResetsTheAnchor(t *testing.T) {
+	h := newHarness(t)
+	h.config(t, func(c *Config) {})
+	h.at(100, 100, 7)
+	h.tick(t)
+
+	gate, entered := h.locator.hold()
+	h.at(101, 100, 7)
+	f := h.minimapFrame(t)
+	h.loop.Submit(f, h.clock.now())
+	select {
+	case <-entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("pętla nie zaczęła dopasowania")
+	}
+
+	c := baseConfig()
+	c.Zoom = 2
+	if err := h.loop.SetConfig(h.ctx, c); err != nil {
+		t.Fatalf("SetConfig: %v", err)
+	}
+
+	close(gate)
+	s := h.await(t, f.Seq)
+	if s.Position != nil {
+		t.Fatalf("dopasowanie sprzed zmiany konfiguracji zostało zastosowane: %+v", s.Position)
+	}
+	if s.Zoom != 2 {
+		t.Fatalf("zoom = %d, oczekiwano 2 (ustawienie użytkownika zostało cofnięte)", s.Zoom)
+	}
+}
+
+// ResetCapture can land while a match started under the previous capture
+// session is still in flight. If that match's "not found" answer were
+// applied to the new session, it would stop the search (searchStopped) on a
+// session that never actually ran one - and only an explicit SetConfig would
+// revive it.
+func TestStaleMatchDoesNotStopSearchOnANewCaptureSession(t *testing.T) {
+	h := newHarness(t)
+	h.config(t, func(c *Config) {})
+	// No position set yet, so this first match answers "not found" - the
+	// same as a real search coming up empty.
+	gate, entered := h.locator.hold()
+
+	f := h.minimapFrame(t)
+	h.loop.Submit(f, h.clock.now())
+	select {
+	case <-entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("pętla nie zaczęła dopasowania")
+	}
+
+	h.loop.ResetCapture(h.ctx, 999)
+	close(gate)
+	h.await(t, f.Seq)
+
+	h.at(100, 100, 7)
+	f2 := h.minimapFrame(t)
+	f2.Session = 999
+	h.loop.Submit(f2, h.clock.now())
+	s := h.await(t, f2.Seq)
+	if s.Position == nil {
+		t.Fatal("nowa sesja nie mogła dopasować - stary wynik zatrzymał wyszukiwanie")
 	}
 }

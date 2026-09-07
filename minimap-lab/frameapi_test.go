@@ -413,7 +413,7 @@ func TestCaptureTracksMovingFramesWithoutControl(t *testing.T) {
 		deadline := time.Now().Add(10 * time.Second)
 		for s.loop.Snapshot().LastMatchSeq < f.seq {
 			if time.Now().After(deadline) {
-				t.Fatal("frame was not processed")
+				t.Fatal("match did not land")
 			}
 			time.Sleep(time.Millisecond)
 		}
