@@ -610,9 +610,19 @@ Tabelkowe, ze wstrzykniętym zegarem, jak w całym projekcie.
 ## Ryzyka
 
 1. **Zakotwiczenie paska dużego stwora.** Jeśli offset zależy od wyglądu, a nie
-   od kratki, jedna stała nie wystarczy. Mierzone w fazie 1; gdyby okazało się
-   zmienne, spadamy do „liczymy stwory, ale kratki dużych są niepewne" — i
-   wtedy kandydat na zwłoki od dużego stwora dostaje sąsiedztwo, nie punkt.
+   od kratki, jedna stała nie wystarczy. **Jeszcze niezmierzone** — brakuje
+   `testdata/combat-capture.png` (zob.
+   `docs/superpowers/plans/2026-09-07-vision-layer-measurements.md`). Procedura
+   pomiaru: uruchom `go test ./internal/vision/ -run TestRealCaptureOffsets -v`,
+   znajdź w logu wpis stwora ze sprite'em wyraźnie większym niż jedna kratka i
+   porównaj wypisany offset z kratką, na której ten stwór faktycznie stoi na
+   obrazie — pomaga `.debug/vision-fixture.png`, rysunek diagnostyczny z
+   obrysami pasków, który ten sam test zapisuje. Dwa możliwe wyniki i ich
+   konsekwencja dla fazy 3: rozjazd poniżej pół kratki — jedna stała
+   `AnchorDX`/`AnchorDY` wystarcza, tak jak dla małego stwora i dla własnego
+   paska; rozjazd pół kratki lub większy — faza 3 nie może traktować kratki
+   dużego stwora jako pewnej, a kandydat na zwłoki po takim stworze dostaje
+   sąsiedztwo kratek zamiast jednego punktu.
 2. **Sito pięter nie jest pełne.** Potwór na przechodniej kratce piętro wyżej
    policzy się jako nasz. Skutek: czar obszarowy rzucony bez powodu. Panel
    pokazuje liczbę odrzuconych, więc rozjazd da się zauważyć.

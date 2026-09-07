@@ -168,6 +168,62 @@ Okno odświeża się po zmianie kratki postaci albo co pół sekundy i nigdy nie
 
 To także narzędzie diagnostyczne: lada, przez którą postać nie przejdzie, a która świeci na zielono, jest dowodem, że dane mapy jej nie znają.
 
+## Widzenie: potwory i paski
+
+Bot liczy potwory z pasków życia, które klient rysuje nad każdym stworem, czyta battle listę i własne paski HP/many — wszystko pikselami, w Go, tak samo jak lokalizacja z minimapy. Trzy nowe pakiety robią to: `internal/vision` szuka pasków w wycinku okna gry i przelicza je na frakcyjne kratki od postaci, `internal/battle` czyta liczbę wierszy battle listy i wskazuje, który ma ramkę celu, `internal/vitals` czyta własny pasek HP albo many jako procent. Kalibracja i podgląd żyją w panelu, w sekcji **7. Widzenie: potwory, battle lista, paski**.
+
+### Wycinek, nie całe okno gry
+
+Panel wycina z okna gry tylko okolicę postaci — kratkę, na której stoi, plus promień decyzji powiększony o jedną kratkę zapasu w każdą stronę — i tylko ten wycinek jedzie do bota jako region `viewport`. Trzeba jednak powiedzieć uczciwie, ile to daje: **oszczędność rzędu jednej czwartej, nie wielokrotność**. Okno gry ma tylko 11 kratek wysokości, więc wycinek o promieniu 4 (domyślnym) oszczędza wyłącznie na szerokości — z 15 kolumn robi się 11. Przy 32 px na kratkę to 660 kB pełnego okna 15×11 kontra 484 kB wycinka 11×11, czyli około 27%; przy 64 px na kratkę proporcja jest identyczna: 2,6 MB kontra 1,9 MB.
+
+Prawdziwe powody wycinka są więc inne niż pasmo: **ogranicza pracę detektora** — nie skanuje pikseli, których i tak nikt nie zapyta — i **twardo ogranicza, jak daleko może stać stwór, żeby wpłynął na decyzję**. Pasek z przeciwnego końca ekranu nie ma jak wywołać czaru obszarowego, bo po prostu nie jedzie w klatce.
+
+Przy dużym oknie gry ta oszczędność może nie wystarczyć — `frame.MaxBody` (domyślnie 4 MB, patrz komentarz w `internal/frame/frame.go`) trzeba wtedy przeliczyć dla realnej rozdzielczości i promienia decyzji, i może zajść potrzeba go podnieść. Użytkownik ma za to darmowy sposób na cięcie kosztu kilkukrotnie: **zmniejszyć okno gry w samym kliencie**. Kratek dalej jest 15×11 — tyle samo, ile było — tylko każda z nich zajmuje mniej pikseli.
+
+### Kolejność kalibracji
+
+1. **Okno gry** — zaznacz je w sekcji 7 (`Kalibruję` → „okno gry") bez ramki klienta; z tego prostokąta liczy się rozmiar kratki i wycinek.
+2. **Własny pasek na podglądzie** — zaznacz „Klient rysuje własny pasek postaci", włącz „Pokazuj podgląd widzenia" i kliknij pasek postaci na obrazie. Bez skalibrowanego okna gry podgląd nie ma czego pokazać, stąd ta kolejność.
+3. **Battle lista.**
+4. **Paski HP i many.**
+
+### Własny pasek wyklucza się po pozycji, nie po bliskości
+
+Kamera klienta jest wyśrodkowana na postaci, więc jej własny pasek jest zawsze w tych samych pikselach wycinka. Detektor go wyklucza po **dokładnej pozycji** (`self_bar`, tolerancja 2 piksele), a nie po bliskości do środka wycinka — różnica ma znaczenie, bo wykluczanie po bliskości zgubiłoby też stwora stojącego kratkę nad postacią, którego pasek siedzi tuż obok własnego.
+
+### Zakotwiczenie jest wyliczane, nie zgadywane
+
+Pasek zdrowia nad stworem nie zaczyna się dokładnie na środku jego kratki — bywa przesunięty, zwłaszcza przy dużym sprite'cie. To przesunięcie (`AnchorDX`/`AnchorDY`) trzeba by mierzyć z oka, gdyby nie jeden trik: własny pasek postaci to pasek stwora stojącego na kratce, którą znamy dokładnie — środkowej. Jego przesunięcie względem środka tej kratki *jest* więc szukanym zakotwiczeniem. Stąd krok 2 kolejności kalibracji wyżej — kliknięcie w podglądzie, a nie pole do ręcznego wpisania liczby.
+
+### Sito danych mapy nie jest pełne
+
+Pozycja stwora na ekranie nic nie mówi o tym, na którym piętrze on stoi — klient rysuje stwory z innych pięter przez dziury i na zboczach tak samo jak swoich. Tani sposób na odsianie części z nich to dane mapy: pasek zmapowany na kratkę, którą mapa uważa za nieprzechodnią, jest odrzucany, a ich liczba trafia do stanu bota jako `rejected_by_map`. To sito **nie jest kompletne** — stwór stojący na przechodniej kratce piętro wyżej przejdzie przez nie bez przeszkód, bo z punktu widzenia danych mapy ta kratka jest zwykłym terenem.
+
+### Test „mieszany tłum" jest jednostronny
+
+Battle lista z filtrami klienta („ukryj graczy", „ukryj NPC") daje sufit na liczbę potworów na ekranie. Gdy pasków w wycinku jest więcej niż wierszy na liście, odczyt dostaje flagę `mixed_crowd` — bo skoro `wiersze_ekran ≥ potwory_ekran ≥ potwory_wycinek`, to `paski_wycinek > wiersze_ekran` dowodzi, że coś w wycinku nie jest potworem. Odwrotnego wniosku nie ma: rzędy liczą się z całego ekranu, a paski tylko z wycinka, więc **brak flagi niczego nie dowodzi** — mieszany tłum poza wycinkiem zostanie niezauważony.
+
+### Liczenie potworów nie potrzebuje pozycji z minimapy
+
+Kamera klienta jest wyśrodkowana na postaci, więc offset paska w kratkach liczy się wprost z pikseli wycinka, bez pytania, gdzie na mapie świata ta postać właśnie jest. Dzięki temu liczba potworów w promieniu decyzji działa nawet wtedy, gdy dopasowanie minimapy akurat zawodzi — po ciemku, w wodzie. Pozycji w świecie potrzebuje tylko sito danych mapy z akapitu wyżej, bo ono pyta o konkretną kratkę.
+
+### Stwór liczy się, gdy jego najbliższa kratka mieści się w promieniu
+
+Stwór wchodzi do licznika `monsters_in_range`, gdy jego dystans Chebysheva od postaci (`max(|dx|, |dy|)`, liczony na surowym, niezaokrąglonym offsecie) nie przekracza promienia decyzji o więcej niż pół kratki. Ten próg siedzi dokładnie w połowie kroku między dwiema sąsiednimi kratkami — najdalej, jak się da, od każdej wartości, na której stwór może spokojnie stać w miejscu — więc stwór stojący dokładnie na granicy promienia nie miga w licznik i z licznika przy drobnym drżeniu detekcji. Ma to jedną konsekwencję wartą zapamiętania: **efektywny promień to `round(DecisionRadius)`**, więc promień połówkowy liczy o jeden pierścień kratek dalej, niż sugeruje jego nazwa — przy `decision_radius = 0.5` próg wynosi `1.0`, czyli liczy się cała trójkratkowa obwódka wokół postaci.
+
+### Tolerancje i próg czerni
+
+Tolerancja barwy paska, próg czerni i tolerancja ramki celu w battle liście są walidowane w zakresie **1–128**. Próg czerni ma dodatkowe ograniczenie: nie wolno mu, razem z tolerancją, pochłonąć żadnej barwy wypełnienia. Gdyby tak się stało, detektor przestawałby widzieć koniec wypełnienia po jednym pikselu i **każdy ciemnoczerwony pasek czytałby się jako mniej więcej 4% zdrowia**, niezależnie od tego, ile go naprawdę zostało — a to najgorsza możliwa pomyłka, bo wygląda jak spokojnie niski, a nie zepsuty odczyt. Walidacja odmawia takiej kombinacji przy starcie i nazywa w komunikacie błędu, która barwa jest zagrożona.
+
+### Jak uruchomić testy
+
+```sh
+go test ./... -race
+node --test webtests/*.cjs
+```
+
+Pięć testów pomija się, dopóki `testdata/combat-capture.png` nie trafi do repo — patrz sekcja **Testy** niżej i `docs/superpowers/plans/2026-09-07-vision-layer-measurements.md`. Jeden z nich, `TestRealCaptureOffsets`, przy okazji zapisuje `.debug/vision-fixture.png` — rysunek diagnostyczny: wycinek z purpurową linią na górnej i dolnej krawędzi każdego wykrytego paska, do sprawdzenia na oko, czy detektor trafia w prawdziwe stwory.
+
 ## Sterowanie
 
 Flaga `-input` wybiera tryb: `off` (domyślny — mózg w ogóle nie startuje, a `/api/frame`, `/api/state`, `/api/config` i `/api/route` odpowiadają 503; panel działa wyłącznie jako podgląd), `dry` (emiter zapamiętuje zdarzenia w pamięci i nic nie wysyła do systemu — cały przepływ da się przećwiczyć bez ryzyka) albo `system` (prawdziwe zdarzenia klawiatury i myszy). `-input system` ma emiter tylko na macOS (CoreGraphics przez `purego`) i Windows (`user32.dll`/`SendInput`); na Linuksie i innych platformach nie ma jeszcze emitera systemowego, więc start z `-input system` tam kończy się błędem — dostępne pozostają `off` i `dry`.
@@ -266,6 +322,8 @@ Warto uruchamiać Go z `-race`: mózg działa we własnej goroutine, a atrapy w 
 
 Najbardziej dowodzący jest `go test . -run EndToEnd` — prawdziwy zrzut minimapy z Venore wchodzi binarną klatką po HTTP, przez prawdziwy matcher i prawdziwą pętlę, a test sprawdza, że mózg ustala z niego pozycję `(32958, 32077, 7)`. Wszystko pod spodem ma testy jednostkowe; dopiero ten mówi, że kawałki są ze sobą połączone.
 
+Trzy pakiety warstwy widzenia — `internal/vision`, `internal/battle`, `internal/vitals` — mają własne testy tabelkowe na syntetycznych obrazkach: pasek na krawędzi wycinka, dwa nachodzące paski, przeskalowana geometria, barwa poza tolerancją, wykluczenie własnego paska, pusta i przewinięta battle lista, ciągły prefiks wypełnienia paska HP/many. Fixture `testdata/combat-capture.png` — prawdziwa klatka z gry — dokłada do nich próg regresji: liczbę wykrytych pasków, ich offsety względem postaci i liczbę wierszy battle listy. Dopóki ten plik nie trafi do repo, pięć testów, które go potrzebują (`TestFindOnRealCapture` i `TestRealCaptureOffsets` w `internal/vision`, `TestReadOnRealCapture` w `internal/battle` i osobno w `internal/vitals`, `TestCombatFixtureGeometry` w `internal/testenv`), pomija się samo — zobacz `docs/superpowers/plans/2026-09-07-vision-layer-measurements.md`.
+
 ## Układ katalogów
 
 ```
@@ -287,10 +345,13 @@ internal/
   locate/        dopasowywanie obrazu minimapy do atlasu
   nav/           A*, siatka przechodniości, nauczone blokady i planer tras
   input/         emitery klawiatury i myszy oraz uzbrajany wykonawca
+  vision/        paski życia nad stworami z pikseli wycinka na frakcyjne kratki
+  battle/        battle lista: liczba wierszy i wiersz z ramką celu
+  vitals/        własny pasek HP/many z pikseli na procent
   testenv/       ścieżki i fixture'y wspólne dla testów wszystkich pakietów
 ```
 
-Zależności biegną w jedną stronę: `main → {brain, frame, route, locate, nav, input, mapdata}`, `brain → {locate, nav, input, route, frame, mapdata}`, `locate → mapdata`, `nav → mapdata`, a `input` nie zależy od niczego w projekcie. Uchwyty HTTP są metodami na `server`, więc muszą leżeć w jednym pakiecie z nim — i to samo trzyma `web/` w korzeniu, bo wzorce `//go:embed` są względne wobec pakietu i nie mogą wychodzić w górę przez `..`.
+Zależności biegną w jedną stronę: `main → {brain, frame, route, locate, nav, input, mapdata}`, `brain → {locate, nav, input, route, frame, mapdata, vision, battle, vitals}`, `locate → mapdata`, `nav → mapdata`, `battle → vision`, a `input`, `vision` i `vitals` nie zależą od niczego w projekcie. Uchwyty HTTP są metodami na `server`, więc muszą leżeć w jednym pakiecie z nim — i to samo trzyma `web/` w korzeniu, bo wzorce `//go:embed` są względne wobec pakietu i nie mogą wychodzić w górę przez `..`.
 
 Testy panelu leżą w `webtests/`, a nie w `web/`, właśnie z powodu tego wzorca: w `web/` trafiłyby do binarki i serwer zacząłby je wystawiać po HTTP.
 
