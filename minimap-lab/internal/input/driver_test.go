@@ -141,9 +141,15 @@ func TestDriverDisarmsWhenAnotherWindowTakesFocus(t *testing.T) {
 	}
 }
 
+// This used to loop maxTapsPerSecond times against a single flat ceiling.
+// That ceiling is now the sum of a fence: walking alone is capped at
+// maxWalkTapsPerSecond (3), well under the global maxTapsPerSecond (8), so
+// the healing reserve has somewhere to come from. This is a changed
+// contract, not a corrected constant - walking on its own no longer gets to
+// see the whole ceiling.
 func TestDriverEnforcesTapRateWithoutBanking(t *testing.T) {
 	d, _, now := driverAt(t, time.Unix(0, 0))
-	for i := 1; i <= maxTapsPerSecond; i++ {
+	for i := 1; i <= maxWalkTapsPerSecond; i++ {
 		if got := d.Walk("N", fresh); got.Status != "emitted" {
 			t.Fatalf("tap %d: %+v", i, got)
 		}
@@ -156,7 +162,7 @@ func TestDriverEnforcesTapRateWithoutBanking(t *testing.T) {
 	}
 	// A quiet stretch must not hand back a burst of unused budget.
 	*now = now.Add(1200 * time.Millisecond)
-	for i := 1; i <= maxTapsPerSecond; i++ {
+	for i := 1; i <= maxWalkTapsPerSecond; i++ {
 		if got := d.Walk("N", fresh); got.Status != "emitted" {
 			t.Fatalf("after idle, tap %d: %+v", i, got)
 		}
@@ -481,5 +487,130 @@ func TestDriverEmitterFailureDisarmsWithPolishReason(t *testing.T) {
 	}
 	if d.Status().Armed {
 		t.Error("a failed emitter call must leave the driver disarmed")
+	}
+}
+
+// Walking may not eat the whole ceiling: the healing reserve has to be there
+// when it is needed, and a tap already spent cannot be taken back.
+func TestWalkingCannotSpendTheHealingReserve(t *testing.T) {
+	d, em, _ := driverAt(t, time.Unix(0, 0))
+	for i := 0; i < 3; i++ {
+		if got := d.Walk("N", fresh); got.Status != "emitted" {
+			t.Fatalf("krok %d: %+v", i, got)
+		}
+	}
+	if got := d.Walk("N", fresh); got.Status != "refused" {
+		t.Fatalf("czwarty krok w tej samej sekundzie: %+v", got)
+	}
+	if got := d.Heal("f1", fresh); got.Status != "emitted" {
+		t.Fatalf("leczenie po wyczerpaniu budżetu chodzenia: %+v", got)
+	}
+	if n := len(em.Events()); n != 4 {
+		t.Fatalf("zdarzeń = %d, oczekiwano czterech", n)
+	}
+}
+
+// Two heals a second, and not a third - the reserve is a limit, not a floor.
+func TestHealingHasItsOwnCeiling(t *testing.T) {
+	d, _, _ := driverAt(t, time.Unix(0, 0))
+	for i := 0; i < 2; i++ {
+		if got := d.Heal("f1", fresh); got.Status != "emitted" {
+			t.Fatalf("leczenie %d: %+v", i, got)
+		}
+	}
+	if got := d.Heal("f1", fresh); got.Status != "refused" {
+		t.Fatalf("trzecie leczenie w tej samej sekundzie: %+v", got)
+	}
+}
+
+// Everything that is not healing shares six taps a second. Without this row,
+// walking and floor actions could take three each and leave the reserve
+// existing only on paper.
+func TestNonHealingActionsShareOneBudget(t *testing.T) {
+	d, _, _ := driverAt(t, time.Unix(0, 0))
+	if err := d.SetInputConfig(map[string]string{"rope": "f7"}, false, defaultDirectionKeys); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 3; i++ {
+		if got := d.Walk("N", fresh); got.Status != "emitted" {
+			t.Fatalf("krok %d: %+v", i, got)
+		}
+	}
+	for i := 0; i < 3; i++ {
+		got := d.UseHotkey("rope", fresh)
+		if got.Status != "emitted" {
+			t.Fatalf("akcja %d: %+v", i, got)
+		}
+		d.ActionDone()
+	}
+	if got := d.UseHotkey("rope", fresh); got.Status != "refused" {
+		t.Fatalf("siódme nieleczące stuknięcie: %+v", got)
+	}
+	if got := d.Heal("f1", fresh); got.Status != "emitted" {
+		t.Fatalf("leczenie przy wyczerpanym budżecie nieleczących: %+v", got)
+	}
+}
+
+// Re-arming happens after every lost focus. Clearing the tap history there
+// would turn the rate limit into a suggestion.
+func TestArmingDoesNotClearTheTapHistory(t *testing.T) {
+	d, _, _ := driverAt(t, time.Unix(0, 0))
+	for i := 0; i < 2; i++ {
+		if got := d.Heal("f1", fresh); got.Status != "emitted" {
+			t.Fatalf("leczenie %d: %+v", i, got)
+		}
+	}
+	d.Disarm("test")
+	if _, err := d.Arm(); err != nil {
+		t.Fatal(err)
+	}
+	if got := d.Heal("f1", fresh); got.Status != "refused" {
+		t.Fatalf("leczenie po przezbrojeniu: %+v", got)
+	}
+}
+
+// A floor action stays in flight until the panel confirms the floor changed.
+// Healing has nothing to confirm, so it must not be blocked by one - nor may it
+// leave an in-flight action of its own behind.
+func TestHealingIgnoresAnActionInFlight(t *testing.T) {
+	d, em, _ := driverAt(t, time.Unix(0, 0))
+	if err := d.SetInputConfig(map[string]string{"rope": "f7"}, false, defaultDirectionKeys); err != nil {
+		t.Fatal(err)
+	}
+	if got := d.UseHotkey("rope", fresh); got.Status != "emitted" {
+		t.Fatalf("akcja: %+v", got)
+	}
+	if got := d.Heal("f1", fresh); got.Status != "emitted" || got.Key != "f1" {
+		t.Fatalf("leczenie w trakcie akcji piętra: %+v", got)
+	}
+	if got := d.Walk("N", fresh); got.Status != "in_progress" {
+		t.Fatalf("leczenie zostawiło po sobie akcję w locie: %+v", got)
+	}
+	if ev := em.Events(); len(ev) != 2 || ev[1] != "tap f1 35ms" {
+		t.Fatalf("zdarzenia = %v", ev)
+	}
+}
+
+func TestHealingRefusesAnUnknownKey(t *testing.T) {
+	d, em, _ := driverAt(t, time.Unix(0, 0))
+	got := d.Heal("klawisz z księżyca", fresh)
+	if got.Status != "refused" || !strings.Contains(got.Reason, "klawisz") {
+		t.Fatalf("got %+v", got)
+	}
+	if len(em.Events()) != 0 {
+		t.Error("odrzucony klawisz jednak coś wysłał")
+	}
+}
+
+// Healing goes through the same gates as everything else: a stale observation
+// means the picture the decision was made on is no longer the screen.
+func TestHealingRefusesStaleObservation(t *testing.T) {
+	d, em, _ := driverAt(t, time.Unix(0, 0))
+	got := d.Heal("f1", time.Duration(DefaultMaxObservationAgeMS+1)*time.Millisecond)
+	if got.Status != "refused" {
+		t.Fatalf("got %+v", got)
+	}
+	if len(em.Events()) != 0 {
+		t.Error("nieświeża obserwacja jednak coś wysłała")
 	}
 }

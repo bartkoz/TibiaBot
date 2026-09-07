@@ -27,9 +27,20 @@ const (
 	// it, a silent camera would already have disarmed the session before an
 	// observation could ever get that stale, so the freshness gate would stop
 	// meaning anything.
-	MaxStaleMS         = 600
-	maxTapsPerSecond   = 5
-	actionClickDelayMS = 120
+	MaxStaleMS = 600
+	// Sliding one-second budgets. The ceiling is hard; the per-purpose rows
+	// exist so one purpose cannot eat the whole thing. Their sum exceeds the
+	// ceiling on purpose - they are a fence, not an allocation.
+	//
+	// maxNonHealTapsPerSecond is what actually fences the healing reserve off:
+	// without it, walking and floor actions could take three each, fill the
+	// ceiling between them, and leave the reserve existing only on paper.
+	maxTapsPerSecond        = 8
+	maxWalkTapsPerSecond    = 3
+	maxActionTapsPerSecond  = 3
+	maxHealTapsPerSecond    = 2
+	maxNonHealTapsPerSecond = 6
+	actionClickDelayMS      = 120
 )
 
 // ValidateStaleMS refuses a -stale-ms value outside MinStaleMS-MaxStaleMS.
@@ -63,6 +74,32 @@ type action struct {
 	kind string
 }
 
+// purpose is what a tap was for. Every emitted tap is recorded with one, and
+// the budgets are counted per purpose.
+type purpose int
+
+const (
+	purposeWalk purpose = iota
+	purposeAction
+	purposeHeal
+)
+
+type tap struct {
+	at time.Time
+	p  purpose
+}
+
+func purposeLimit(p purpose) int {
+	switch p {
+	case purposeWalk:
+		return maxWalkTapsPerSecond
+	case purposeAction:
+		return maxActionTapsPerSecond
+	default:
+		return maxHealTapsPerSecond
+	}
+}
+
 type Driver struct {
 	mu  sync.Mutex
 	em  Emitter
@@ -72,7 +109,7 @@ type Driver struct {
 	target Window
 	reason string
 
-	taps     []time.Time
+	taps     []tap
 	inFlight *action
 
 	// Hotkeys used for floor transitions, filled from the panel config.
@@ -143,7 +180,10 @@ func (d *Driver) Arm() (ArmState, error) {
 		return ArmState{}, fmt.Errorf("nie udało się rozpoznać aktywnego okna")
 	}
 	d.armed, d.target, d.reason = true, win, ""
-	d.taps, d.inFlight = nil, nil
+	// The tap history deliberately survives arming. Re-arming happens after
+	// every lost focus, and clearing the window there would let a runaway
+	// caller reset its own rate limit at will.
+	d.inFlight = nil
 	return d.state(), nil
 }
 
@@ -193,7 +233,7 @@ func (d *Driver) ActionDone() {
 // tokens and sequence numbers existed only because the decision came from
 // another process, but a stale observation, a lost window and a runaway key
 // rate are all still real.
-func (d *Driver) guardLocked(observationAge time.Duration) (Result, bool) {
+func (d *Driver) guardLocked(observationAge time.Duration, p purpose) (Result, bool) {
 	if !d.armed {
 		return Result{Status: "disarmed", Reason: "wykonawca jest rozbrojony"}, false
 	}
@@ -209,7 +249,7 @@ func (d *Driver) guardLocked(observationAge time.Duration) (Result, bool) {
 		d.disarmLocked("okno gry straciło focus")
 		return Result{Status: "disarmed", Reason: d.reason}, false
 	}
-	if !d.allowTapLocked() {
+	if !d.allowTapLocked(p) {
 		return Result{Status: "refused", Reason: "limit klawiszy na sekundę"}, false
 	}
 	return Result{}, true
@@ -219,7 +259,7 @@ func (d *Driver) guardLocked(observationAge time.Duration) (Result, bool) {
 func (d *Driver) Walk(direction string, observationAge time.Duration) Result {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if res, ok := d.guardLocked(observationAge); !ok {
+	if res, ok := d.guardLocked(observationAge, purposeWalk); !ok {
 		return res
 	}
 	return d.walkLocked(direction)
@@ -229,11 +269,42 @@ func (d *Driver) Walk(direction string, observationAge time.Duration) Result {
 func (d *Driver) UseHotkey(kind string, observationAge time.Duration) Result {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if res, ok := d.guardLocked(observationAge); !ok {
+	if res, ok := d.guardLocked(observationAge, purposeAction); !ok {
 		return res
 	}
 	return d.transitionLocked(kind)
 }
+
+// Heal taps one healing hotkey. The key is literal - it comes straight from
+// the panel's rule list - and nothing follows it: the client's hotkey is
+// configured to use the potion or spell on the character herself.
+//
+// It deliberately does not go through UseHotkey. A floor action stays "in
+// flight" until the panel confirms the floor changed, and healing has nothing
+// to confirm, so routing it there would block walking forever. For the same
+// reason healing ignores an action already in flight: a rope waiting for its
+// confirmation must not stop the bot from drinking.
+func (d *Driver) Heal(key string, observationAge time.Duration) Result {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if !hotkeyNames[key] {
+		return Result{Status: "refused", Reason: "nieznany klawisz leczenia: " + key}
+	}
+	if res, ok := d.guardLocked(observationAge, purposeHeal); !ok {
+		return res
+	}
+	if err := d.em.TapKey(key, holdMS); err != nil {
+		return d.emitterFailureLocked(err)
+	}
+	d.taps = append(d.taps, tap{at: d.now(), p: purposeHeal})
+	return Result{Status: "emitted", Key: key}
+}
+
+// ValidHotkey answers whether a key name is one the platform emitters know.
+// The healing rules are validated in internal/brain, which has no business
+// knowing the per-platform key tables - but must refuse a name no emitter
+// could ever press.
+func ValidHotkey(key string) bool { return hotkeyNames[key] }
 
 // keyForDirection resolves a walk direction against the driver's own
 // DirectionKeys, distinguishing two different failures: a direction name
@@ -264,7 +335,7 @@ func (d *Driver) walkLocked(direction string) Result {
 	if err := d.em.TapKey(key, holdMS); err != nil {
 		return d.emitterFailureLocked(err)
 	}
-	d.taps = append(d.taps, d.now())
+	d.taps = append(d.taps, tap{at: d.now(), p: purposeWalk})
 	return Result{Status: "emitted", Key: key}
 }
 
@@ -291,7 +362,7 @@ func (d *Driver) transitionLocked(kind string) Result {
 	if err := d.em.TapKey(key, holdMS); err != nil {
 		return d.emitterFailureLocked(err)
 	}
-	d.taps = append(d.taps, d.now())
+	d.taps = append(d.taps, tap{at: d.now(), p: purposeAction})
 	if d.ClickAfterHotkey {
 		// The client needs a moment to arm the crosshair before the click.
 		time.Sleep(actionClickDelayMS * time.Millisecond)
@@ -383,16 +454,30 @@ func (d *Driver) emitterFailureLocked(err error) Result {
 	return Result{Status: "disarmed", Reason: msg}
 }
 
-// allowTapLocked keeps a sliding one-second window. Idle time must not bank
-// budget for a later burst.
-func (d *Driver) allowTapLocked() bool {
+// allowTapLocked keeps a sliding one-second window and answers whether one
+// more tap for this purpose fits in it. Idle time must not bank budget for a
+// later burst, and an unused healing slot is never lent to walking: a reserve
+// that can be borrowed is not a reserve.
+func (d *Driver) allowTapLocked(p purpose) bool {
 	cutoff := d.now().Add(-time.Second)
 	kept := d.taps[:0]
-	for _, at := range d.taps {
-		if at.After(cutoff) {
-			kept = append(kept, at)
+	for _, t := range d.taps {
+		if t.at.After(cutoff) {
+			kept = append(kept, t)
 		}
 	}
 	d.taps = kept
-	return len(d.taps) < maxTapsPerSecond
+	samePurpose, nonHeal := 0, 0
+	for _, t := range d.taps {
+		if t.p == p {
+			samePurpose++
+		}
+		if t.p != purposeHeal {
+			nonHeal++
+		}
+	}
+	if len(d.taps) >= maxTapsPerSecond || samePurpose >= purposeLimit(p) {
+		return false
+	}
+	return p == purposeHeal || nonHeal < maxNonHealTapsPerSecond
 }
