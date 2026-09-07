@@ -33,6 +33,17 @@ func TestCombatConfigAcceptsCalibrated(t *testing.T) {
 	}
 }
 
+// The black-threshold rule's boundary sits exactly at BlackMax 121 (the
+// darkest default colour's largest channel, 133, minus the default Tolerance
+// of 12): one below that, 120 must still validate cleanly.
+func TestCombatConfigAcceptsBlackMaxAtTheBoundary(t *testing.T) {
+	c := calibrated()
+	c.BlackMax = 120
+	if err := c.withDefaults().validate(); err != nil {
+		t.Fatalf("BlackMax 120 powinien przejść walidację: %v", err)
+	}
+}
+
 func TestCombatConfigUncalibratedIsLegal(t *testing.T) {
 	if err := (CombatConfig{}).withDefaults().validate(); err != nil {
 		t.Fatalf("brak kalibracji musi być dozwolony: %v", err)
@@ -115,6 +126,24 @@ func TestCombatConfigRejections(t *testing.T) {
 				t.Errorf("komunikat %q nie zawiera %q", err.Error(), tt.want)
 			}
 		})
+	}
+}
+
+// BarTolerance and BlackMax are only promoted away from zero by withDefaults,
+// so this calls validate() directly rather than through the usual
+// withDefaults().validate() pipeline: going through withDefaults first would
+// silently turn the explicit 0 into 12 before validate() ever saw it, and the
+// rejection this test is about would never fire. calibrated() itself never
+// sets BarTolerance, so it already carries the zero this checks.
+func TestCombatConfigZeroToleranceIsRejectedOnItsOwn(t *testing.T) {
+	c := calibrated()
+	c.BarTolerance = 0
+	err := c.validate()
+	if err == nil {
+		t.Fatal("zerowa tolerancja przeszła walidację, choć nie powinna")
+	}
+	if !strings.Contains(err.Error(), "tolerancja") {
+		t.Errorf("komunikat %q nie zawiera %q", err.Error(), "tolerancja")
 	}
 }
 

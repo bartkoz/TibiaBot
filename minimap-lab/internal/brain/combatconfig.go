@@ -81,9 +81,11 @@ type CombatConfig struct {
 func (c CombatConfig) Enabled() bool { return !c.Viewport.Empty() && !c.Crop.Empty() }
 
 // withDefaults fills the fields the panel may leave out. Zero is treated as
-// "unset" for each of them, which is safe because none of these has a useful
-// zero: a black threshold of zero, a tolerance of zero or an empty colour list
-// would all mean "find nothing".
+// "unset" for each of them, which is safe because zero is not a legal value
+// for any of them either: GridCols/GridRows/DecisionRadius/BattleFrameCoverage
+// all have a validated minimum above zero, BarTolerance/BlackMax/
+// BattleFrameTolerance are now validated as 1-128 rather than 0-128 for
+// exactly this reason, and an empty colour list would mean "find nothing".
 func (c CombatConfig) withDefaults() CombatConfig {
 	if c.GridCols == 0 {
 		c.GridCols = 15
@@ -174,8 +176,8 @@ func (c CombatConfig) validate() error {
 	if err := checkBar("paska życia", c.BarWidth, c.BarHeight, c.BarBorder); err != nil {
 		return err
 	}
-	if c.BarTolerance < 0 || c.BarTolerance > 128 || c.BlackMax < 0 || c.BlackMax > 128 {
-		return fmt.Errorf("tolerancja barw i próg czerni muszą mieścić się w zakresie 0–128")
+	if c.BarTolerance < 1 || c.BarTolerance > 128 || c.BlackMax < 1 || c.BlackMax > 128 {
+		return fmt.Errorf("tolerancja barw i próg czerni muszą mieścić się w zakresie 1–128")
 	}
 	for _, s := range c.BarColors {
 		col, err := parseColor(s)
@@ -205,14 +207,18 @@ func (c CombatConfig) validate() error {
 		if _, err := parseColor(c.BattleFrame); err != nil {
 			return fmt.Errorf("barwa ramki celu %q: %w", c.BattleFrame, err)
 		}
+		if c.BattleFrameTolerance < 1 || c.BattleFrameTolerance > 128 {
+			return fmt.Errorf("tolerancja ramki celu musi mieścić się w zakresie 1–128")
+		}
 		if c.BattleFrameCoverage < 0.05 || c.BattleFrameCoverage > 1 {
 			return fmt.Errorf("pokrycie ramki celu musi mieścić się w zakresie 0,05–1")
 		}
 	}
-	for name, r := range map[string]Rect{"HP": c.HP, "Mana": c.Mana} {
-		if !r.Empty() && (r.W < 8 || r.H < 1) {
-			return fmt.Errorf("prostokąt paska %s musi mieć co najmniej 8 px szerokości", name)
-		}
+	if !c.HP.Empty() && (c.HP.W < 8 || c.HP.H < 1) {
+		return fmt.Errorf("prostokąt paska HP musi mieć co najmniej 8 px szerokości")
+	}
+	if !c.Mana.Empty() && (c.Mana.W < 8 || c.Mana.H < 1) {
+		return fmt.Errorf("prostokąt paska many musi mieć co najmniej 8 px szerokości")
 	}
 	return nil
 }
