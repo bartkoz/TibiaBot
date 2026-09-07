@@ -8,12 +8,14 @@ import (
 	"time"
 
 	"minimap-lab/internal/frame"
+	"minimap-lab/internal/heal"
 	"minimap-lab/internal/input"
 	"minimap-lab/internal/locate"
 	"minimap-lab/internal/mapdata"
 	"minimap-lab/internal/nav"
 	"minimap-lab/internal/route"
 	"minimap-lab/internal/vision"
+	"minimap-lab/internal/vitals"
 )
 
 const (
@@ -39,6 +41,7 @@ type Controls interface {
 	Armed() bool
 	Walk(direction string, observationAge time.Duration) input.Result
 	UseHotkey(kind string, observationAge time.Duration) input.Result
+	Heal(key string, observationAge time.Duration) input.Result
 	ActionDone()
 	Disarm(reason string)
 }
@@ -188,6 +191,14 @@ type Loop struct {
 
 	combat CombatState
 	view   VisionView
+
+	healer          *heal.Engine
+	healState       HealState
+	hpReading       vitals.Reading
+	manaReading     vitals.Reading
+	healedLastFrame bool
+	healedAt        time.Time
+	hasHealed       bool
 	// bars is what the detector found on the last frame, kept raw so the map
 	// sieve can be applied again once the position for that frame is known.
 	bars       []vision.Bar
@@ -215,13 +226,15 @@ func NewLoop(d Deps) *Loop {
 		d.Tile = func(mapdata.Position) TileVerdict { return TileUnknown }
 	}
 	l := &Loop{
-		deps:     d,
-		frames:   make(chan frameEnvelope, 1),
-		cmds:     make(chan func(), 16),
-		tracker:  NewTracker(),
-		recorder: NewRecorder(),
-		executor: NewExecutor(ExecutorOptions{}),
-		follower: NewFollower(nil, FollowerOptions{}),
+		deps:      d,
+		frames:    make(chan frameEnvelope, 1),
+		cmds:      make(chan func(), 16),
+		tracker:   NewTracker(),
+		recorder:  NewRecorder(),
+		executor:  NewExecutor(ExecutorOptions{}),
+		follower:  NewFollower(nil, FollowerOptions{}),
+		healer:    heal.NewEngine(),
+		healState: HealState{LastIndex: -1},
 		cfg: Config{Zoom: 1, MinScore: .85, MinGap: .015, Speed: 20,
 			FloorRadius: 8, RecordEvery: 10, Tolerance: 1},
 	}
@@ -295,6 +308,14 @@ func (l *Loop) SetConfig(ctx context.Context, c Config) error {
 		}
 		l.searchStopped = false
 		l.cfg = c
+		l.healer.SetRules(c.Heal.Rules)
+		if !c.Heal.Enabled {
+			// healStep is the only other writer of healState and it runs once
+			// per frame. Without this, switching healing off would leave the
+			// last reason published until the next frame arrives - forever, if
+			// the camera stopped.
+			l.healState = HealState{LastIndex: -1}
+		}
 		l.cfg.Combat = c.Combat.withDefaults()
 		if !l.cfg.Combat.Enabled() {
 			// Combat is only reset inside observeVision, which runs once per
@@ -429,11 +450,16 @@ func (l *Loop) handleFrame(ctx context.Context, env frameEnvelope) {
 		return
 	}
 	l.lastVideoUS, l.hasVideoUS = env.f.VideoTimeUS, true
+	capturedAt := env.receivedAt.Add(-time.Duration(env.f.AgeMS) * time.Millisecond)
 	// Detection runs before the match and regardless of it: the client's
 	// camera is centred on the character, so counting the creatures around her
 	// needs no world position whatsoever - which is also why it stays in front
 	// of the gate below: a search that has given up must not blind the bot.
 	l.observeVision(env.f)
+	// Healing goes before the match and before the "search gave up" gate. The
+	// bars are in the same pixels whatever the character's world position is,
+	// so a lost position must never mean a dead character.
+	l.healStep(capturedAt)
 	if l.searchStopped {
 		return
 	}
@@ -442,7 +468,6 @@ func (l *Loop) handleFrame(ctx context.Context, env frameEnvelope) {
 		return
 	}
 
-	capturedAt := env.receivedAt.Add(-time.Duration(env.f.AgeMS) * time.Millisecond)
 	// One match at a time. Frames arriving while one runs still feed vision
 	// above; each is simply dropped here, without being kept for later, and
 	// the next match starts only once a future frame arrives after this one
@@ -641,6 +666,17 @@ func (l *Loop) follow(ctx context.Context, pos mapdata.Position, capturedAt, now
 		l.follower.DropPath()
 	}
 	l.wasBlocked = blockedNow
+	// Healing preempts the step. This sits where it does for the same reason
+	// the floor-action pause does: asking the executor for an intent first
+	// would create a pending step nobody confirms or resets, which times out
+	// into a retry and then into a permanent block on this waypoint.
+	//
+	// The flag describes the newest frame, not necessarily the frame this
+	// match answers - follow runs from the match callback. That is what we
+	// want: whether to hold the step is a question about now.
+	if l.healedLastFrame {
+		return
+	}
 	// Decided from the follower's own output, before the executor is asked for
 	// anything: asking first would create a pending step this gate then
 	// discarded without confirming or resetting it, leaving it to time out
@@ -756,6 +792,7 @@ func (l *Loop) publish() {
 		LastMatchSeq:    l.lastMatchSeq,
 		Match:           l.match,
 		Combat:          l.combat,
+		Heal:            l.healSnapshot(),
 		Executor:        l.executor.State(),
 		PreviewRevision: l.previewRev,
 		LastAction:      l.lastAction,

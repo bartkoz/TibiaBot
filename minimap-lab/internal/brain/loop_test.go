@@ -26,6 +26,7 @@ type fakeControls struct {
 	armed        bool
 	keys         []string
 	hotkeys      []string
+	heals        []string
 	actionsDone  int
 	disarmReason string
 	nextStatus   string
@@ -75,6 +76,27 @@ func (c *fakeControls) pressed() ([]string, []string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return append([]string(nil), c.keys...), append([]string(nil), c.hotkeys...)
+}
+
+func (c *fakeControls) Heal(key string, _ time.Duration) input.Result {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.heals = append(c.heals, key)
+	return c.resultLocked(key)
+}
+
+func (c *fakeControls) healKeys() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]string(nil), c.heals...)
+}
+
+// setStatus makes the next call answer with something other than "emitted", so
+// a test can exercise the refused path without a real driver.
+func (c *fakeControls) setStatus(status string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.nextStatus = status
 }
 
 func (c *fakeControls) reason() string {

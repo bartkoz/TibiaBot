@@ -37,6 +37,7 @@ type State struct {
 	Executor ExecState     `json:"executor"`
 	Recorder RecorderState `json:"recorder"`
 	Combat   CombatState   `json:"combat"`
+	Heal     HealState     `json:"heal"`
 
 	LastAction *ActionState `json:"last_action,omitempty"`
 	// PreviewRevision changes when the neighbourhood picture would look
@@ -197,4 +198,20 @@ type RowView struct {
 	Y        int     `json:"y"`
 	HP       float64 `json:"hp"`
 	Targeted bool    `json:"targeted"`
+}
+
+// HealState is what the panel is told about healing. Scalars only, like every
+// other part of the snapshot: it rides on each frame.
+type HealState struct {
+	Enabled   bool `json:"enabled"`
+	RuleCount int  `json:"rule_count"`
+	// LastIndex is the rule that last fired, counting from zero; -1 until one
+	// does. LastHotkey is its key, kept separately because a rule list edited
+	// since then may no longer have that index.
+	LastIndex  int    `json:"last_index"`
+	LastHotkey string `json:"last_hotkey,omitempty"`
+	// LastAgeMS is how long ago that emission was; nil when nothing has fired.
+	LastAgeMS *int `json:"last_age_ms"`
+	// Reason is why nothing fired on this frame, for the panel to show.
+	Reason string `json:"reason,omitempty"`
 }

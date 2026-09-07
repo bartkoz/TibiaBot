@@ -28,25 +28,31 @@ const maxVisionBars = 64
 // is pure with respect to the world: nothing here consults the position.
 func (l *Loop) observeVision(f frame.Frame) {
 	l.combat, l.view, l.bars = CombatState{}, VisionView{}, nil
+	l.hpReading, l.manaReading = vitals.Reading{}, vitals.Reading{}
 	cc := l.cfg.Combat
 	if !cc.Enabled() {
 		return
 	}
 	l.combat.Calibrated = true
+	// The full readings are kept, not just the percentages: the healing rules
+	// need to tell "the bar says zero" from "the bar could not be read", and
+	// the reason text is what the panel shows when a rule is blocked.
+	l.hpReading = vitals.Reading{Reason: "brak regionu paska HP w klatce"}
 	if im, ok := f.Image(frame.RegionHP); ok {
-		r := vitals.Read(im, cc.vitalsOptions())
-		l.combat.HPPct, l.combat.HPOK = r.Percent, r.OK
-		l.view.HP, l.view.HPOK = r.Percent, r.OK
-		if !r.OK {
-			l.combat.Reason = r.Reason
+		l.hpReading = vitals.Read(im, cc.vitalsOptions())
+		l.combat.HPPct, l.combat.HPOK = l.hpReading.Percent, l.hpReading.OK
+		l.view.HP, l.view.HPOK = l.hpReading.Percent, l.hpReading.OK
+		if !l.hpReading.OK {
+			l.combat.Reason = l.hpReading.Reason
 		}
 	}
+	l.manaReading = vitals.Reading{Reason: "brak regionu paska many w klatce"}
 	if im, ok := f.Image(frame.RegionMana); ok {
-		r := vitals.Read(im, cc.vitalsOptions())
-		l.combat.ManaPct, l.combat.ManaOK = r.Percent, r.OK
-		l.view.Mana, l.view.ManaOK = r.Percent, r.OK
-		if !r.OK && l.combat.Reason == "" {
-			l.combat.Reason = r.Reason
+		l.manaReading = vitals.Read(im, cc.vitalsOptions())
+		l.combat.ManaPct, l.combat.ManaOK = l.manaReading.Percent, l.manaReading.OK
+		l.view.Mana, l.view.ManaOK = l.manaReading.Percent, l.manaReading.OK
+		if !l.manaReading.OK && l.combat.Reason == "" {
+			l.combat.Reason = l.manaReading.Reason
 		}
 	}
 	if im, ok := f.Image(frame.RegionBattle); ok {
