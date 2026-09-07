@@ -79,6 +79,10 @@ type Config struct {
 	// calibrated", which is legal: the panel is meant to be calibrated one
 	// rectangle at a time, with each one checked before the next.
 	Combat CombatConfig `json:"combat"`
+
+	// Heal is the rule list and its master switch. An empty list is legal and
+	// means "do not heal".
+	Heal HealConfig `json:"heal"`
 }
 
 func (c Config) validate() error {
@@ -107,6 +111,9 @@ func (c Config) validate() error {
 		return fmt.Errorf("tolerancje muszą mieścić się w zakresie 0–32 kratek")
 	}
 	if err := c.Combat.withDefaults().validate(); err != nil {
+		return err
+	}
+	if err := c.Heal.validate(); err != nil {
 		return err
 	}
 	return nil

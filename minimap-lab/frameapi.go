@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"image"
 	"io"
 	"net/http"
@@ -192,6 +193,10 @@ func (s *server) config(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &body) {
 		return
 	}
+	if err := healKeyConflict(body); err != nil {
+		writeJSONError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	// Everything is checked before anything is stored. The tile goes first
 	// because it is the only part that cannot be rolled back cheaply.
 	if body.Tile != nil && s.driver != nil {
@@ -211,6 +216,35 @@ func (s *server) config(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]bool{"ok": true})
+}
+
+// actionNames are the floor actions in the genitive, for a sentence that reads
+// like Polish rather than like a field name.
+var actionNames = map[string]string{
+	"rope": "liny", "ladder": "drabiny", "hole": "dziury", "shovel": "łopaty",
+}
+
+// healKeyConflict refuses a request where one key would both heal and dig. The
+// halves of the config are applied to different owners - the action hotkeys to
+// the driver, the rules to the loop - so this is the only point where both are
+// visible at once, and it runs before anything is stored.
+func healKeyConflict(body configRequest) error {
+	for action, key := range body.Keys {
+		if key == "" {
+			continue
+		}
+		for i, r := range body.Brain.Heal.Rules {
+			if r.Hotkey != key {
+				continue
+			}
+			name, ok := actionNames[action]
+			if !ok {
+				name = action
+			}
+			return fmt.Errorf("reguła %d używa klawisza %s, przypisanego już do %s", i+1, key, name)
+		}
+	}
+	return nil
 }
 
 func (s *server) putRoute(w http.ResponseWriter, r *http.Request) {

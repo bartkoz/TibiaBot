@@ -209,6 +209,29 @@ func TestConfigIsRejectedWholeOrAppliedWhole(t *testing.T) {
 	}
 }
 
+// The two halves of the config go to different owners - the action hotkeys to
+// the driver, the healing rules to the loop - so the handler is the only place
+// that can see one key doing both jobs.
+func TestConfigRefusesAHealingKeyBoundToAFloorAction(t *testing.T) {
+	f := brainServer(t, nil)
+	body := `{"brain":{"zoom":1,"min_score":0.85,"min_gap":0.015,"speed":20,
+		"floor_radius":8,"record_every":10,"tolerance":1,"floor":7,
+		"heal":{"enabled":true,"rules":[
+			{"enabled":true,"resource":"hp","below_pct":60,"hotkey":"f7","cooldown_ms":1000}]}},
+		"keys":{"rope":"f7"},"directions":{"N":"numpad8"}}`
+	w := f.request(t, "PUT", "/api/config", []byte(body))
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("kod = %d, oczekiwano 400", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "liny") {
+		t.Fatalf("powód nie mówi, z czym jest kolizja: %s", w.Body.String())
+	}
+	// Nothing may be stored from a refused request.
+	if got := f.server.driver.ActionKeys["rope"]; got != "" {
+		t.Errorf("hotkey liny = %q — odrzucona konfiguracja jednak coś zapisała", got)
+	}
+}
+
 func TestRouteRoundTripsThroughTheAPI(t *testing.T) {
 	f := brainServer(t, nil)
 	in := `{"version":1,"name":"Venore","waypoints":[
