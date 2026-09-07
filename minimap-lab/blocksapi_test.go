@@ -14,7 +14,7 @@ import (
 )
 
 func newBlocksServer() *server {
-	return &server{gate: make(chan struct{}, 1), blocks: nav.NewBlockStore(time.Now)}
+	return withBlocks(newServer(""), nav.NewBlockStore(time.Now))
 }
 
 func callBlocks(t testing.TB, s *server, method, path, body string) *httptest.ResponseRecorder {
@@ -111,7 +111,7 @@ func TestDeleteEndpointRemovesABlock(t *testing.T) {
 }
 
 func TestBlocksRoutesAnswer503WithoutAStore(t *testing.T) {
-	s := &server{gate: make(chan struct{}, 1)}
+	s := newServer("")
 	if w := callBlocks(t, s, "GET", "/api/blocks?x=1&y=1&z=7&r=4", ""); w.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status %d, want 503 - a server without a store must say so, not pretend the map is empty", w.Code)
 	}

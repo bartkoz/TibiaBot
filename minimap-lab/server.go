@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"minimap-lab/internal/input"
+	"minimap-lab/internal/locate"
 	"minimap-lab/internal/mapdata"
 	"minimap-lab/internal/nav"
 )
@@ -22,18 +23,14 @@ import (
 var assets embed.FS
 
 type server struct {
-	dir          string
-	gate         chan struct{}
-	cached       *mapdata.Atlas // Protected by gate; keep at most one loaded floor.
-	debugDir     string
-	lastDebug    time.Time
-	localAtlases map[int]localAtlasEntry
-	cacheClock   uint64
-	// Route queries use their own lock and cache so they never contend with
-	// the locate gate.
-	costMu    sync.Mutex
-	costCache *mapdata.CostGrid
-	costFloor int
+	dir       string
+	gate      chan struct{}
+	debugDir  string
+	lastDebug time.Time
+	// locator and planner own the decoded map data. They keep their own
+	// caches and locks, so a route search never contends with a match.
+	locator *locate.Service
+	planner *nav.Planner
 	// The live preview asks for a small window around the character while the
 	// planner asks for a rectangle spanning a whole route. One shared cache
 	// would have them evict each other on every single reading.
@@ -51,6 +48,18 @@ type server struct {
 	repeatMu   sync.Mutex
 	lastLogged string
 	repeats    int
+}
+
+// newServer wires the pieces that must never be nil. Assembling the struct by
+// hand leaves the locator and the planner unset, which fails as a nil
+// dereference deep inside a handler rather than at construction.
+func newServer(dir string) *server {
+	return &server{
+		dir:     dir,
+		gate:    make(chan struct{}, 1),
+		locator: locate.NewService(dir),
+		planner: nav.NewPlanner(dir),
+	}
 }
 
 func (s *server) routes() http.Handler {

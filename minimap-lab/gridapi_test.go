@@ -88,14 +88,14 @@ func TestGridDoesNotEvictThePlannerCache(t *testing.T) {
 	s := pathServer(t, testenv.CostTile(100, nil))
 	s.blocks = nav.NewBlockStore(time.Now)
 	decodePath(t, postPath(t, s, `{"from":{"x":32800,"y":32050,"z":7},"to":{"x":32800,"y":32054,"z":7}}`))
-	planner := s.costCache
-	if planner == nil {
+	floor, ok := s.planner.CachedFloor()
+	if !ok {
 		t.Fatal("the route query left no planner cache to protect")
 	}
 	// A window the planner's cache cannot serve: another floor entirely. With a
 	// shared cache this reload would evict the route data.
 	getGrid(t, s, "x=32800&y=32050&z=6&r=32")
-	if s.costCache != planner || s.costFloor != 7 {
+	if got, still := s.planner.CachedFloor(); !still || got != floor || got != 7 {
 		t.Fatal("the preview replaced the planner's cached floor; the two would evict each other every reading")
 	}
 }

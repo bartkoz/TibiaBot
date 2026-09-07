@@ -28,7 +28,8 @@ func main() {
 	if err := input.ValidateStaleMS(*staleMS); err != nil {
 		log.Fatal(err)
 	}
-	s := &server{dir: *dir, gate: make(chan struct{}, 1), debugDir: ".debug"}
+	s := newServer(*dir)
+	s.debugDir = ".debug"
 	s.blocks = nav.NewBlockStore(time.Now)
 	s.blocks.SetPath(*blocksPath)
 	// Fatal, not a warning: starting with an empty overlay would silently throw

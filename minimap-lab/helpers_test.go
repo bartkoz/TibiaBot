@@ -3,6 +3,7 @@ package main
 import (
 	"image"
 	"image/draw"
+	"path/filepath"
 	"testing"
 
 	"minimap-lab/internal/locate"
@@ -71,4 +72,32 @@ func learnPermanentBlock(t *testing.T, clock *testClock, store *nav.BlockStore, 
 	if d := store.Observe(obs); d.Result != "promoted" {
 		t.Fatalf("drugi epizod nie awansował blokady na trwałą: %+v", d)
 	}
+}
+
+// venoreServer builds a server whose map directory holds the Venore reference
+// chunk on floor 7. Tests used to hand the server a ready-made atlas through
+// an exported field; now that the cache belongs to locate.Service, going
+// through the disk is both simpler and closer to what actually runs.
+func venoreServer(t testing.TB) (*server, locate.Options) {
+	t.Helper()
+	dir := t.TempDir()
+	testenv.SavePNG(t, filepath.Join(dir, "Minimap_Color_32768_32000_7.png"),
+		testenv.LoadFixture(t, "venore-reference.png"))
+	c := testenv.VenoreCalibration()
+	return newServer(dir),
+		locate.Options{Zoom: c.Zoom, MarkerX: c.MarkerX, MarkerY: c.MarkerY,
+			MaskRadius: c.MaskRadius, MinScore: c.MinScore, MinGap: c.MinGap}
+}
+
+func abs(v int) int {
+	if v < 0 {
+		return -v
+	}
+	return v
+}
+
+// withBlocks attaches a learned-blockage store to a server built by newServer.
+func withBlocks(s *server, b *nav.BlockStore) *server {
+	s.blocks = b
+	return s
 }

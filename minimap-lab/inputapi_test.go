@@ -13,7 +13,8 @@ import (
 func inputServer(t testing.TB) (*server, *input.DryEmitter) {
 	t.Helper()
 	em := &input.DryEmitter{Window: input.Window{PID: 42, Path: "/Applications/Tibia.app"}}
-	s := &server{dir: t.TempDir(), gate: make(chan struct{}, 1), driver: input.NewDriver(em, input.DefaultMaxObservationAgeMS)}
+	s := newServer(t.TempDir())
+	s.driver = input.NewDriver(em, input.DefaultMaxObservationAgeMS)
 	return s, em
 }
 
@@ -120,7 +121,7 @@ func TestInputAPIStatusActsAsHeartbeat(t *testing.T) {
 }
 
 func TestInputAPIStatusAvailableWithoutEmitter(t *testing.T) {
-	s := &server{dir: t.TempDir(), gate: make(chan struct{}, 1)}
+	s := newServer(t.TempDir())
 
 	r := httptest.NewRequest("GET", "http://127.0.0.1:8095/api/input/status", nil)
 	w := httptest.NewRecorder()
@@ -324,7 +325,7 @@ func TestInputAPIDisarmRefusesWrongSessionToken(t *testing.T) {
 }
 
 func TestInputAPIUnavailableWithoutEmitter(t *testing.T) {
-	s := &server{dir: t.TempDir(), gate: make(chan struct{}, 1)}
+	s := newServer(t.TempDir())
 
 	w := postInput(t, s, "/api/input", `{"seq":1,"action":"walk","direction":"E","observation_age_ms":80}`)
 

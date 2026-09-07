@@ -1,25 +1,13 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
-	"image"
 	"io"
 	"net/http"
-	"time"
 
 	"minimap-lab/internal/mapdata"
 	"minimap-lab/internal/nav"
-)
-
-const (
-	defaultPathMargin = 64
-	maxPathMargin     = 256
-	pathTimeout       = 5 * time.Second
-	// Coordinates alone are not a bound: two valid tiles at opposite map
-	// corners would allocate gigabytes before any search starts.
-	maxSearchTiles = 4 << 20
 )
 
 // Every coordinate is a pointer so a missing field is refused rather than
@@ -45,9 +33,8 @@ func (t *tileRef) position() (mapdata.Position, bool) {
 }
 
 // path answers a single route query. It deliberately avoids server.gate: the
-// 10 Hz locate loop must never wait behind a route search.
+// tracking loop must never wait behind a route search.
 func (s *server) path(w http.ResponseWriter, r *http.Request) {
-	started := time.Now()
 	var req pathRequest
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10))
 	// More() only reports a following *value*; a stray bracket or a second
@@ -62,93 +49,18 @@ func (s *server) path(w http.ResponseWriter, r *http.Request) {
 	}
 	from, fromOK := req.From.position()
 	to, toOK := req.To.position()
-	if !fromOK || !toOK || req.Margin < 0 || req.Margin > maxPathMargin {
+	if !fromOK || !toOK || req.Margin < 0 || req.Margin > nav.MaxMargin {
 		http.Error(w, "Wymagane pełne pola from/to ze współrzędnymi 0–65535, piętrem 0–15 i marginesem 0–256.", http.StatusBadRequest)
 		return
 	}
-	if from.Z != to.Z {
-		writeJSON(w, nav.PathResult{Status: "different_floor", Steps: [][2]int{},
-			Reason: "Waypoint leży na innym piętrze. Użyj przejścia i poczekaj na potwierdzenie nowego Z."})
-		return
-	}
-	margin := req.Margin
-	if margin == 0 {
-		margin = defaultPathMargin
-	}
-	area := image.Rect(min(from.X, to.X), min(from.Y, to.Y),
-		max(from.X, to.X)+1, max(from.Y, to.Y)+1).Inset(-margin)
-	if int64(area.Dx())*int64(area.Dy()) > maxSearchTiles {
-		http.Error(w, "Obszar wyszukiwania jest za duży. Zmniejsz odległość między waypointami lub margines.", http.StatusBadRequest)
-		return
-	}
-	ctx, cancel := context.WithTimeout(r.Context(), pathTimeout)
-	defer cancel()
-
-	s.costMu.Lock()
-	defer s.costMu.Unlock()
-	// The lock itself cannot be cancelled, so a request abandoned while waiting
-	// is dropped here instead of going on to scan and decode chunks.
-	if err := ctx.Err(); err != nil {
-		http.Error(w, "Żądanie porzucone.", http.StatusRequestTimeout)
-		return
-	}
-	grid, err := s.costGrid(from.Z, area)
+	result, err := s.planner.Plan(r.Context(), s.blocks, from, to, req.Margin)
 	if err != nil {
+		if r.Context().Err() != nil {
+			http.Error(w, "Żądanie porzucone.", http.StatusRequestTimeout)
+			return
+		}
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	// Presence beats any learned hypothesis: a character standing on a tile we
-	// marked unreachable is proof the mark is simply wrong.
-	if s.blocks.Clear(from) {
-		// A revoked permanent block has to reach the file too, or a restart
-		// brings it back and cuts this route again.
-		s.blocks.Flush()
-	}
-	// One snapshot for the whole search: A* assumes the cost of a closed vertex
-	// never changes, so the graph must not shift under it mid-search. The
-	// revision comes from the same call, so it describes the overlay the route
-	// was actually computed on rather than whatever arrived while it ran.
-	overlay, revision := s.blocks.SnapshotAt(area, from.Z)
-	pg := nav.NewPathGrid(grid.LimitTo(area), overlay)
-	// A waypoint recorded a tile or two off - the tracker drifted, or the
-	// position was read wrong - would otherwise kill the whole route. Aim at
-	// the nearest tile the bot can stand on instead, and say so.
-	//
-	// Checked only once the start is sound: a character standing on ground the
-	// map calls impassable is the more useful thing to report, and nav.FindPath
-	// says so on its own.
-	goalX, goalY := to.X, to.Y
-	ok := true
-	if !pg.Blocked(from.X, from.Y) {
-		goalX, goalY, ok = pg.NearestWalkable(to.X, to.Y)
-	}
-	if !ok {
-		writeJSON(w, nav.PathResult{Status: "blocked_goal", Steps: [][2]int{},
-			Reason: pg.GoalRefusal(to.X, to.Y), OverlayRevision: revision,
-			ElapsedMS: float64(time.Since(started).Microseconds()) / 1000})
-		return
-	}
-	// Every reachable tile is closed at most once, so the area itself bounds
-	// the work; no arbitrary iteration constant is needed.
-	result := nav.FindPath(ctx, pg, [2]int{from.X, from.Y}, [2]int{goalX, goalY}, area.Dx()*area.Dy())
-	result.GoalMoved = goalX != to.X || goalY != to.Y
-	result.OverlayRevision = revision
-	if result.Steps == nil {
-		result.Steps = [][2]int{}
-	}
-	result.ElapsedMS = float64(time.Since(started).Microseconds()) / 1000
 	writeJSON(w, result)
-}
-
-// costGrid keeps one decoded floor of walking costs. Called under costMu.
-func (s *server) costGrid(floor int, area image.Rectangle) (*mapdata.CostGrid, error) {
-	if s.costCache != nil && s.costFloor == floor && area.In(s.costCache.Bounds()) {
-		return s.costCache, nil
-	}
-	grid, err := mapdata.LoadCostArea(s.dir, floor, area)
-	if err != nil {
-		return nil, err
-	}
-	s.costCache, s.costFloor = grid, floor
-	return grid, nil
 }

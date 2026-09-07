@@ -22,7 +22,7 @@ func pathServer(t testing.TB, tiles ...*image.Paletted) *server {
 	for i, im := range tiles {
 		testenv.WriteCostTile(t, dir, 32768+256*i, 32000, 7, im)
 	}
-	return &server{dir: dir, gate: make(chan struct{}, 1)}
+	return newServer(dir)
 }
 
 func postPath(t testing.TB, s *server, body string) *httptest.ResponseRecorder {
@@ -171,7 +171,7 @@ func TestPathAPIStopsWorkForAnAbandonedRequest(t *testing.T) {
 			t.Fatal("an abandoned request should not produce a route")
 		}
 	}
-	if s.costCache != nil {
+	if _, ok := s.planner.CachedFloor(); ok {
 		t.Error("an abandoned request should not populate the cost cache")
 	}
 }

@@ -3,8 +3,6 @@ package main
 import (
 	"bytes"
 	"encoding/json"
-	"image"
-	"image/draw"
 	"image/png"
 	"mime/multipart"
 	"net/http"
@@ -18,7 +16,7 @@ import (
 )
 
 func TestHTTPDemoRoundTrip(t *testing.T) {
-	s := &server{dir: t.TempDir(), gate: make(chan struct{}, 1)}
+	s := newServer(t.TempDir())
 	r := httptest.NewRequest("GET", "http://127.0.0.1:8095/api/demo", nil)
 	w := httptest.NewRecorder()
 	s.routes().ServeHTTP(w, r)
@@ -88,9 +86,10 @@ func replayTracking(handler http.Handler, body []byte, contentType string) *http
 }
 
 func TestHTTPTracking(t *testing.T) {
-	a, _, o := actualTrackingFixture(t)
-	s := &server{dir: t.TempDir(), gate: make(chan struct{}, 1), cached: a, debugDir: t.TempDir()}
-	req := matchRequest{Options: o, Floor: 7, Near: &mapdata.Position{X: 32958, Y: 32077, Z: 7}, Radius: 5, NoPreview: true}
+	s, o := venoreServer(t)
+	s.debugDir = t.TempDir()
+	req := matchRequest{Request: locate.Request{Options: o, Floor: 7,
+		Near: &mapdata.Position{X: 32958, Y: 32077, Z: 7}, Radius: 5}, NoPreview: true}
 	body, ct := trackingBody(t, req)
 	w := replayTracking(s.routes(), body, ct)
 	if w.Code != 200 {
@@ -119,13 +118,11 @@ func TestHTTPTracking(t *testing.T) {
 }
 
 func BenchmarkHTTPTrackActualCapture(b *testing.B) {
-	ref := testenv.LoadFixture(b, "venore-reference.png")
-	rgba := image.NewNRGBA(ref.Bounds())
-	draw.Draw(rgba, rgba.Bounds(), ref, ref.Bounds().Min, draw.Src)
-	a := &mapdata.Atlas{Image: rgba, Origin: image.Pt(32768, 32000), Floor: 7}
-	s := &server{gate: make(chan struct{}, 1), cached: a}
+	s, _ := venoreServer(b)
 	handler := s.routes()
-	req := matchRequest{Options: locate.Options{Zoom: 1, MarkerX: 52, MarkerY: 57, MaskRadius: 5, MinScore: .85, MinGap: .015}, Floor: 7, Near: &mapdata.Position{X: 32958, Y: 32077, Z: 7}, Radius: 5, NoPreview: true}
+	req := matchRequest{Request: locate.Request{
+		Options: locate.Options{Zoom: 1, MarkerX: 52, MarkerY: 57, MaskRadius: 5, MinScore: .85, MinGap: .015},
+		Floor:   7, Near: &mapdata.Position{X: 32958, Y: 32077, Z: 7}, Radius: 5}, NoPreview: true}
 	body, ct := trackingBody(b, req)
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -138,7 +135,7 @@ func BenchmarkHTTPTrackActualCapture(b *testing.B) {
 }
 
 func TestHTTPValidationAndStaticPanel(t *testing.T) {
-	s := &server{dir: t.TempDir(), gate: make(chan struct{}, 1)}
+	s := newServer(t.TempDir())
 	for _, tc := range []struct {
 		method, path, origin string
 		code                 int

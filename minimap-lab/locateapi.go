@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"image"
 	"image/color"
@@ -23,14 +22,8 @@ import (
 )
 
 type matchRequest struct {
-	locate.Options
-	Floor          int               `json:"floor"`
-	Demo           bool              `json:"demo"`
-	Near           *mapdata.Position `json:"near,omitempty"`
-	Radius         int               `json:"radius,omitempty"`
-	NoPreview      bool              `json:"no_preview,omitempty"`
-	AdjacentFloors bool              `json:"adjacent_floors,omitempty"`
-	FloorRadius    int               `json:"floor_radius,omitempty"`
+	locate.Request
+	NoPreview bool `json:"no_preview,omitempty"`
 }
 
 func (s *server) info(w http.ResponseWriter, r *http.Request) {
@@ -62,12 +55,12 @@ func (s *server) match(w http.ResponseWriter, r *http.Request) {
 	}
 	defer r.MultipartForm.RemoveAll()
 	var req matchRequest
-	if err := json.Unmarshal([]byte(r.FormValue("options")), &req); err != nil || req.Floor < 0 || req.Floor > 15 {
+	if err := json.Unmarshal([]byte(r.FormValue("options")), &req); err != nil {
 		http.Error(w, "Nieprawidłowe opcje lub piętro", 400)
 		return
 	}
-	if req.Near != nil && (req.Near.Z < 0 || req.Near.Z > 15 || abs(req.Near.Z-req.Floor) > 1 || req.Near.X < 0 || req.Near.X > 65535 || req.Near.Y < 0 || req.Near.Y > 65535 || req.Zoom < 1 || req.Zoom > 8 || req.Radius < 1 || req.Radius > 64 || req.FloorRadius < 0 || req.FloorRadius > 32) {
-		http.Error(w, "Nieprawidłowy obszar lokalny: wymagane Z lub Z±1, skala 1–8, promień ruchu 1–64 i promień przejścia 1–32 (0 = 8).", 400)
+	if err := req.Request.Validate(); err != nil {
+		http.Error(w, err.Error(), 400)
 		return
 	}
 	f, _, err := r.FormFile("image")
@@ -97,7 +90,7 @@ func (s *server) match(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Trwa inne wyszukiwanie. Spróbuj ponownie.", 429)
 		return
 	}
-	// Throttle disk writes and logging during 5–10 Hz tracking.
+	// Throttle disk writes and logging during 5-10 Hz tracking.
 	debugNow := s.debugDir != "" && !req.Demo && (req.Near == nil || time.Since(s.lastDebug) >= time.Second)
 	if debugNow {
 		s.lastDebug = time.Now()
@@ -108,30 +101,7 @@ func (s *server) match(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 45*time.Second)
 	defer cancel()
-	var atlas *mapdata.Atlas
-	matchStarted := time.Now()
-	var result locate.Result
-	if req.Demo {
-		atlas = mapdata.DemoAtlas()
-	} else if req.Near != nil {
-		result, atlas, err = s.locateLocal(ctx, im, req)
-	} else {
-		if s.cached == nil || s.cached.Floor != req.Floor {
-			s.cached = nil
-			s.cached, err = mapdata.LoadAtlas(s.dir, req.Floor)
-		}
-		if err != nil {
-			http.Error(w, err.Error(), 400)
-			return
-		}
-		atlas = s.cached
-	}
-	if req.Near != nil && req.Demo {
-		result, err = locate.Near(ctx, atlas, im, req.Options, *req.Near, req.Radius)
-	} else if req.Near == nil {
-		result, err = locate.WithScale(ctx, atlas, im, req.Options)
-	}
-	result.MatchMS = float64(time.Since(matchStarted).Microseconds()) / 1000
+	result, atlas, err := s.locator.Locate(ctx, im, req.Request)
 	if err != nil {
 		if debugNow {
 			s.saveDebug("last-result.json", []byte(fmt.Sprintf("%q", err.Error())))
@@ -147,20 +117,12 @@ func (s *server) match(w http.ResponseWriter, r *http.Request) {
 	if debugNow {
 		data, _ := json.MarshalIndent(result, "", "  ")
 		s.saveDebug("last-result.json", data)
-		log.Printf("locate floor=%d zoom=%d crop=%dx%d found=%v best=%+v competitor=%+v elapsed=%dms", req.Floor, req.Zoom, im.Bounds().Dx(), im.Bounds().Dy(), result.Found, result.Best, result.Competitor, result.ElapsedMS)
+		log.Printf("locate floor=%d zoom=%d crop=%dx%d found=%v best=%+v competitor=%+v elapsed=%dms",
+			req.Floor, req.Zoom, im.Bounds().Dx(), im.Bounds().Dy(), result.Found, result.Best, result.Competitor, result.ElapsedMS)
 	}
 	preview := ""
 	if result.Best != nil && atlas != nil && !req.NoPreview {
-		p := image.Pt(result.Best.X, result.Best.Y).Sub(atlas.Origin)
-		patch := image.NewNRGBA(image.Rect(0, 0, 129, 129))
-		draw.Draw(patch, patch.Bounds(), atlas.Image, p.Sub(image.Pt(64, 64)), draw.Src)
-		for d := -5; d <= 5; d++ {
-			patch.Set(64+d, 64, color.NRGBA{255, 60, 90, 255})
-			patch.Set(64, 64+d, color.NRGBA{255, 60, 90, 255})
-		}
-		var buf bytes.Buffer
-		png.Encode(&buf, patch)
-		preview = "data:image/png;base64," + base64.StdEncoding.EncodeToString(buf.Bytes())
+		preview = "data:image/png;base64," + base64.StdEncoding.EncodeToString(previewPNG(atlas, result.Best.X, result.Best.Y))
 	}
 	writeJSON(w, struct {
 		locate.Result
@@ -168,148 +130,17 @@ func (s *server) match(w http.ResponseWriter, r *http.Request) {
 	}{result, preview})
 }
 
-type localAtlasEntry struct {
-	atlas    *mapdata.Atlas
-	coverage image.Rectangle
-	used     uint64
-}
-
-// Called under server.gate. Keep three bounded local atlases in addition to
-// the one full atlas used for initial/global localization.
-func (s *server) localAtlas(floor int, area image.Rectangle) (*mapdata.Atlas, error) {
-	if s.cached != nil && s.cached.Floor == floor {
-		return s.cached, nil
+// previewPNG cuts a 129x129-tile window out of the atlas, centred on the
+// match, with a crosshair on the middle tile.
+func previewPNG(atlas *mapdata.Atlas, x, y int) []byte {
+	p := image.Pt(x, y).Sub(atlas.Origin)
+	patch := image.NewNRGBA(image.Rect(0, 0, 129, 129))
+	draw.Draw(patch, patch.Bounds(), atlas.Image, p.Sub(image.Pt(64, 64)), draw.Src)
+	for d := -5; d <= 5; d++ {
+		patch.Set(64+d, 64, color.NRGBA{255, 60, 90, 255})
+		patch.Set(64, 64+d, color.NRGBA{255, 60, 90, 255})
 	}
-	if s.localAtlases == nil {
-		s.localAtlases = make(map[int]localAtlasEntry)
-	}
-	s.cacheClock++
-	if entry, ok := s.localAtlases[floor]; ok && area.In(entry.coverage) {
-		entry.used = s.cacheClock
-		s.localAtlases[floor] = entry
-		return entry.atlas, nil
-	}
-	// Align coverage with tile boundaries, including known missing chunks.
-	coverage := image.Rect(area.Min.X&^255, area.Min.Y&^255, (area.Max.X+255)&^255, (area.Max.Y+255)&^255)
-	atlas, err := mapdata.LoadAtlasArea(s.dir, floor, &coverage)
-	if err != nil && !errors.Is(err, mapdata.ErrNoMapData) {
-		return nil, err
-	}
-	if _, exists := s.localAtlases[floor]; !exists && len(s.localAtlases) >= 3 {
-		oldest := -1
-		var used uint64
-		for z, entry := range s.localAtlases {
-			if oldest < 0 || entry.used < used {
-				oldest = z
-				used = entry.used
-			}
-		}
-		delete(s.localAtlases, oldest)
-	}
-	s.localAtlases[floor] = localAtlasEntry{atlas, coverage, s.cacheClock}
-	return atlas, nil
-}
-
-func abs(v int) int {
-	if v < 0 {
-		return -v
-	}
-	return v
-}
-
-func localFootprint(im image.Image, o locate.Options, near mapdata.Position, radius int) image.Rectangle {
-	// Round outward so partially visible enlarged cells and crop seams fit.
-	return image.Rect(near.X-radius-(o.MarkerX+o.Zoom-1)/o.Zoom-2,
-		near.Y-radius-(o.MarkerY+o.Zoom-1)/o.Zoom-2,
-		near.X+radius+(im.Bounds().Dx()-o.MarkerX+o.Zoom-1)/o.Zoom+2,
-		near.Y+radius+(im.Bounds().Dy()-o.MarkerY+o.Zoom-1)/o.Zoom+2)
-}
-
-// Try the selected floor first. If tracking there fails, compare BOTH adjacent
-// floors against each other and the original candidate before accepting Z.
-func (s *server) locateLocal(ctx context.Context, im image.Image, req matchRequest) (locate.Result, *mapdata.Atlas, error) {
-	floorRadius := req.FloorRadius
-	if floorRadius == 0 {
-		floorRadius = 8
-	}
-	var results []locate.Result
-	var searched, unavailable []int
-	atlases := make(map[int]*mapdata.Atlas)
-	searchFloor := func(z, radius int) error {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		searched = append(searched, z)
-		near := *req.Near
-		near.Z = z
-		atlas, err := s.localAtlas(z, localFootprint(im, req.Options, near, radius))
-		if err != nil {
-			return err
-		}
-		if atlas == nil {
-			unavailable = append(unavailable, z)
-			return nil
-		}
-		atlases[z] = atlas
-		r, err := locate.Near(ctx, atlas, im, req.Options, near, radius)
-		if err != nil {
-			return err
-		}
-		results = append(results, r)
-		return nil
-	}
-	radius := req.Radius
-	if req.Floor != req.Near.Z {
-		radius = floorRadius
-	}
-	if err := searchFloor(req.Floor, radius); err != nil {
-		return locate.Result{}, nil, err
-	}
-	primaryFound := len(results) > 0 && results[0].Found
-	if !primaryFound && req.AdjacentFloors && req.Floor == req.Near.Z {
-		for _, z := range []int{req.Near.Z - 1, req.Near.Z + 1} {
-			if z >= 0 && z <= 15 {
-				if err := searchFloor(z, floorRadius); err != nil {
-					return locate.Result{}, nil, err
-				}
-			}
-		}
-	}
-	positions := 0
-	for _, r := range results {
-		positions += r.SearchPositions
-	}
-	sort.SliceStable(results, func(i, j int) bool {
-		if results[i].Best == nil {
-			return false
-		}
-		if results[j].Best == nil {
-			return true
-		}
-		return results[i].Best.Score > results[j].Best.Score
-	})
-	result := locate.Result{Mode: "local", Zoom: req.Zoom, Reason: "Brak dopasowania w pobliżu ostatniego XY na sprawdzonych piętrach."}
-	if len(results) > 0 {
-		result = results[0]
-	}
-	if result.Best != nil && len(results) > 1 && results[1].Best != nil && result.Best.Score-results[1].Best.Score <= req.MinGap {
-		result.Found = false
-		result.Position = nil
-		if result.Competitor == nil || results[1].Best.Score > result.Competitor.Score {
-			result.Competitor = results[1].Best
-		}
-		result.Reason = "Niejednoznaczne piętro: podobne dopasowania na różnych Z. Pozycja pozostaje nieznana."
-	}
-	result.SearchPositions = positions
-	result.SearchedFloors = searched
-	result.UnavailableFloors = unavailable
-	var atlas *mapdata.Atlas
-	if result.Best != nil {
-		atlas = atlases[result.Best.Z]
-	}
-	if result.Found && result.Position.Z != req.Near.Z {
-		result.FloorChanged = true
-		result.Reason = fmt.Sprintf("Potwierdzono zmianę piętra Z=%d → %d w pobliżu poprzedniego XY.", req.Near.Z, result.Position.Z)
-	}
-	return result, atlas, nil
+	var buf bytes.Buffer
+	png.Encode(&buf, patch)
+	return buf.Bytes()
 }
