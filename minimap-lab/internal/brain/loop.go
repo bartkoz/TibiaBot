@@ -70,6 +70,11 @@ type Config struct {
 	Tolerance       int  `json:"tolerance"`
 	ActionTolerance int  `json:"action_tolerance"`
 	LoopRoute       bool `json:"loop_route"`
+
+	// Combat is the whole vision calibration. Zero value means "not
+	// calibrated", which is legal: the panel is meant to be calibrated one
+	// rectangle at a time, with each one checked before the next.
+	Combat CombatConfig `json:"combat"`
 }
 
 func (c Config) validate() error {
@@ -96,6 +101,9 @@ func (c Config) validate() error {
 	}
 	if c.Tolerance < 0 || c.Tolerance > 32 || c.ActionTolerance < 0 || c.ActionTolerance > 32 {
 		return fmt.Errorf("tolerancje muszą mieścić się w zakresie 0–32 kratek")
+	}
+	if err := c.Combat.withDefaults().validate(); err != nil {
+		return err
 	}
 	return nil
 }
@@ -237,6 +245,7 @@ func (l *Loop) SetConfig(ctx context.Context, c Config) error {
 	}
 	l.do(ctx, func() {
 		l.cfg = c
+		l.cfg.Combat = c.Combat.withDefaults()
 		l.recorder.Auto, l.recorder.Every = c.RecordAuto, c.RecordEvery
 		// Options are updated in place rather than by rebuilding the follower:
 		// a user nudging the tolerance mid-route must not lose their progress.
