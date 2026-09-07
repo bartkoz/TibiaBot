@@ -79,6 +79,9 @@ func TestReadCountsRowsTopDown(t *testing.T) {
 			t.Errorf("wiersz %d ma ramkę celu, choć nikt nie jest atakowany", i)
 		}
 	}
+	if list.Truncated {
+		t.Error("lista mieszcząca się w całości nie powinna być oznaczona jako przewinięta")
+	}
 }
 
 func TestReadFindsTargetFrame(t *testing.T) {
@@ -95,6 +98,41 @@ func TestReadFindsTargetFrame(t *testing.T) {
 	}
 	if !list.Rows[1].Targeted {
 		t.Error("drugi wiersz powinien mieć ramkę celu")
+	}
+}
+
+func TestReadFrameOnRowBoundary(t *testing.T) {
+	t.Run("ramka na granicy wierszy trafia dokładnie w jeden wiersz", func(t *testing.T) {
+		// This pins the tiling boundary between two entries' search bands.
+		// With Bar.Y 10 and 32, Geometry.Height 3 and RowPitch 22, the first
+		// row's band is [0,22) and the second row's is [22,44) - a line at
+		// y=22 belongs to the second row only. The old overlapping band
+		// arithmetic marked both rows here at once.
+		im := canvas(60, 100)
+		paint(im, image.Pt(30, 10), 18)
+		paint(im, image.Pt(30, 10+pitch), 9)
+		frame(im, 22)
+		list := battle.Read(im, opts())
+		if len(list.Rows) != 2 {
+			t.Fatalf("odczytano %d wierszy, oczekiwano 2", len(list.Rows))
+		}
+		if list.Rows[0].Targeted {
+			t.Error("pierwszy wiersz nie powinien mieć ramki")
+		}
+		if !list.Rows[1].Targeted {
+			t.Error("drugi wiersz powinien mieć ramkę celu")
+		}
+	})
+}
+
+func TestReadGuardsInvalidInput(t *testing.T) {
+	if list := battle.Read(nil, opts()); len(list.Rows) != 0 || list.Truncated {
+		t.Errorf("Read(nil, ...) dało %+v, oczekiwano pustej listy", list)
+	}
+	o := opts()
+	o.RowPitch = 0
+	if list := battle.Read(canvas(60, 100), o); len(list.Rows) != 0 || list.Truncated {
+		t.Errorf("Read z RowPitch=0 dało %+v, oczekiwano pustej listy", list)
 	}
 }
 

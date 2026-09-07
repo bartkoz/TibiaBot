@@ -78,14 +78,19 @@ func Read(im *image.NRGBA, o Options) List {
 
 // framed looks for the attack border in the band one entry tall around the
 // bar - the band, not the bar's own rows, because the client draws the frame
-// round the whole entry and the entry is taller than its health bar.
+// round the whole entry and the entry is taller than its health bar. The band
+// is centred on the bar and half-open at the top, so consecutive entries tile
+// exactly instead of sharing a strip. An overlapping band would mark two
+// entries as the target at once - and since clicking the entry already under
+// attack cancels the attack, a target the bot only thinks it has is as costly
+// as one it fails to see.
 func (o Options) framed(im *image.NRGBA, b vision.Bar) bool {
-	half := o.RowPitch / 2
 	want := int(o.FrameCoverage * float64(im.Bounds().Dx()))
 	if want < 1 {
 		want = 1
 	}
-	for y := b.Y - half; y <= b.Y+o.Geometry.Height+half; y++ {
+	top := b.Y + o.Geometry.Height/2 - o.RowPitch/2
+	for y := top; y < top+o.RowPitch; y++ {
 		if o.frameRun(im, y) >= want {
 			return true
 		}
