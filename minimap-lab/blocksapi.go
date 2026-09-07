@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"minimap-lab/internal/brain"
 	"minimap-lab/internal/mapdata"
 	"minimap-lab/internal/nav"
 )
@@ -118,4 +119,29 @@ func windowParams(r *http.Request) (x, y, z, radius int, ok bool) {
 		return 0, 0, 0, 0, false
 	}
 	return x, y, z, radius, true
+}
+
+// tileVerdict answers what the map data says about one tile, for the brain's
+// recording gate. It reads the same preview cache standable() does, but keeps
+// the three answers apart: "no data yet" is a reason to wait, "no map data
+// here" and "a wall" are both reasons to refuse a waypoint, and only standable
+// treats thin map data as permission.
+func (s *server) tileVerdict(p mapdata.Position) brain.TileVerdict {
+	area := rectAround(p.X, p.Y, 1)
+	s.previewMu.Lock()
+	defer s.previewMu.Unlock()
+	if s.previewCache == nil || s.previewFloor != p.Z || !area.In(s.previewCache.Bounds()) {
+		g, err := mapdata.LoadCostArea(s.dir, p.Z, area.Inset(-previewMargin))
+		if err != nil {
+			return brain.TileUnknown
+		}
+		s.previewCache, s.previewFloor = g, p.Z
+	}
+	if !s.previewCache.Covered(p.X, p.Y) {
+		return brain.TileNoMapData
+	}
+	if s.previewCache.At(p.X, p.Y) == mapdata.BlockedCost {
+		return brain.TileBlocked
+	}
+	return brain.TileWalkable
 }

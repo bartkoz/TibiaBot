@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"minimap-lab/internal/brain"
 	"minimap-lab/internal/input"
 	"minimap-lab/internal/locate"
 	"minimap-lab/internal/mapdata"
@@ -37,17 +38,19 @@ type server struct {
 	previewMu    sync.Mutex
 	previewCache *mapdata.CostGrid
 	previewFloor int
-	// Nil until -input selects an emitter; every input route then answers 503.
+	// Nil until -input selects an emitter; every brain route then answers 503.
 	driver *input.Driver
+	// loop is the brain. Nil exactly when driver is.
+	loop *brain.Loop
+	// session ties frames to one getDisplayMedia stream. It is the last
+	// remnant of the intent protocol's session token, and the only thing that
+	// tells a live capture from one the user ended before reloading.
+	sessionMu sync.Mutex
+	session   uint64
 	// Learned blockages: tiles the map data calls walkable but the character
 	// cannot actually enter. Nil in tests that predate the store; every method
 	// on it tolerates a nil receiver.
 	blocks *nav.BlockStore
-	// Collapses identical intent log lines so a refusal repeating at the
-	// tracking rate does not drown the log.
-	repeatMu   sync.Mutex
-	lastLogged string
-	repeats    int
 }
 
 // newServer wires the pieces that must never be nil. Assembling the struct by
@@ -59,6 +62,7 @@ func newServer(dir string) *server {
 		gate:    make(chan struct{}, 1),
 		locator: locate.NewService(dir),
 		planner: nav.NewPlanner(dir),
+		blocks:  nav.NewBlockStore(time.Now),
 	}
 }
 
@@ -71,15 +75,16 @@ func (s *server) routes() http.Handler {
 		w.Header().Set("Content-Type", "image/png")
 		png.Encode(w, mapdata.DemoSnippet(mapdata.DemoAtlas()))
 	})
-	mux.HandleFunc("POST /api/locate", s.match)
 	mux.HandleFunc("POST /api/path", s.path)
 	mux.HandleFunc("POST /api/arm", s.arm)
 	mux.HandleFunc("POST /api/disarm", s.disarm)
-	mux.HandleFunc("POST /api/input", s.input)
-	mux.HandleFunc("POST /api/input/calibrate", s.calibrate)
-	mux.HandleFunc("POST /api/input/config", s.inputConfig)
-	mux.HandleFunc("POST /api/input/done", s.actionDone)
-	mux.HandleFunc("GET /api/input/status", s.inputStatus)
+	mux.HandleFunc("POST /api/frame", s.frame)
+	mux.HandleFunc("GET /api/state", s.state)
+	mux.HandleFunc("PUT /api/config", s.config)
+	mux.HandleFunc("PUT /api/route", s.putRoute)
+	mux.HandleFunc("GET /api/route", s.getRoute)
+	mux.HandleFunc("POST /api/route/waypoint", s.addWaypoint)
+	mux.HandleFunc("GET /api/preview", s.preview)
 	mux.HandleFunc("POST /api/blocks/observe", s.observeBlock)
 	mux.HandleFunc("GET /api/blocks", s.listBlocks)
 	mux.HandleFunc("DELETE /api/blocks", s.deleteBlock)

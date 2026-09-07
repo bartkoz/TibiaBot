@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"image"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -18,51 +19,94 @@ import (
 
 // --- atrapy ---
 
+// Every double here is mutex-guarded: the loop runs on its own goroutine, so a
+// test reading what it recorded is reading across goroutines whether the code
+// looks like it or not.
 type fakeControls struct {
-	armed         bool
-	keys          []string
-	hotkeys       []string
-	actionsDone   int
-	disarmReason  string
-	nextStatus    string
-	nextKeyReason string
+	mu           sync.Mutex
+	armed        bool
+	keys         []string
+	hotkeys      []string
+	actionsDone  int
+	disarmReason string
+	nextStatus   string
 }
 
-func (c *fakeControls) Armed() bool { return c.armed }
+func (c *fakeControls) Armed() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.armed
+}
 
-func (c *fakeControls) result(key string) input.Result {
+func (c *fakeControls) resultLocked(key string) input.Result {
 	status := c.nextStatus
 	if status == "" {
 		status = "emitted"
 	}
-	return input.Result{Status: status, Key: key, Reason: c.nextKeyReason}
+	return input.Result{Status: status, Key: key}
 }
 
 func (c *fakeControls) Walk(direction string, _ time.Duration) input.Result {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.keys = append(c.keys, direction)
-	return c.result(direction)
+	return c.resultLocked(direction)
 }
 
 func (c *fakeControls) UseHotkey(kind string, _ time.Duration) input.Result {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.hotkeys = append(c.hotkeys, kind)
-	return c.result(kind)
+	return c.resultLocked(kind)
 }
 
-func (c *fakeControls) ActionDone()          { c.actionsDone++ }
-func (c *fakeControls) Disarm(reason string) { c.armed, c.disarmReason = false, reason }
+func (c *fakeControls) ActionDone() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.actionsDone++
+}
+
+func (c *fakeControls) Disarm(reason string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.armed, c.disarmReason = false, reason
+}
+
+func (c *fakeControls) pressed() ([]string, []string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]string(nil), c.keys...), append([]string(nil), c.hotkeys...)
+}
+
+func (c *fakeControls) reason() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.disarmReason
+}
 
 // scriptedLocator answers with whatever position the test last set.
 type scriptedLocator struct {
+	mu    sync.Mutex
 	pos   *mapdata.Position
 	calls int
-	err   error
+}
+
+func (s *scriptedLocator) set(p mapdata.Position) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.pos = &p
+}
+
+func (s *scriptedLocator) matches() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.calls
 }
 
 func (s *scriptedLocator) Locate(context.Context, image.Image, locate.Request) (locate.Result, *mapdata.Atlas, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.calls++
-	if s.err != nil {
-		return locate.Result{}, nil, s.err
-	}
 	if s.pos == nil {
 		return locate.Result{Found: false, Mode: "local", Reason: "brak"}, nil, nil
 	}
@@ -73,11 +117,14 @@ func (s *scriptedLocator) Locate(context.Context, image.Image, locate.Request) (
 
 // scriptedPlanner returns a straight eastward path, or whatever was set.
 type scriptedPlanner struct {
+	mu     sync.Mutex
 	result *nav.PathResult
 	calls  int
 }
 
 func (p *scriptedPlanner) Plan(_ context.Context, _ *nav.BlockStore, from, to mapdata.Position, _ int) (nav.PathResult, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	p.calls++
 	if p.result != nil {
 		return *p.result, nil
@@ -89,10 +136,22 @@ func (p *scriptedPlanner) Plan(_ context.Context, _ *nav.BlockStore, from, to ma
 	return nav.PathResult{Found: true, Status: "ok", Steps: steps, OverlayRevision: 1}, nil
 }
 
-type loopClock struct{ at time.Time }
+type loopClock struct {
+	mu sync.Mutex
+	at time.Time
+}
 
-func (c *loopClock) now() time.Time          { return c.at }
-func (c *loopClock) advance(d time.Duration) { c.at = c.at.Add(d) }
+func (c *loopClock) now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.at
+}
+
+func (c *loopClock) advance(d time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.at = c.at.Add(d)
+}
 
 type harness struct {
 	loop    *Loop
@@ -104,7 +163,21 @@ type harness struct {
 	ctx     context.Context
 	seq     uint64
 	videoUS uint64
-	tile    TileVerdict
+
+	tileMu sync.Mutex
+	tile   TileVerdict
+}
+
+func (h *harness) setTile(v TileVerdict) {
+	h.tileMu.Lock()
+	defer h.tileMu.Unlock()
+	h.tile = v
+}
+
+func (h *harness) tileFor(mapdata.Position) TileVerdict {
+	h.tileMu.Lock()
+	defer h.tileMu.Unlock()
+	return h.tile
 }
 
 func newHarness(t *testing.T) *harness {
@@ -120,7 +193,7 @@ func newHarness(t *testing.T) *harness {
 	h.loop = NewLoop(Deps{
 		Locator: h.locator, Planner: h.planner,
 		Blocks: nav.NewBlockStore(h.clock.now), Driver: h.ctrl,
-		Tile: func(mapdata.Position) TileVerdict { return h.tile },
+		Tile: h.tileFor,
 		Now:  h.clock.now,
 	})
 	go h.loop.Run(h.ctx)
@@ -178,7 +251,7 @@ func (h *harness) config(t *testing.T, edit func(*Config)) {
 	}
 }
 
-func (h *harness) at(x, y int, z ...int) { p := pos(x, y, z...); h.locator.pos = &p }
+func (h *harness) at(x, y int, z ...int) { h.locator.set(pos(x, y, z...)) }
 
 // --- scenariusze ---
 
@@ -195,8 +268,8 @@ func TestFloorActionGateRefusesBeforeAPendingStepExists(t *testing.T) {
 
 	s := h.tick(t)
 
-	if len(h.ctrl.hotkeys) != 0 || len(h.ctrl.keys) != 0 {
-		t.Errorf("wysłano klawisze mimo wyłączonych akcji pięter: %v %v", h.ctrl.keys, h.ctrl.hotkeys)
+	if keys, hotkeys := h.ctrl.pressed(); len(keys) != 0 || len(hotkeys) != 0 {
+		t.Errorf("wysłano klawisze mimo wyłączonych akcji pięter: %v %v", keys, hotkeys)
 	}
 	if s.Executor.Waiting {
 		t.Error("został krok w toku, który wygaśnie w ponowienie i trwałą blokadę")
@@ -214,11 +287,12 @@ func TestPausingFloorActionsStillWalksOntoStairs(t *testing.T) {
 
 	h.tick(t)
 
-	if len(h.ctrl.keys) == 0 {
+	keys, _ := h.ctrl.pressed()
+	if len(keys) == 0 {
 		t.Fatal("nie wysłano kroku na schody")
 	}
-	if h.ctrl.keys[0] != "E" {
-		t.Errorf("kierunek = %q, oczekiwano E", h.ctrl.keys[0])
+	if keys[0] != "E" {
+		t.Errorf("kierunek = %q, oczekiwano E", keys[0])
 	}
 }
 
@@ -227,7 +301,7 @@ func TestPausingFloorActionsStillWalksOntoStairs(t *testing.T) {
 func TestImpassableTileIsNotRecordedAsAWaypoint(t *testing.T) {
 	h := newHarness(t)
 	h.config(t, func(c *Config) { c.RecordAuto = true })
-	h.tile = TileBlocked
+	h.setTile(TileBlocked)
 	h.at(100, 100, 7)
 
 	s := h.tick(t)
@@ -246,7 +320,7 @@ func TestImpassableTileIsNotRecordedAsAWaypoint(t *testing.T) {
 func TestRecordingWaitsForWalkabilityData(t *testing.T) {
 	h := newHarness(t)
 	h.config(t, func(c *Config) { c.RecordAuto = true })
-	h.tile = TileUnknown
+	h.setTile(TileUnknown)
 	h.at(100, 100, 7)
 
 	s := h.tick(t)
@@ -288,8 +362,8 @@ func TestWatchdogDisarmsWhenFramesStop(t *testing.T) {
 		}
 		time.Sleep(2 * time.Millisecond)
 	}
-	if !strings.Contains(h.ctrl.disarmReason, "klatk") {
-		t.Errorf("powód rozbrojenia = %q", h.ctrl.disarmReason)
+	if reason := h.ctrl.reason(); !strings.Contains(reason, "klatk") {
+		t.Errorf("powód rozbrojenia = %q", reason)
 	}
 }
 
@@ -300,7 +374,7 @@ func TestRepeatedVideoFrameIsNotASecondObservation(t *testing.T) {
 	h.config(t, func(c *Config) {})
 	h.at(100, 100, 7)
 	h.tick(t)
-	before := h.locator.calls
+	before := h.locator.matches()
 
 	f := h.minimapFrame()
 	// Same picture as the previous frame, only a new sequence number.
@@ -315,8 +389,8 @@ func TestRepeatedVideoFrameIsNotASecondObservation(t *testing.T) {
 		}
 		time.Sleep(time.Millisecond)
 	}
-	if h.locator.calls != before+1 {
-		t.Errorf("dopasowań = %d, oczekiwano jednego więcej niż %d", h.locator.calls, before)
+	if got := h.locator.matches(); got != before+1 {
+		t.Errorf("dopasowań = %d, oczekiwano jednego więcej niż %d", got, before)
 	}
 }
 

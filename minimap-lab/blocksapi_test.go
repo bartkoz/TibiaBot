@@ -111,7 +111,10 @@ func TestDeleteEndpointRemovesABlock(t *testing.T) {
 }
 
 func TestBlocksRoutesAnswer503WithoutAStore(t *testing.T) {
-	s := newServer("")
+	// newServer always provides a store now, so the guard is reached only by a
+	// hand-assembled server. It stays because answering 503 is still the right
+	// thing if one is ever built that way again.
+	s := &server{}
 	if w := callBlocks(t, s, "GET", "/api/blocks?x=1&y=1&z=7&r=4", ""); w.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status %d, want 503 - a server without a store must say so, not pretend the map is empty", w.Code)
 	}

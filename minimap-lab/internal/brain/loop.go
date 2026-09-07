@@ -30,9 +30,7 @@ const (
 )
 
 // Controls is the keyboard the loop drives. It is an interface so the loop can
-// be exercised without an OS event tap. internal/input.Driver will satisfy it
-// once the intent protocol - session tokens, sequence numbers, heartbeat - is
-// gone from it; until then only the test double implements it.
+// be exercised without an OS event tap; internal/input.Driver satisfies it.
 type Controls interface {
 	Armed() bool
 	Walk(direction string, observationAge time.Duration) input.Result
@@ -626,6 +624,7 @@ func (l *Loop) publish() {
 // until the frame endpoint wires them together, and a signature drift would
 // otherwise surface as a build failure in a package that did nothing wrong.
 var (
-	_ Locator = (*locate.Service)(nil)
-	_ Planner = (*nav.Planner)(nil)
+	_ Locator  = (*locate.Service)(nil)
+	_ Planner  = (*nav.Planner)(nil)
+	_ Controls = (*input.Driver)(nil)
 )

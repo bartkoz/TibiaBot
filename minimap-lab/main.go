@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"log"
@@ -8,6 +9,7 @@ import (
 	"net/http"
 	"time"
 
+	"minimap-lab/internal/brain"
 	"minimap-lab/internal/input"
 	"minimap-lab/internal/nav"
 )
@@ -44,6 +46,13 @@ func main() {
 	}
 	if em != nil {
 		s.driver = input.NewDriver(em, *staleMS)
+		s.loop = brain.NewLoop(brain.Deps{
+			Locator: s.locator, Planner: s.planner, Blocks: s.blocks,
+			Driver: s.driver, Tile: s.tileVerdict, Now: time.Now,
+		})
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		go s.loop.Run(ctx)
 		log.Printf("Sterowanie: %s — wykonawca startuje rozbrojony. Próg świeżości: %d ms.", *mode, *staleMS)
 	}
 	log.Printf("Minimap Lab: http://%s — mapy: %s", *addr, *dir)

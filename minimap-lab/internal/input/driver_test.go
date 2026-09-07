@@ -21,9 +21,8 @@ func driverAt(t *testing.T, start time.Time) (*Driver, *DryEmitter, *time.Time) 
 	return d, em, &now
 }
 
-func walk(seq uint64, session string) Intent {
-	return Intent{Session: session, Seq: seq, Action: "walk", Direction: "N", AgeMS: 100}
-}
+// fresh is an observation age comfortably inside every threshold under test.
+const fresh = 100 * time.Millisecond
 
 // failingEmitter wraps a DryEmitter but fails every TapKey call, so a test can
 // exercise the driver's OS-failure path without touching input.go.
@@ -40,7 +39,7 @@ func TestDriverRefusesEverythingWhileDisarmed(t *testing.T) {
 	em := &DryEmitter{Window: Window{PID: 42}}
 	d := NewDriver(em, DefaultMaxObservationAgeMS)
 
-	got := d.Submit(walk(1, "nieistniejąca"))
+	got := d.Walk("N", fresh)
 
 	if got.Status != "disarmed" {
 		t.Fatalf("got %+v", got)
@@ -53,7 +52,7 @@ func TestDriverRefusesEverythingWhileDisarmed(t *testing.T) {
 func TestDriverEmitsOneTapPerAcceptedIntent(t *testing.T) {
 	d, em, _ := driverAt(t, time.Unix(0, 0))
 
-	got := d.Submit(walk(1, d.Status().Session))
+	got := d.Walk("N", fresh)
 
 	if got.Status != "emitted" || got.Key != "numpad8" {
 		t.Fatalf("got %+v", got)
@@ -63,40 +62,9 @@ func TestDriverEmitsOneTapPerAcceptedIntent(t *testing.T) {
 	}
 }
 
-func TestDriverRejectsForeignSessionToken(t *testing.T) {
-	d, em, _ := driverAt(t, time.Unix(0, 0))
-
-	got := d.Submit(walk(1, "podrobiony"))
-
-	if got.Status != "refused" {
-		t.Fatalf("got %+v", got)
-	}
-	if len(em.Events()) != 0 {
-		t.Error("a wrong token must not reach the system")
-	}
-}
-
-func TestDriverRepeatedSeqReturnsFirstResultWithoutPressingAgain(t *testing.T) {
-	d, em, _ := driverAt(t, time.Unix(0, 0))
-	session := d.Status().Session
-	first := d.Submit(walk(7, session))
-
-	again := d.Submit(walk(7, session))
-
-	if again != first {
-		t.Fatalf("got %+v, want %+v", again, first)
-	}
-	if len(em.Events()) != 1 {
-		t.Fatalf("a retried request pressed the key twice: %v", em.Events())
-	}
-}
-
 func TestDriverRefusesStaleObservation(t *testing.T) {
 	d, em, _ := driverAt(t, time.Unix(0, 0))
-	in := walk(1, d.Status().Session)
-	in.AgeMS = DefaultMaxObservationAgeMS + 1
-
-	got := d.Submit(in)
+	got := d.Walk("N", time.Duration(DefaultMaxObservationAgeMS+1)*time.Millisecond)
 
 	if got.Status != "refused" || got.Reason == "" {
 		t.Fatalf("got %+v", got)
@@ -115,10 +83,8 @@ func TestDriverUsesConfiguredMaxObservationAge(t *testing.T) {
 	if _, err := d.Arm(); err != nil {
 		t.Fatal(err)
 	}
-	in := walk(1, d.Status().Session)
-	in.AgeMS = 600 // stale under the 400ms default, fresh under 1000ms
-
-	got := d.Submit(in)
+	// 600 ms is stale under the 400 ms default and fresh under 1000 ms.
+	got := d.Walk("N", 600*time.Millisecond)
 
 	if got.Status != "emitted" {
 		t.Fatalf("got %+v, want a raised threshold to accept a 600ms-old observation", got)
@@ -142,11 +108,11 @@ func TestValidateStaleMSRefusesTooLow(t *testing.T) {
 }
 
 func TestValidateStaleMSRefusesTooHigh(t *testing.T) {
-	// At or beyond heartbeatTimeoutMS, a dead heartbeat would already have
-	// disarmed the session before an observation could ever get that stale,
-	// so the freshness gate would stop meaning anything.
+	// At or beyond the loop's frame watchdog, a silent camera would already
+	// have disarmed the session before an observation could ever get that
+	// stale, so the freshness gate would stop meaning anything.
 	if err := ValidateStaleMS(MaxStaleMS + 1); err == nil {
-		t.Error("a threshold that close to the heartbeat timeout must be refused")
+		t.Error("a threshold that close to the frame watchdog must be refused")
 	}
 }
 
@@ -162,7 +128,7 @@ func TestDriverDisarmsWhenAnotherWindowTakesFocus(t *testing.T) {
 	d, em, _ := driverAt(t, time.Unix(0, 0))
 	em.Window = Window{PID: 99, Path: "/Applications/Safari.app"}
 
-	got := d.Submit(walk(1, d.Status().Session))
+	got := d.Walk("N", fresh)
 
 	if got.Status != "disarmed" {
 		t.Fatalf("got %+v", got)
@@ -177,73 +143,40 @@ func TestDriverDisarmsWhenAnotherWindowTakesFocus(t *testing.T) {
 
 func TestDriverEnforcesTapRateWithoutBanking(t *testing.T) {
 	d, _, now := driverAt(t, time.Unix(0, 0))
-	session := d.Status().Session
-	for i := uint64(1); i <= maxTapsPerSecond; i++ {
-		if got := d.Submit(walk(i, session)); got.Status != "emitted" {
+	for i := 1; i <= maxTapsPerSecond; i++ {
+		if got := d.Walk("N", fresh); got.Status != "emitted" {
 			t.Fatalf("tap %d: %+v", i, got)
 		}
 	}
 
-	over := d.Submit(walk(99, session))
+	over := d.Walk("N", fresh)
 
 	if over.Status != "refused" {
 		t.Fatalf("got %+v", over)
 	}
-	// A quiet stretch must not hand back a burst of unused budget. The clock
-	// moves in heartbeat-sized steps, or the driver would disarm instead.
-	for range 6 {
-		*now = now.Add(200 * time.Millisecond)
-		d.Beat(session)
-	}
-	for i := uint64(100); i < 100+maxTapsPerSecond; i++ {
-		if got := d.Submit(walk(i, session)); got.Status != "emitted" {
+	// A quiet stretch must not hand back a burst of unused budget.
+	*now = now.Add(1200 * time.Millisecond)
+	for i := 1; i <= maxTapsPerSecond; i++ {
+		if got := d.Walk("N", fresh); got.Status != "emitted" {
 			t.Fatalf("after idle, tap %d: %+v", i, got)
 		}
 	}
-	if got := d.Submit(walk(200, session)); got.Status != "refused" {
+	if got := d.Walk("N", fresh); got.Status != "refused" {
 		t.Fatalf("idle time banked extra taps: %+v", got)
-	}
-}
-
-func TestDriverExpiresWhenHeartbeatStops(t *testing.T) {
-	d, _, now := driverAt(t, time.Unix(0, 0))
-	session := d.Status().Session
-
-	*now = now.Add(time.Duration(heartbeatTimeoutMS+1) * time.Millisecond)
-
-	if got := d.Submit(walk(1, session)); got.Status != "disarmed" {
-		t.Fatalf("got %+v", got)
-	}
-}
-
-func TestDriverHeartbeatKeepsTheSessionAlive(t *testing.T) {
-	d, _, now := driverAt(t, time.Unix(0, 0))
-	session := d.Status().Session
-
-	for range 5 {
-		*now = now.Add(200 * time.Millisecond)
-		d.Beat(session)
-	}
-
-	if got := d.Submit(walk(1, session)); got.Status != "emitted" {
-		t.Fatalf("got %+v", got)
 	}
 }
 
 func TestDriverRunsOneActionAtATime(t *testing.T) {
 	d, em, _ := driverAt(t, time.Unix(0, 0))
 	d.ActionKeys = map[string]string{"rope": "f7"}
-	session := d.Status().Session
-	rope := Intent{Session: session, Seq: 1, Action: "transition", Type: "rope", Waypoint: 3, AgeMS: 50}
-	if got := d.Submit(rope); got.Status != "emitted" {
+	if got := d.UseHotkey("rope", 50*time.Millisecond); got.Status != "emitted" {
 		t.Fatalf("got %+v", got)
 	}
 	before := len(em.Events())
 
-	// The follower repeats 'transition' on every reading until the floor
+	// The follower repeats the transition on every reading until the floor
 	// changes; the second one must not press the hotkey again.
-	rope.Seq = 2
-	got := d.Submit(rope)
+	got := d.UseHotkey("rope", 50*time.Millisecond)
 
 	if got.Status != "in_progress" {
 		t.Fatalf("got %+v", got)
@@ -257,39 +190,10 @@ func TestDriverDisarmReleasesHeldKeys(t *testing.T) {
 	d, em, _ := driverAt(t, time.Unix(0, 0))
 	em.Window = Window{PID: 99}
 
-	d.Submit(walk(1, d.Status().Session))
+	d.Walk("N", fresh)
 
 	if em.Released() != 1 {
 		t.Error("disarming must release keys even though emitting is otherwise forbidden")
-	}
-}
-
-func TestDriverRefusesSeqGoingBackwards(t *testing.T) {
-	d, em, _ := driverAt(t, time.Unix(0, 0))
-	session := d.Status().Session
-
-	d.Submit(walk(5, session))
-	got := d.Submit(walk(3, session))
-
-	if got.Status != "refused" {
-		t.Fatalf("got %+v", got)
-	}
-	if len(em.Events()) != 1 {
-		t.Fatalf("a Seq going backwards must not press a key: %v", em.Events())
-	}
-}
-
-func TestDriverRefusesMissingSeq(t *testing.T) {
-	d, em, _ := driverAt(t, time.Unix(0, 0))
-	session := d.Status().Session
-
-	got := d.Submit(walk(0, session))
-
-	if got.Status != "refused" {
-		t.Fatalf("got %+v", got)
-	}
-	if len(em.Events()) != 0 {
-		t.Error("Seq 0 must not press a key")
 	}
 }
 
@@ -300,9 +204,8 @@ func TestDriverTransitionTapsHotkeyThenClicksPlayerTile(t *testing.T) {
 	if err := d.Calibrate(0.42, 0.31); err != nil {
 		t.Fatal(err)
 	}
-	session := d.Status().Session
 
-	got := d.Submit(Intent{Session: session, Seq: 1, Action: "transition", Type: "rope", Waypoint: 2, AgeMS: 50})
+	got := d.UseHotkey("rope", 50*time.Millisecond)
 
 	if got.Status != "emitted" {
 		t.Fatalf("got %+v", got)
@@ -318,7 +221,7 @@ func TestDriverTransitionRefusesWithoutCalibration(t *testing.T) {
 	d.ActionKeys = map[string]string{"rope": "f7"}
 	d.ClickAfterHotkey = true
 
-	got := d.Submit(Intent{Session: d.Status().Session, Seq: 1, Action: "transition", Type: "rope", AgeMS: 50})
+	got := d.UseHotkey("rope", 50*time.Millisecond)
 
 	if got.Status != "refused" {
 		t.Fatalf("got %+v", got)
@@ -333,7 +236,7 @@ func TestDriverTransitionSkipsClickWhenHotkeyUsesItself(t *testing.T) {
 	d.ActionKeys = map[string]string{"rope": "f7"}
 	d.ClickAfterHotkey = false
 
-	d.Submit(Intent{Session: d.Status().Session, Seq: 1, Action: "transition", Type: "rope", AgeMS: 50})
+	d.UseHotkey("rope", 50*time.Millisecond)
 
 	if ev := em.Events(); len(ev) != 1 || ev[0] != "tap f7 35ms" {
 		t.Fatalf("got %v", ev)
@@ -343,12 +246,11 @@ func TestDriverTransitionSkipsClickWhenHotkeyUsesItself(t *testing.T) {
 func TestDriverActionDoneUnblocksTheNextAction(t *testing.T) {
 	d, _, _ := driverAt(t, time.Unix(0, 0))
 	d.ActionKeys = map[string]string{"rope": "f7", "hole": "f8"}
-	session := d.Status().Session
-	d.Submit(Intent{Session: session, Seq: 1, Action: "transition", Type: "rope", Waypoint: 1, AgeMS: 50})
+	d.UseHotkey("rope", 50*time.Millisecond)
 
 	d.ActionDone()
 
-	got := d.Submit(Intent{Session: session, Seq: 2, Action: "transition", Type: "hole", Waypoint: 2, AgeMS: 50})
+	got := d.UseHotkey("hole", 50*time.Millisecond)
 	if got.Status != "emitted" {
 		t.Fatalf("got %+v", got)
 	}
@@ -358,7 +260,7 @@ func TestDriverRefusesStairsBecauseTheyAreWalkedNotUsed(t *testing.T) {
 	d, em, _ := driverAt(t, time.Unix(0, 0))
 	d.ActionKeys = map[string]string{"rope": "f7"}
 
-	got := d.Submit(Intent{Session: d.Status().Session, Seq: 1, Action: "transition", Type: "stairs", AgeMS: 50})
+	got := d.UseHotkey("stairs", 50*time.Millisecond)
 
 	if got.Status != "refused" {
 		t.Fatalf("got %+v", got)
@@ -377,7 +279,7 @@ func TestDriverChecksFocusAgainBeforeTheClick(t *testing.T) {
 	// crosshair, so the click would land in a foreign window.
 	em.OnTap = func() { em.Window = Window{PID: 99} }
 
-	got := d.Submit(Intent{Session: d.Status().Session, Seq: 1, Action: "transition", Type: "rope", AgeMS: 50})
+	got := d.UseHotkey("rope", 50*time.Millisecond)
 
 	if got.Status != "disarmed" {
 		t.Fatalf("got %+v", got)
@@ -410,7 +312,7 @@ func TestDriverSetInputConfigStoresValidHotkeys(t *testing.T) {
 		t.Error("the click-after-hotkey flag must reach the driver")
 	}
 	// Submit is the real proof the config actually took effect end to end.
-	got := d.Submit(Intent{Session: d.Status().Session, Seq: 1, Action: "transition", Type: "rope", AgeMS: 50})
+	got := d.UseHotkey("rope", 50*time.Millisecond)
 	if got.Status != "refused" || got.Reason != "brak kalibracji kratki postaci" {
 		t.Fatalf("got %+v, want a calibration refusal proving the hotkey itself was accepted", got)
 	}
@@ -463,7 +365,7 @@ func TestDriverSetInputConfigAllowsClearingAHotkey(t *testing.T) {
 func TestDriverDefaultsToNumpadDirectionKeys(t *testing.T) {
 	d, em, _ := driverAt(t, time.Unix(0, 0))
 
-	got := d.Submit(walk(1, d.Status().Session))
+	got := d.Walk("N", fresh)
 
 	if got.Status != "emitted" || got.Key != "numpad8" {
 		t.Fatalf("got %+v, want the numpad default for N so a numpad user needs no configuration", got)
@@ -485,7 +387,7 @@ func TestDriverSetInputConfigStoresCustomDirectionKeys(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got := d.Submit(walk(1, d.Status().Session))
+	got := d.Walk("N", fresh)
 
 	if got.Status != "emitted" || got.Key != "w" {
 		t.Fatalf("got %+v, want the configured WASD key for N", got)
@@ -535,7 +437,7 @@ func TestDriverRefusesDirectionLeftEmptyWithClearReason(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got := d.Submit(Intent{Session: d.Status().Session, Seq: 1, Action: "walk", Direction: "NE", AgeMS: 50})
+	got := d.Walk("NE", 50*time.Millisecond)
 
 	if got.Status != "refused" {
 		t.Fatalf("got %+v, want a refusal rather than silence for an unconfigured diagonal", got)
@@ -551,7 +453,7 @@ func TestDriverRefusesDirectionLeftEmptyWithClearReason(t *testing.T) {
 func TestDriverWalkRefusesUnknownDirectionName(t *testing.T) {
 	d, em, _ := driverAt(t, time.Unix(0, 0))
 
-	got := d.Submit(Intent{Session: d.Status().Session, Seq: 1, Action: "walk", Direction: "UP", AgeMS: 50})
+	got := d.Walk("UP", 50*time.Millisecond)
 
 	if got.Status != "refused" {
 		t.Fatalf("got %+v", got)
@@ -568,9 +470,8 @@ func TestDriverEmitterFailureDisarmsWithPolishReason(t *testing.T) {
 	if _, err := d.Arm(); err != nil {
 		t.Fatal(err)
 	}
-	session := d.Status().Session
 
-	got := d.Submit(walk(1, session))
+	got := d.Walk("N", fresh)
 
 	if got.Status != "disarmed" {
 		t.Fatalf("got %+v", got)

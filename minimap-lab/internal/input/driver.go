@@ -1,8 +1,6 @@
 package input
 
 import (
-	"crypto/rand"
-	"encoding/hex"
 	"fmt"
 	"sync"
 	"time"
@@ -24,9 +22,12 @@ const (
 	//     above it, a dead heartbeat would already have disarmed the
 	//     session before an observation could ever get that stale, so the
 	//     freshness gate would stop meaning anything.
-	MinStaleMS         = 100
+	MinStaleMS = 100
+	// MaxStaleMS stays well under the brain loop's frame watchdog: at or above
+	// it, a silent camera would already have disarmed the session before an
+	// observation could ever get that stale, so the freshness gate would stop
+	// meaning anything.
 	MaxStaleMS         = 600
-	heartbeatTimeoutMS = 750
 	maxTapsPerSecond   = 5
 	actionClickDelayMS = 120
 )
@@ -43,20 +44,7 @@ func ValidateStaleMS(ms int) error {
 	return nil
 }
 
-// Intent is a single thing the panel wants done. It carries the age of the
-// observation rather than its timestamp: performance.now() counts from
-// document start and shares no zero with the Go clock.
-type Intent struct {
-	Session   string `json:"session"`
-	Seq       uint64 `json:"seq"`
-	Action    string `json:"action"` // "walk" or "transition"
-	Direction string `json:"direction,omitempty"`
-	Type      string `json:"type,omitempty"` // rope, ladder, hole, shovel
-	Waypoint  int    `json:"waypoint,omitempty"`
-	AgeMS     int    `json:"observation_age_ms"`
-}
-
-// Result is what the driver did with one Intent. The locate package has a
+// Result is what the driver did with one request. The locate package has a
 // Result of its own for minimap matches; the package qualifier keeps the two
 // apart at every call site.
 type Result struct {
@@ -66,15 +54,13 @@ type Result struct {
 }
 
 type ArmState struct {
-	Armed   bool   `json:"armed"`
-	Session string `json:"session,omitempty"`
-	Target  Window `json:"target"`
-	Reason  string `json:"reason,omitempty"`
+	Armed  bool   `json:"armed"`
+	Target Window `json:"target"`
+	Reason string `json:"reason,omitempty"`
 }
 
 type action struct {
-	waypoint int
-	kind     string
+	kind string
 }
 
 type Driver struct {
@@ -82,16 +68,12 @@ type Driver struct {
 	em  Emitter
 	now func() time.Time
 
-	armed    bool
-	session  string
-	target   Window
-	reason   string
-	lastBeat time.Time
+	armed  bool
+	target Window
+	reason string
 
-	taps       []time.Time
-	lastSeq    uint64
-	lastResult Result
-	inFlight   *action
+	taps     []time.Time
+	inFlight *action
 
 	// Hotkeys used for floor transitions, filled from the panel config.
 	ActionKeys map[string]string
@@ -160,13 +142,8 @@ func (d *Driver) Arm() (ArmState, error) {
 	if win.PID == 0 {
 		return ArmState{}, fmt.Errorf("nie udało się rozpoznać aktywnego okna")
 	}
-	buf := make([]byte, 16)
-	if _, err := rand.Read(buf); err != nil {
-		return ArmState{}, err
-	}
-	d.armed, d.session, d.target = true, hex.EncodeToString(buf), win
-	d.reason, d.lastBeat = "", d.now()
-	d.taps, d.lastSeq, d.lastResult, d.inFlight = nil, 0, Result{}, nil
+	d.armed, d.target, d.reason = true, win, ""
+	d.taps, d.inFlight = nil, nil
 	return d.state(), nil
 }
 
@@ -183,7 +160,7 @@ func (d *Driver) disarmLocked(reason string) {
 	if d.armed {
 		d.em.ReleaseAll()
 	}
-	d.armed, d.session, d.reason, d.inFlight = false, "", reason, nil
+	d.armed, d.reason, d.inFlight = false, reason, nil
 }
 
 func (d *Driver) Status() ArmState {
@@ -193,21 +170,14 @@ func (d *Driver) Status() ArmState {
 }
 
 func (d *Driver) state() ArmState {
-	return ArmState{Armed: d.armed, Session: d.session, Target: d.target, Reason: d.reason}
+	return ArmState{Armed: d.armed, Target: d.target, Reason: d.reason}
 }
 
-// Beat records a sign of life from the panel and reports the current state.
-func (d *Driver) Beat(session string) ArmState {
+// Armed reports whether the driver may emit anything at all.
+func (d *Driver) Armed() bool {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if d.armed && session == d.session {
-		if d.expiredLocked() {
-			d.disarmLocked("panel przestał odpowiadać")
-		} else {
-			d.lastBeat = d.now()
-		}
-	}
-	return d.state()
+	return d.armed
 }
 
 // ActionDone clears the in-flight action once the panel confirms the floor
@@ -218,56 +188,51 @@ func (d *Driver) ActionDone() {
 	d.inFlight = nil
 }
 
-func (d *Driver) Submit(in Intent) Result {
-	d.mu.Lock()
-	defer d.mu.Unlock()
+// guardLocked runs every check that has to pass before any key is emitted,
+// whatever the key is for. It survives the intent protocol unchanged: session
+// tokens and sequence numbers existed only because the decision came from
+// another process, but a stale observation, a lost window and a runaway key
+// rate are all still real.
+func (d *Driver) guardLocked(observationAge time.Duration) (Result, bool) {
 	if !d.armed {
-		return Result{Status: "disarmed", Reason: "wykonawca jest rozbrojony"}
+		return Result{Status: "disarmed", Reason: "wykonawca jest rozbrojony"}, false
 	}
-	if in.Session != d.session {
-		return Result{Status: "refused", Reason: "nieprawidłowy token sesji"}
-	}
-	if d.expiredLocked() {
-		d.disarmLocked("panel przestał odpowiadać")
-		return Result{Status: "disarmed", Reason: d.reason}
-	}
-	// Sequence numbers start at 1 - the panel's client increments before
-	// sending, so nothing legitimate sends 0. A stuck-at-zero client would
-	// otherwise bypass replay protection entirely.
-	if in.Seq == 0 {
-		return Result{Status: "refused", Reason: "brak numeru sekwencyjnego"}
-	}
-	if in.Seq == d.lastSeq {
-		return d.lastResult
-	}
-	// A Seq lower than the last accepted one is a replay out of order (e.g.
-	// 5, 3, 5): refuse it outright rather than let it slip past the equality
-	// check above and emit again.
-	if in.Seq < d.lastSeq {
-		return Result{Status: "refused", Reason: "numer sekwencyjny cofnął się"}
-	}
-	if in.AgeMS < 0 || in.AgeMS > d.MaxObservationAgeMS {
-		return d.record(in.Seq, Result{Status: "refused",
-			Reason: fmt.Sprintf("pozycja starsza niż %d ms", d.MaxObservationAgeMS)})
+	ageMS := int(observationAge.Milliseconds())
+	if ageMS < 0 || ageMS > d.MaxObservationAgeMS {
+		return Result{Status: "refused",
+			Reason: fmt.Sprintf("pozycja starsza niż %d ms", d.MaxObservationAgeMS)}, false
 	}
 	// Focus is checked as late as possible. It still is not atomic with the
 	// emission that follows; see the spec's "granica gwarancji".
 	win, err := d.em.Focused()
 	if err != nil || win.PID != d.target.PID {
 		d.disarmLocked("okno gry straciło focus")
-		return Result{Status: "disarmed", Reason: d.reason}
+		return Result{Status: "disarmed", Reason: d.reason}, false
 	}
 	if !d.allowTapLocked() {
-		return d.record(in.Seq, Result{Status: "refused", Reason: "limit klawiszy na sekundę"})
+		return Result{Status: "refused", Reason: "limit klawiszy na sekundę"}, false
 	}
-	switch in.Action {
-	case "walk":
-		return d.record(in.Seq, d.walkLocked(in))
-	case "transition":
-		return d.record(in.Seq, d.transitionLocked(in))
-	default:
-		return d.record(in.Seq, Result{Status: "refused", Reason: "nieznana akcja"})
+	return Result{}, true
+}
+
+// Walk taps the key bound to one compass direction.
+func (d *Driver) Walk(direction string, observationAge time.Duration) Result {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if res, ok := d.guardLocked(observationAge); !ok {
+		return res
 	}
+	return d.walkLocked(direction)
+}
+
+// UseHotkey performs one floor transition: rope, ladder, hole or shovel.
+func (d *Driver) UseHotkey(kind string, observationAge time.Duration) Result {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if res, ok := d.guardLocked(observationAge); !ok {
+		return res
+	}
+	return d.transitionLocked(kind)
 }
 
 // keyForDirection resolves a walk direction against the driver's own
@@ -288,11 +253,11 @@ func (d *Driver) keyForDirection(dir string) (string, error) {
 	return key, nil
 }
 
-func (d *Driver) walkLocked(in Intent) Result {
+func (d *Driver) walkLocked(direction string) Result {
 	if d.inFlight != nil {
 		return Result{Status: "in_progress", Reason: "trwa akcja zmiany piętra"}
 	}
-	key, err := d.keyForDirection(in.Direction)
+	key, err := d.keyForDirection(direction)
 	if err != nil {
 		return Result{Status: "refused", Reason: err.Error()}
 	}
@@ -303,8 +268,8 @@ func (d *Driver) walkLocked(in Intent) Result {
 	return Result{Status: "emitted", Key: key}
 }
 
-func (d *Driver) transitionLocked(in Intent) Result {
-	want := action{waypoint: in.Waypoint, kind: in.Type}
+func (d *Driver) transitionLocked(kind string) Result {
+	want := action{kind: kind}
 	if d.inFlight != nil {
 		if *d.inFlight == want {
 			return Result{Status: "in_progress", Reason: "akcja już trwa"}
@@ -313,15 +278,15 @@ func (d *Driver) transitionLocked(in Intent) Result {
 	}
 	// Stairs are climbed by walking onto them; no item is used. Sending a
 	// hotkey here would press whatever else is bound to it.
-	if in.Type == "stairs" {
+	if kind == "stairs" {
 		return Result{Status: "refused", Reason: "schody pokonuje się krokiem, nie akcją"}
 	}
 	if d.ClickAfterHotkey && !d.HasTile {
 		return Result{Status: "refused", Reason: "brak kalibracji kratki postaci"}
 	}
-	key, ok := d.ActionKeys[in.Type]
+	key, ok := d.ActionKeys[kind]
 	if !ok || key == "" {
-		return Result{Status: "refused", Reason: "brak hotkeya dla akcji " + in.Type}
+		return Result{Status: "refused", Reason: "brak hotkeya dla akcji " + kind}
 	}
 	if err := d.em.TapKey(key, holdMS); err != nil {
 		return d.emitterFailureLocked(err)
@@ -408,11 +373,6 @@ func (d *Driver) SetInputConfig(keys map[string]string, clickAfterHotkey bool, d
 	return nil
 }
 
-func (d *Driver) record(seq uint64, r Result) Result {
-	d.lastSeq, d.lastResult = seq, r
-	return r
-}
-
 // emitterFailureLocked disarms the driver on a failed OS call and produces a
 // user-facing result. The Reason always starts in Polish, regardless of what
 // the underlying OS binding's error text says; Status() and the returned
@@ -421,10 +381,6 @@ func (d *Driver) emitterFailureLocked(err error) Result {
 	msg := fmt.Sprintf("nie udało się wysłać zdarzenia: %v", err)
 	d.disarmLocked(msg)
 	return Result{Status: "disarmed", Reason: msg}
-}
-
-func (d *Driver) expiredLocked() bool {
-	return d.now().Sub(d.lastBeat) > time.Duration(heartbeatTimeoutMS)*time.Millisecond
 }
 
 // allowTapLocked keeps a sliding one-second window. Idle time must not bank

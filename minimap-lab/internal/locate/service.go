@@ -244,3 +244,12 @@ func (s *Service) locateLocalLocked(ctx context.Context, im image.Image, req Req
 	}
 	return result, atlas, nil
 }
+
+// AtlasAround hands back a bounded atlas covering the area, reusing the very
+// cache local tracking fills. It exists so the neighbourhood preview can be
+// cut without a second copy of the map in memory.
+func (s *Service) AtlasAround(floor int, area image.Rectangle) (*mapdata.Atlas, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.localAtlasLocked(floor, area)
+}
