@@ -263,16 +263,21 @@ func TestBarHP(t *testing.T) {
 	}
 }
 
-// TestFindOnRealCapture jest progiem regresji: nie sprawdza dokładnej liczby,
-// bo własny pasek nie jest jeszcze zmierzony (zadanie 3), tylko czy detektor
-// widzi co najmniej tyle stworów, ile policzył człowiek.
+// TestFindOnRealCapture is a regression floor against the real capture: once
+// the character's own bar can be excluded, the detector must find exactly as
+// many creature bars as a human counted, not merely at least that many.
 func TestFindOnRealCapture(t *testing.T) {
 	fx := testenv.CombatCalibration()
 	im := testenv.NRGBACrop(t, testenv.CombatCapture(t), fx.Crop)
-	bars := vision.Find(im, opts(classic))
-	if len(bars) < fx.Monsters {
-		t.Errorf("na prawdziwej klatce znaleziono %d pasków, człowiek policzył %d potworów; "+
-			"sprawdź geometrię, barwy i prostokąt wycinka", len(bars), fx.Monsters)
+	o := opts(classic)
+	if fx.SelfBar != (image.Point{}) {
+		o.Exclude = []image.Point{fx.SelfBar}
+	}
+	bars := vision.Find(im, o)
+	if len(bars) != fx.Monsters {
+		t.Errorf("na prawdziwej klatce znaleziono %d pasków stworów, człowiek policzył %d: %v; "+
+			"sprawdź w tej kolejności prostokąt wycinka, BlackMax, tolerancję barw i geometrię",
+			len(bars), fx.Monsters, bars)
 	}
 	t.Logf("paski na prawdziwej klatce: %v", bars)
 }
