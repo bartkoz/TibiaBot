@@ -40,7 +40,7 @@ type server struct {
 	previewFloor int
 	// Nil until -input selects an emitter; every brain route then answers 503.
 	driver *input.Driver
-	// loop is the brain. Nil exactly when driver is.
+	// The brain also tracks position when movement control is disabled.
 	loop *brain.Loop
 	// session ties frames to one getDisplayMedia stream. It is the last
 	// remnant of the intent protocol's session token, and the only thing that
@@ -71,12 +71,14 @@ func (s *server) routes() http.Handler {
 	web, _ := fs.Sub(assets, "web")
 	mux.Handle("GET /", http.FileServer(http.FS(web)))
 	mux.HandleFunc("GET /api/info", s.info)
+	mux.HandleFunc("POST /api/locate", s.locate)
 	mux.HandleFunc("GET /api/demo", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "image/png")
 		png.Encode(w, mapdata.DemoSnippet(mapdata.DemoAtlas()))
 	})
 	mux.HandleFunc("POST /api/path", s.path)
 	mux.HandleFunc("POST /api/arm", s.arm)
+	mux.HandleFunc("POST /api/capture", s.startCapture)
 	mux.HandleFunc("POST /api/disarm", s.disarm)
 	mux.HandleFunc("POST /api/frame", s.frame)
 	mux.HandleFunc("GET /api/state", s.state)

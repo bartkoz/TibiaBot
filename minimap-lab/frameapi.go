@@ -17,15 +17,35 @@ import (
 	"minimap-lab/internal/route"
 )
 
-// loopReady refuses every brain route when the panel was started without an
-// emitter, so the reason is the same sentence everywhere.
+// loopReady refuses requests until the processing loop is available.
 func (s *server) loopReady(w http.ResponseWriter) bool {
 	if s.loop == nil {
 		writeJSONError(w, http.StatusServiceUnavailable,
-			"Sterowanie wyłączone. Uruchom panel z -input dry albo -input system.")
+			"Pętla odczytu jest niedostępna. Uruchom panel ponownie.")
 		return false
 	}
 	return true
+}
+
+// Capture permission and movement permission are separate. Starting a new
+// screen session never arms the keyboard driver.
+func (s *server) startCapture(w http.ResponseWriter, r *http.Request) {
+	if !s.loopReady(w) {
+		return
+	}
+	session, err := newCaptureSession()
+	if err != nil {
+		writeJSONError(w, 500, err.Error())
+		return
+	}
+	if s.driver != nil {
+		s.driver.Disarm("nowa sesja przechwytywania")
+	}
+	s.sessionMu.Lock()
+	s.session = session
+	s.sessionMu.Unlock()
+	s.loop.ResetCapture(r.Context(), session)
+	writeJSON(w, map[string]any{"session": strconv.FormatUint(session, 10)})
 }
 
 func newCaptureSession() (uint64, error) {
@@ -53,7 +73,10 @@ func (s *server) arm(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusConflict, err.Error())
 		return
 	}
-	session, err := newCaptureSession()
+	session := s.captureSession()
+	if session == 0 {
+		session, err = newCaptureSession()
+	}
 	if err != nil {
 		s.driver.Disarm("nie udało się wylosować tokenu sesji")
 		writeJSONError(w, http.StatusInternalServerError, err.Error())
@@ -70,11 +93,9 @@ func (s *server) arm(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) disarm(w http.ResponseWriter, r *http.Request) {
-	if s.driver == nil {
-		writeJSONError(w, http.StatusServiceUnavailable, "Sterowanie wyłączone.")
-		return
+	if s.driver != nil {
+		s.driver.Disarm("zatrzymane z panelu")
 	}
-	s.driver.Disarm("zatrzymane z panelu")
 	s.sessionMu.Lock()
 	s.session = 0
 	s.sessionMu.Unlock()
@@ -120,7 +141,7 @@ func (s *server) frame(w http.ResponseWriter, r *http.Request) {
 	// A reload leaves the previous stream's frames in flight; believing them
 	// would feed the brain pictures from a capture the user has ended.
 	if want := s.captureSession(); want == 0 || f.Session != want {
-		writeJSONError(w, http.StatusForbidden, "Klatka pochodzi z innej sesji przechwytywania. Uzbrój panel ponownie.")
+		writeJSONError(w, http.StatusForbidden, "Klatka pochodzi z innej sesji przechwytywania. Włącz śledzenie ponownie.")
 		return
 	}
 	// The handler never waits for the match: the answer is whatever the loop

@@ -82,6 +82,7 @@ class Camera {
     this.lastVideoTime = video.currentTime;
     this.seq += 1n;
     this.inFlight = true;
+    const session = this.session;
     try {
       const body = this.buildBody(video, cutAtMS);
       // Never keepalive: Chrome caps such requests at 64 kB of body and drops
@@ -92,6 +93,7 @@ class Camera {
         body,
       });
       const state = await response.json();
+      if (session !== this.session) return null;
       if (!response.ok) {
         this.onError(state?.reason ?? `błąd ${response.status}`);
         return null;

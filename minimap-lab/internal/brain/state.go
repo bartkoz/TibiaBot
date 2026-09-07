@@ -20,6 +20,7 @@ type State struct {
 	LastFrameSeq uint64 `json:"last_frame_seq"`
 
 	Armed  bool   `json:"armed"`
+	Zoom   int    `json:"zoom"`
 	Reason string `json:"reason,omitempty"`
 
 	Position *mapdata.Position `json:"position"`

@@ -73,8 +73,8 @@ type Config struct {
 }
 
 func (c Config) validate() error {
-	if c.Zoom < 1 || c.Zoom > 8 {
-		return fmt.Errorf("skala musi mieścić się w zakresie 1–8")
+	if c.Zoom < 0 || c.Zoom > 8 {
+		return fmt.Errorf("skala musi mieścić się w zakresie 0–8 (0 = Auto)")
 	}
 	if c.Floor < 0 || c.Floor > 15 {
 		return fmt.Errorf("piętro musi mieścić się w zakresie 0–15")
@@ -146,10 +146,12 @@ type Loop struct {
 	routeName string
 	routeNext string
 
-	lastFrameSeq uint64
-	lastVideoUS  uint64
-	hasVideoUS   bool
-	lastFrameAt  time.Time
+	lastFrameSeq   uint64
+	lastVideoUS    uint64
+	hasVideoUS     bool
+	captureSession uint64
+	searchStopped  bool
+	lastFrameAt    time.Time
 
 	position    *mapdata.Position
 	positionAt  time.Time
@@ -216,6 +218,18 @@ func (l *Loop) Submit(f frame.Frame, receivedAt time.Time) {
 
 func (l *Loop) Snapshot() *State { return l.snap.Load() }
 
+func (l *Loop) ResetCapture(ctx context.Context, session uint64) {
+	l.do(ctx, func() {
+		l.captureSession = session
+		l.hasVideoUS, l.searchStopped = false, false
+		l.tracker.Reset()
+		l.position, l.hasPosition = nil, false
+		l.match = MatchState{Reason: "Szukam pozycji. Podczas pierwszego odczytu pozostań w miejscu."}
+		l.executor.Reset()
+		l.publish()
+	})
+}
+
 // do runs fn on the loop goroutine and waits for it, so callers observe the
 // effect rather than racing it.
 func (l *Loop) do(ctx context.Context, fn func()) {
@@ -236,6 +250,11 @@ func (l *Loop) SetConfig(ctx context.Context, c Config) error {
 		return err
 	}
 	l.do(ctx, func() {
+		if c.Zoom != l.cfg.Zoom || c.MarkerX != l.cfg.MarkerX || c.MarkerY != l.cfg.MarkerY || c.MaskRadius != l.cfg.MaskRadius || c.MinScore != l.cfg.MinScore || c.MinGap != l.cfg.MinGap || abs(c.Floor-l.cfg.Floor) > 1 {
+			l.tracker.Reset()
+			l.position, l.hasPosition = nil, false
+		}
+		l.searchStopped = false
 		l.cfg = c
 		l.recorder.Auto, l.recorder.Every = c.RecordAuto, c.RecordEvery
 		// Options are updated in place rather than by rebuilding the follower:
@@ -320,6 +339,10 @@ func (l *Loop) Run(ctx context.Context) {
 // mid-route would leave an armed driver waiting for instructions that will
 // never come.
 func (l *Loop) watchdog() {
+	if l.position != nil && l.deps.Now().Sub(l.positionAt) > time.Second {
+		l.position, l.hasPosition = nil, false
+		l.publish()
+	}
 	if l.deps.Driver == nil || !l.deps.Driver.Armed() {
 		return
 	}
@@ -335,6 +358,9 @@ func (l *Loop) watchdog() {
 }
 
 func (l *Loop) handleFrame(ctx context.Context, env frameEnvelope) {
+	if l.captureSession != 0 && env.f.Session != l.captureSession {
+		return
+	}
 	l.lastFrameSeq = env.f.Seq
 	l.lastFrameAt = env.receivedAt
 	im, ok := env.f.Image(frame.RegionMinimap)
@@ -349,6 +375,10 @@ func (l *Loop) handleFrame(ctx context.Context, env frameEnvelope) {
 		return
 	}
 	l.lastVideoUS, l.hasVideoUS = env.f.VideoTimeUS, true
+	if l.searchStopped {
+		l.publish()
+		return
+	}
 
 	capturedAt := env.receivedAt.Add(-time.Duration(env.f.AgeMS) * time.Millisecond)
 	req := locate.Request{
@@ -360,12 +390,15 @@ func (l *Loop) handleFrame(ctx context.Context, env frameEnvelope) {
 		near := hint.Near
 		req.Near, req.Radius = &near, hint.Radius
 	}
-	result, _, err := l.deps.Locator.Locate(ctx, im, req)
+	matchCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
+	result, _, err := l.deps.Locator.Locate(matchCtx, im, req)
+	cancel()
 	completedAt := l.deps.Now()
 	if err != nil {
 		l.match = MatchState{Reason: err.Error()}
 		l.logf("dopasowanie nie powiodło się: %v", err)
 		l.noPosition(capturedAt, completedAt)
+		l.searchStopped = true
 		l.publish()
 		return
 	}
@@ -373,6 +406,11 @@ func (l *Loop) handleFrame(ctx context.Context, env frameEnvelope) {
 	l.recordMatch(result, completedAt)
 
 	if !result.Found || result.Position == nil {
+		// One failed full scan is enough. Keep accepting frames for the camera
+		// watchdog, but wait for recalibration or an explicit restart.
+		if req.Near == nil {
+			l.searchStopped = true
+		}
 		l.noPosition(capturedAt, completedAt)
 		l.publish()
 		return
@@ -387,6 +425,7 @@ func (l *Loop) handleFrame(ctx context.Context, env frameEnvelope) {
 	// The floor the tracker believes in follows what was actually found, so a
 	// confirmed transition does not leave the next search looking one floor up.
 	l.cfg.Floor = pos.Z
+	l.cfg.Zoom = result.Zoom
 
 	l.record(pos)
 	l.pumpBlocks()
@@ -594,6 +633,7 @@ func (l *Loop) logf(format string, args ...any) {
 func (l *Loop) publish() {
 	l.version++
 	s := &State{
+		Zoom:            l.cfg.Zoom,
 		StateVersion:    l.version,
 		LastFrameSeq:    l.lastFrameSeq,
 		Match:           l.match,

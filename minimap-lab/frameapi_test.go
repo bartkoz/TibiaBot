@@ -361,6 +361,92 @@ func TestFrameEndToEndLocatesTheCharacter(t *testing.T) {
 }
 
 // frameWith wraps real pixels in the binary body the panel would send.
+func TestCaptureTracksMovingFramesWithoutControl(t *testing.T) {
+	dir := t.TempDir()
+	reference := testenv.LoadFixture(t, "venore-reference.png")
+	testenv.SavePNG(t, filepath.Join(dir, "Minimap_Color_32768_32000_7.png"), reference)
+	s := newServer(dir)
+	s.loop = brain.NewLoop(brain.Deps{Locator: s.locator, Planner: s.planner, Blocks: s.blocks, Now: time.Now})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go s.loop.Run(ctx)
+	f := &brainFixture{server: s}
+	w := f.post(t, "/api/capture", nil)
+	if w.Code != 200 {
+		t.Fatalf("capture: %d %s", w.Code, w.Body.String())
+	}
+	var answer struct {
+		Session string `json:"session"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &answer); err != nil {
+		t.Fatal(err)
+	}
+	var err error
+	f.session, err = strconv.ParseUint(answer.Session, 10, 64)
+	if err != nil || f.session == 0 {
+		t.Fatalf("capture session: %q", answer.Session)
+	}
+	if s.driver != nil || s.loop.Snapshot().Armed {
+		t.Fatal("tracking enabled control")
+	}
+	if w := f.post(t, "/api/arm", nil); w.Code != 503 {
+		t.Fatal("armed with input off")
+	}
+	cfg := `{"brain":{"zoom":0,"marker_x":52,"marker_y":57,"mask_radius":5,"min_score":0.85,"min_gap":0.015,"floor":7,"speed":20,"floor_radius":8,"record_every":10,"tolerance":1}}`
+	if w := f.request(t, "PUT", "/api/config", []byte(cfg)); w.Code != 200 {
+		t.Fatalf("config: %s", w.Body.String())
+	}
+	capture := testenv.LoadFixture(t, "venore-capture.png")
+	for step := 0; step < 4; step++ {
+		im := image.NewNRGBA(image.Rect(0, 0, capture.Bounds().Dx(), capture.Bounds().Dy()))
+		if step == 0 {
+			draw.Draw(im, im.Bounds(), capture, capture.Bounds().Min, draw.Src)
+		} else {
+			draw.Draw(im, im.Bounds(), reference, image.Pt(138+step, 20), draw.Src)
+		}
+		if w := f.post(t, "/api/frame", f.frameWith(im, im.Bounds().Dx(), im.Bounds().Dy())); w.Code != 200 {
+			t.Fatalf("frame: %s", w.Body.String())
+		}
+		deadline := time.Now().Add(5 * time.Second)
+		for s.loop.Snapshot().LastFrameSeq < f.seq {
+			if time.Now().After(deadline) {
+				t.Fatal("frame was not processed")
+			}
+			time.Sleep(time.Millisecond)
+		}
+		state := s.loop.Snapshot()
+		want := mapdata.Position{X: 32958 + step, Y: 32077, Z: 7}
+		// A slow global scan may already be older than the freshness window
+		// (especially under -race). Its anchor must still seed the next frame.
+		staleAcquisition := step == 0 && state.Match.Found && state.Match.Mode == "global"
+		if !staleAcquisition && (state.Position == nil || *state.Position != want) {
+			t.Fatalf("step %d: %+v", step, state)
+		}
+		if step > 0 && state.Match.Mode != "local" {
+			t.Fatalf("step %d repeated global search", step)
+		}
+		if state.Armed || state.Zoom != 1 {
+			t.Fatalf("unexpected state: %+v", state)
+		}
+	}
+	// Frozen or stopped video must not keep presenting the last XYZ as live.
+	deadline := time.Now().Add(2 * time.Second)
+	for s.loop.Snapshot().Position != nil {
+		if time.Now().After(deadline) {
+			t.Fatal("stale position was not hidden")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	oldSession := f.session
+	if w := f.post(t, "/api/capture", nil); w.Code != 200 {
+		t.Fatal(w.Body.String())
+	}
+	if w := f.post(t, "/api/frame", f.body(oldSession)); w.Code != 403 {
+		t.Fatal("old capture session accepted")
+	}
+}
+
+// frameWith wraps real pixels in the binary body the panel would send.
 func (f *brainFixture) frameWith(im *image.NRGBA, w, h int) []byte {
 	f.seq++
 	f.videoUS += 100_000

@@ -56,8 +56,7 @@ type localAtlasEntry struct {
 
 // Service owns the decoded map data localization needs: one full atlas for the
 // floor being acquired, plus a few bounded ones for local tracking. The mutex
-// makes it safe to share; in practice the brain loop is the only caller, and
-// the panel's own handler goes away with the intent protocol.
+// makes it safe to share between the brain loop and manual panel readings.
 type Service struct {
 	mu           sync.Mutex
 	dir          string
@@ -71,11 +70,17 @@ func NewService(dir string) *Service { return &Service{dir: dir} }
 // Locate answers one query and returns the atlas the answer came from, which
 // the caller needs to cut a preview out of.
 func (s *Service) Locate(ctx context.Context, im image.Image, req Request) (Result, *mapdata.Atlas, error) {
+	if err := ctx.Err(); err != nil {
+		return Result{}, nil, err
+	}
 	if err := req.Validate(); err != nil {
 		return Result{}, nil, err
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return Result{}, nil, err
+	}
 
 	matchStarted := time.Now()
 	var atlas *mapdata.Atlas

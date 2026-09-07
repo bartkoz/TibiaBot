@@ -11,6 +11,8 @@ cd /Users/Bartek/TibiaBot/minimap-lab
 
 Otwórz **http://127.0.0.1:8095** i kliknij **Uruchom demo**. Oczekiwany wynik: **32200, 32180, 7**. Demo jest syntetyczne, pokazuje działanie algorytmu, nie dowodzi skuteczności na obrazie klienta gry.
 
+Przycisk **Znajdź pozycję** wykonuje pojedynczy odczyt screenshotu albo uruchamia ciągłe śledzenie XYZ z udostępnionego ekranu. Śledzenie działa także przy domyślnym `-input off`, bez uzbrajania: pierwszy odczyt przeszukuje piętro i dobiera skalę Auto, następne szukają lokalnie. Checkbox **Śledź XYZ na bieżąco** zatrzymuje i wznawia odczyty; ponowne kliknięcie **Znajdź pozycję** rozpoczyna wyszukiwanie od nowa. Podgląd ekranu odświeża się również przy wyłączonym śledzeniu. Screenshoty korzystają z `POST /api/locate` (multipart: PNG w polu `image`, ustawienia `locate.Request` jako JSON w polu `options`).
+
 Domyślny katalog map to `../data/minimap`, względem katalogu uruchomienia. W tym projekcie są już pliki referencyjne.
 
 Gotowy plik wykonywalny jest zbudowany dla tego Maca (Apple Silicon). Kompilacja ze źródeł: `go run .`. Moduł wskazuje toolchain Go 1.24.2, dostępny już lokalnie; nowszy Go też może go zbudować. Na innym komputerze Go może pobrać wskazany toolchain. Domyślny Go 1.22.2 na tym Macu tworzył pliki odrzucane przez loader systemowy (`missing LC_UUID`), dlatego kompilacja i testy używają Go 1.24.2.
@@ -31,14 +33,14 @@ Na Windows: `go build -o minimap-lab.exe .`, a następnie `minimap-lab.exe -maps
 4. Kliknij środek znacznika postaci na powiększonym wycinku. Różowy kwadrat maskuje znacznik.
 5. Zostaw **piksele na kratkę → Auto**. Program sprawdza kolejno skale `1–4`, a pierwszą dającą jednoznaczne dopasowanie zachowuje w panelu. To kalibracja heurystyczna, nie porównanie wszystkich skal jednocześnie. Po zmianie zoomu gry wybierz Auto ponownie. Ręcznie dostępne są skale całkowite `1–8`; skala ułamkowa lub oddalenie poniżej 1 px/kratkę wymaga zmiany źródła.
 6. Wybierz właściwe piętro Z, kliknij **Znajdź pozycję**. Obok współrzędnych zobaczysz fragment atlasu z zaznaczonym kandydatem. Przy wyniku niejednoznacznym współrzędne pozostają nieznane, a JSON pokazuje kandydatów diagnostycznych.
-7. Wybierz **10 odczytów/s** albo **5 odczytów/s** i zaznacz **Włącz śledzenie XYZ**. Podczas pierwszego wyszukiwania pozostań w miejscu; po potwierdzeniu lokalnej pozycji przejdź ręcznie kilka kratek. Zmiana rozdzielczości zatrzymuje odczyt i wymaga ponownego zaznaczenia.
+7. Po kliknięciu **Znajdź pozycję** śledzenie udostępnionego ekranu działa automatycznie, z docelową częstotliwością 10 klatek/s. Checkbox **Śledź XYZ na bieżąco** pozwala je zatrzymać i wznowić. Podczas pierwszego wyszukiwania pozostań w miejscu; po potwierdzeniu lokalnej pozycji przejdź ręcznie kilka kratek. Zmiana rozdzielczości zatrzymuje odczyt i wymaga ponownego zaznaczenia.
 8. Gdy pozycja jest stabilna, przejdź do sekcji **4. Trasa**: zaznacz **Nagrywaj trasę** i przejdź planowaną drogę, potem **Pobierz JSON**. Do prowadzenia po zapisanej trasie wczytaj plik i zaznacz **Podążaj za trasą**.
 
 ## Tester 5–10 Hz
 
 Pierwszy odczyt przeszukuje całe piętro. Kolejne wysyłają ostatnie XYZ i promień wyszukiwania, zwykle 5 kratek przy 10 Hz: 121 możliwych pozycji. Promień rośnie z wiekiem ostatniej pozycji i ustawioną maksymalną prędkością, do 64 kratek. Wynik z długiego pierwszego wyszukiwania zachowuje rzeczywisty wiek obrazu, więc pierwsze lokalne potwierdzenie może wymagać większego promienia.
 
-Po nieudanym odczycie pole XYZ pokazuje **Pozycja nieznana**. Tester próbuje szerszego lokalnego obszaru; po trzech niepowodzeniach wykonuje jedno pełne wyszukiwanie. Jeśli ono też zawiedzie, zatrzymuje powtarzanie. Przycisk **Szukaj od nowa na całej mapie** pozwala ręcznie odrzucić poprzednią lokalizację. Wynik leżący dokładnie na granicy promienia wymaga szerszego potwierdzenia.
+Po nieudanym odczycie pole XYZ pokazuje **Pozycja nieznana**. Tester próbuje szerszego lokalnego obszaru; po trzech niepowodzeniach wykonuje jedno pełne wyszukiwanie. Jeśli ono też zawiedzie, zatrzymuje powtarzanie. Ponowne kliknięcie **Znajdź pozycję** pozwala ręcznie odrzucić poprzednią lokalizację. Wynik leżący dokładnie na granicy promienia wymaga szerszego potwierdzenia.
 
 Domyślnie włączone jest **Rozpoznawaj przejścia Z ±1**. Jeżeli dopasowanie na aktualnym piętrze zawiedzie, ten sam odczyt sprawdza Z−1 i Z+1 w obszarze **±8 kratek XY** od ostatniej potwierdzonej pozycji. Promień przejścia można zmienić w **Zakres śledzenia → Zmiana piętra: promień XY** (1–32). Oba sąsiednie piętra są porównywane ze sobą oraz z kandydatem na pierwotnym piętrze; podobne wyniki pozostawiają pozycję nieznaną. Potwierdzenie nowego Z automatycznie aktualizuje selektor i kolejne odczyty pozostają lokalne.
 
@@ -170,7 +172,7 @@ To także narzędzie diagnostyczne: lada, przez którą postać nie przejdzie, a
 
 ## Sterowanie
 
-Flaga `-input` wybiera tryb: `off` (domyślny — mózg w ogóle nie startuje, a `/api/frame`, `/api/state`, `/api/config` i `/api/route` odpowiadają 503; panel działa wyłącznie jako podgląd), `dry` (emiter zapamiętuje zdarzenia w pamięci i nic nie wysyła do systemu — cały przepływ da się przećwiczyć bez ryzyka) albo `system` (prawdziwe zdarzenia klawiatury i myszy). `-input system` ma emiter tylko na macOS (CoreGraphics przez `purego`) i Windows (`user32.dll`/`SendInput`); na Linuksie i innych platformach nie ma jeszcze emitera systemowego, więc start z `-input system` tam kończy się błędem — dostępne pozostają `off` i `dry`.
+Flaga `-input` wybiera tryb: `off` (domyślny — odczyt XYZ i trasy działają, sterownik klawiatury pozostaje wyłączony, a `/api/arm` odpowiada 503), `dry` (emiter zapamiętuje zdarzenia w pamięci i nic nie wysyła do systemu — cały przepływ da się przećwiczyć bez ryzyka) albo `system` (prawdziwe zdarzenia klawiatury i myszy). `-input system` ma emiter tylko na macOS (CoreGraphics przez `purego`) i Windows (`user32.dll`/`SendInput`); na Linuksie i innych platformach nie ma jeszcze emitera systemowego, więc start z `-input system` tam kończy się błędem — dostępne pozostają `off` i `dry`.
 
 ### Uzbrajanie i rozbrajanie
 
@@ -313,7 +315,9 @@ Pełne wyszukiwanie ma limit 45 s; przy wolnym działaniu podaj katalog z mapami
 
 ## HTTP API
 
-`POST /api/frame`, ciało binarne — **jedyne wejście obrazu**. Nagłówek 36 bajtów, potem po 12 bajtów na region i surowe piksele RGBA:
+`POST /api/capture` rozpoczyna sesję przechwytywania bez uzbrajania sterowania, zwraca token jako napis dziesiętny i resetuje poprzednie śledzenie. Nowa sesja rozbraja ewentualny sterownik. `POST /api/arm` uzbraja wyłącznie sterowanie i zachowuje aktywną sesję kamery. `POST /api/disarm` unieważnia sesję; odczyt można ponownie uruchomić bez uzbrajania.
+
+`POST /api/frame`, ciało binarne — wejście obrazu dla ciągłego śledzenia. Nagłówek 36 bajtów, potem po 12 bajtów na region i surowe piksele RGBA:
 
 ```
 0   4   magic "MLF1"
@@ -331,7 +335,7 @@ Identyfikatory regionów: `1` minimapa, `2` pasek HP, `3` pasek many (dwa ostatn
 
 Odpowiedzią jest **snapshot stanu bota**, ten sam, który zwraca `GET /api/state`: pozycja i jej wiek, metryki dopasowania, postęp trasy, stan wykonawcy, licznik nagrywania, ostatnia akcja i ogon logu. Snapshot ma stały, ograniczony rozmiar — nie ma w nim waypointów ani atlasu, bo jedzie przy każdej klatce. Pola `state_version` i `last_frame_seq` mówią, czego dotyczy: handler nigdy nie czeka na dopasowanie, więc snapshot **nie** opisuje właśnie przesłanej klatki.
 
-Klatka ze złym tokenem sesji przechwytywania dostaje 403. Token wydaje `POST /api/arm` i **jest napisem dziesiętnym**, nie liczbą: to uint64, a liczby JSON tracą precyzję powyżej 2⁵³ w każdej przeglądarce — zaokrąglony w drodze nigdy by już nie pasował.
+Klatka ze złym tokenem sesji przechwytywania dostaje 403. Token wydaje `POST /api/capture` (także `POST /api/arm`, gdy nie ma jeszcze sesji) i **jest napisem dziesiętnym**, nie liczbą: to uint64, a liczby JSON tracą precyzję powyżej 2⁵³ w każdej przeglądarce — zaokrąglony w drodze nigdy by już nie pasował.
 
 `PUT /api/config` — cała powierzchnia ustawień jednym dokumentem: `{"brain":{…},"keys":{"rope":"f7"},"click_after_hotkey":false,"directions":{"N":"numpad8"},"tile":{"x":0.5,"y":0.5}}`. Walidacja jest wszystko-albo-nic; jedno złe pole kończy się kodem 400 z powodem, a stara konfiguracja zostaje nietknięta.
 
@@ -374,5 +378,7 @@ Testy trasy na mapach z repozytorium: `MINIMAP_REAL_MAP_TEST=1 go test ./interna
 Test lokalnego przejścia na rzeczywistych mapach: `MINIMAP_REAL_MAP_TEST=1 go test . -run TestFloorTransitionRealAtlas -v`. Używa zapisanego wycinka oraz zasymulowanej ostatniej pozycji na Z=8; szuka właściwego Z=7 w pobliżu XY. Nie wymaga nagrania prawdziwego przejścia. Przy pierwszej próbie z wczytaniem kafli zmierzono około 36 ms na tym Macu. `go test . -run '^$' -bench BenchmarkAdjacentFloorCold -benchtime=2s` mierzy osobno wyszukiwanie i wczytywanie małego atlasu z fixture.
 
 ## Diagnostyka
+
+Pojedynczy odczyt z **Znajdź pozycję** zapisuje wycinek i ustawienia w `.debug/manual-input.png` oraz `.debug/manual-options.json`, a wynik albo błąd z czasem wykonania w `.debug/manual-result.json`. Pełne wyszukiwanie korzysta z maksymalnie czterech rdzeni; progi i próbki pozostają takie same. Limit 45 sekund obejmuje wszystkie próby skali Auto.
 
 Ostatni rzeczywisty wycinek jest zapisywany lokalnie w `.debug/last-input.png`, jego ustawienia w `.debug/last-options.json`, a wynik w `.debug/last-result.json`. Podczas lokalnego śledzenia zapis i logowanie są ograniczone do raz na sekundę; pełne wyszukiwania są zapisywane za każdym razem. Podgląd referencyjny również jest odświeżany najwyżej raz na sekundę podczas śledzenia. Pliki nie są udostępniane przez HTTP i są wyłączone z Gita. Pełny ekran nie jest zapisywany.

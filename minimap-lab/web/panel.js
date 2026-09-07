@@ -10,6 +10,9 @@ const video = $('video');
 
 let roi = null, marker = null, dragging = null, stream = null, demo = false, ready = false;
 let calibrating = false, worker = null, lastPreviewRev = -1, gridWindow = null;
+let locating = false, sourceRevision = 0, controlAvailable = false, brainAvailable = false;
+let startingTracking = false, statePending = false, lastStateVersion = -1;
+let positionReceivedAt = 0, positionAgeAtReceipt = null, lastDrawTime = null;
 const GRID_RADIUS = 32;
 
 const camera = new Camera({
@@ -34,7 +37,8 @@ function drawScreen() {
   }
 }
 
-function drawCrop() {
+function drawCrop(configure = true) {
+  $('locate').disabled = locating || !ready || !roi || !marker;
   if (!roi) { $('roi-info').textContent = 'Zaznacz minimapę na obrazie.'; return; }
   cropCanvas.width = roi.w; cropCanvas.height = roi.h;
   const c = cropCanvas.getContext('2d');
@@ -49,7 +53,7 @@ function drawCrop() {
   $('roi-info').textContent = `Wycinek: x=${roi.x}, y=${roi.y}, ${roi.w} × ${roi.h} px` +
     (marker ? ` · znacznik: ${marker.x}, ${marker.y}` : ' · wskaż znacznik postaci');
   camera.setRegion(FRAME_REGION.minimap, roi);
-  pushConfig();
+  if (configure) pushConfig();
 }
 
 function setSource(image, reset = true) {
@@ -60,6 +64,8 @@ function setSource(image, reset = true) {
     // Without a fresh rectangle further movement is not permissible: the
     // minimap is no longer where it was.
     roi = marker = null;
+    sourceRevision++;
+    stopTracking();
     camera.setRegion(FRAME_REGION.minimap, null);
     disarm();
     status('Rozdzielczość źródła zmieniła się. Zaznacz minimapę ponownie.', 'error');
@@ -70,16 +76,23 @@ function setSource(image, reset = true) {
   screenCanvas.height = Math.round(h * screenCanvas.width / w);
   ready = true;
   if (reset) {
+    sourceRevision++;
     roi = w <= 512 && h <= 512 ? {x: 0, y: 0, w, h} : null;
     marker = roi ? {x: Math.floor(w / 2), y: Math.floor(h / 2)} : null;
+    camera.setRegion(FRAME_REGION.minimap, roi);
+    $('reference').hidden = true;
+    $('coordinates').textContent = 'Pozycja nieznana';
   }
-  drawScreen(); drawCrop();
+  drawScreen(); drawCrop(reset);
 }
 
 function stopShare() {
+  sourceRevision++;
+  if (stream || camera.session) stopTracking();
   stopLoop();
   if (stream) stream.getTracks().forEach(t => t.stop());
   stream = null; video.srcObject = null;
+  lastDrawTime = null;
   $('snapshot').disabled = $('stop').disabled = $('live').disabled = true;
 }
 
@@ -106,7 +119,7 @@ $('demo').onclick = async () => {
     $('zoom').value = 2; $('mask').value = 5;
     marker = {x: 94, y: 94}; drawCrop();
     $('source').textContent = 'DEMO · syntetyczny obraz · oczekiwana pozycja: 32200, 32180, 7';
-    status('Obraz demo wczytany. To sprawdzian dopasowania, nie bot — bot potrzebuje udostępnionego ekranu.');
+    await locateOnce();
   } catch (e) { status(e.message, 'error'); }
 };
 
@@ -127,11 +140,102 @@ $('share').onclick = async () => {
     $('snapshot').disabled = $('stop').disabled = $('live').disabled = false;
     $('source').textContent = 'Udostępniony ekran · wybierz minimapę i skalibruj znacznik.';
     status('Pobrano klatkę. Zaznacz minimapę.');
+    startLoop();
   } catch (e) { stopShare(); status(`Nie udało się udostępnić ekranu: ${e.message}`, 'error'); }
 };
 
 $('snapshot').onclick = () => { try { setSource(video, false); } catch (e) { status(e.message, 'error'); } };
 $('stop').onclick = () => { stopShare(); status('Udostępnianie zakończone.'); };
+
+async function locateOnce() {
+  if (stream) { await startTracking(true); return; }
+  if (locating || !ready || !roi || !marker) return;
+  if (stream) setSource(video, false);
+  if (!roi || !marker) return;
+  locating = true;
+  $('locate').disabled = true;
+  const revision = sourceRevision;
+  const started = performance.now();
+  status('Szukam pozycji na całym piętrze. Pozostań w miejscu.');
+  $('coordinates').textContent = 'Pozycja nieznana';
+  $('reference').hidden = true;
+  try {
+    const canvas = document.createElement('canvas');
+    canvas.width = roi.w; canvas.height = roi.h;
+    canvas.getContext('2d').drawImage(source, roi.x, roi.y, roi.w, roi.h, 0, 0, roi.w, roi.h);
+    const options = {...brainConfig(), zoom: num('zoom'), demo};
+    const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+    if (!blob) throw new Error('Nie udało się pobrać wycinka minimapy.');
+    const body = new FormData();
+    body.append('image', blob, 'minimap.png');
+    body.append('options', JSON.stringify(options));
+    const response = await fetch('/api/locate', {method: 'POST', body});
+    const result = await response.json();
+    if (revision !== sourceRevision) return;
+    if (!response.ok) throw new Error(result.reason ?? 'Nie udało się odczytać pozycji.');
+    $('coordinates').textContent = result.found && result.position
+      ? `${result.position.x}, ${result.position.y}, ${result.position.z}` : 'Pozycja nieznana';
+    $('json').textContent = JSON.stringify(result, null, 2);
+    $('round-trip').textContent = `${(performance.now() - started).toFixed(1)} ms`;
+    $('match-time').textContent = `${(result.match_ms ?? 0).toFixed(1)} ms`;
+    $('search-area').textContent = 'całe piętro';
+    $('metrics').textContent = result.best ? `Wynik: ${(result.best.score * 100).toFixed(2)}%` : '';
+    status(result.reason, result.found ? 'ok' : 'error');
+    if (result.found) {
+      $('zoom').value = result.zoom;
+      saveForm();
+      if (result.preview) showReference(result.preview);
+    }
+  } catch (e) { if (revision === sourceRevision) status(e.message, 'error'); }
+  finally { locating = false; $('locate').disabled = !ready || !roi || !marker; }
+}
+$('locate').onclick = locateOnce;
+
+async function startTracking(restart = false) {
+  if (startingTracking || !stream || !roi || !marker) return;
+  startingTracking = true;
+  const revision = sourceRevision;
+  $('locate').disabled = true;
+  try {
+    if (!await pushConfig()) throw new Error('Nie udało się ustawić odczytu.');
+    if (revision !== sourceRevision) return;
+    if (restart || !camera.session) {
+      camera.setSession(null);
+      const response = await fetch('/api/capture', {method: 'POST'});
+      const answer = await response.json();
+      if (revision !== sourceRevision) return;
+      if (!response.ok || !answer.session) throw new Error(answer.reason ?? 'Nie udało się uruchomić śledzenia.');
+      camera.setSession(answer.session);
+      $('coordinates').textContent = 'Pozycja nieznana';
+      $('reference').hidden = true;
+      positionAgeAtReceipt = null;
+    }
+    $('live').checked = true;
+    startLoop();
+    status('Śledzenie XYZ włączone. Podczas pierwszego odczytu pozostań w miejscu.');
+    camera.sendFrame(video, 0);
+  } catch (e) { $('live').checked = false; status(e.message, 'error'); }
+  finally { startingTracking = false; $('locate').disabled = !ready || !roi || !marker; }
+}
+
+function stopTracking() {
+  sourceRevision++;
+  $('live').checked = false;
+  camera.setSession(null);
+  disarm();
+  $('coordinates').textContent = 'Pozycja nieznana';
+  $('actual-hz').textContent = '0.0';
+  $('reference').hidden = true;
+  positionAgeAtReceipt = null;
+}
+
+function showReference(url) {
+  const img = $('reference');
+  img.hidden = true;
+  img.onload = () => { img.hidden = false; };
+  img.onerror = () => { img.hidden = true; };
+  img.src = url;
+}
 
 // --- zaznaczanie obszaru ---
 
@@ -153,6 +257,8 @@ screenCanvas.addEventListener('pointerdown', e => {
     return;
   }
   dragging = point(e, screenCanvas, source.width, source.height);
+  if ($('live').checked) stopTracking();
+  sourceRevision++;
   screenCanvas.setPointerCapture(e.pointerId);
 });
 screenCanvas.addEventListener('pointermove', e => {
@@ -167,7 +273,9 @@ screenCanvas.addEventListener('pointerup', () => { dragging = null; drawCrop(); 
 screenCanvas.addEventListener('pointercancel', () => { dragging = null; });
 cropCanvas.addEventListener('pointerdown', e => {
   if (!roi) return;
+  if ($('live').checked) stopTracking();
   marker = point(e, cropCanvas, cropCanvas.width, cropCanvas.height);
+  sourceRevision++;
   drawCrop();
 });
 
@@ -179,7 +287,7 @@ const HOTKEYS = {rope: 'hotkey-rope', ladder: 'hotkey-ladder', hole: 'hotkey-hol
 
 function brainConfig() {
   return {
-    zoom: Math.max(1, num('zoom') || 1),
+    zoom: num('zoom'),
     marker_x: marker?.x ?? 0,
     marker_y: marker?.y ?? 0,
     mask_radius: num('mask'),
@@ -204,6 +312,7 @@ function brainConfig() {
 // piece, so a single bad field is refused with a reason instead of half the
 // form quietly taking effect.
 async function pushConfig(tile) {
+  if (!brainAvailable) return false;
   const body = {
     brain: brainConfig(),
     keys: Object.fromEntries(Object.entries(HOTKEYS)
@@ -336,7 +445,24 @@ function startLoop() {
   worker = new Worker('/worker.js');
   worker.onmessage = () => {
     if (!stream) return;
+    // Keep the visible preview moving even while matching a previous frame.
+    // Drawing must not resend config or invalidate an in-flight match.
+    if (lastDrawTime !== video.currentTime) {
+      lastDrawTime = video.currentTime;
+      if (!dragging) setSource(video, false);
+    }
+    if (!$('live').checked) return;
     camera.sendFrame(video, 0);
+    pollState();
+    if (positionAgeAtReceipt != null) {
+      const age = positionAgeAtReceipt + performance.now() - positionReceivedAt;
+      $('position-age').textContent = `${Math.round(age)} ms`;
+      if (age > 1000) {
+        $('coordinates').textContent = 'Pozycja nieznana';
+        $('reference').hidden = true;
+        $('actual-hz').textContent = '0.0';
+      }
+    }
   };
   worker.postMessage({intervalMS: 100});
 }
@@ -349,8 +475,20 @@ function stopLoop() {
 }
 
 $('live').addEventListener('change', () => {
-  if ($('live').checked) startLoop(); else stopLoop();
+  if ($('live').checked) startTracking(); else stopTracking();
 });
+
+async function pollState() {
+  if (statePending) return;
+  const session = camera.session;
+  statePending = true;
+  try {
+    const response = await fetch('/api/state');
+    const state = await response.json();
+    if (response.ok && session === camera.session && $('live').checked) render(state);
+  } catch (e) { status(e.message, 'error'); }
+  finally { statePending = false; }
+}
 
 // --- trasa ---
 
@@ -436,6 +574,16 @@ function renderList() {
 // --- widok ---
 
 function render(state) {
+  if (state.state_version != null) {
+    if (state.state_version <= lastStateVersion) return;
+    lastStateVersion = state.state_version;
+  }
+  positionReceivedAt = performance.now();
+  positionAgeAtReceipt = state.position ? state.position_age_ms : null;
+  if (state.position && state.zoom > 0) {
+    $('zoom').value = state.zoom;
+    $('floor').value = state.position.z;
+  }
   $('coordinates').textContent = state.position
     ? `${state.position.x}, ${state.position.y}, ${state.position.z}`
     : 'Pozycja nieznana';
@@ -453,10 +601,10 @@ function render(state) {
   $('search-area').textContent = m.mode === 'local' ? 'lokalny' : (m.mode ? 'całe piętro' : '—');
   if (m.reason) status(m.reason, m.found ? 'ok' : 'error');
 
-  $('input-status').textContent = state.armed
+  $('input-status').textContent = !controlAvailable ? 'Sterowanie wyłączone. Śledzenie XYZ działa niezależnie.' : state.armed
     ? 'Uzbrojony. Alt-tab albo cisza kamery rozbraja.'
     : 'Rozbrojony.';
-  $('input-arm').disabled = state.armed && !armTimer;
+  $('input-arm').disabled = !controlAvailable || (state.armed && !armTimer);
   $('input-disarm').disabled = !state.armed;
   $('input-calibrate').disabled = !ready;
   $('route-add').disabled = !state.position;
@@ -481,10 +629,12 @@ function render(state) {
   const log = state.log ?? [];
   $('blocks-status').textContent = log.length ? log[log.length - 1].text : '—';
 
-  if (state.preview_revision !== lastPreviewRev) {
+  if (state.position && state.preview_revision > 0 && state.preview_revision !== lastPreviewRev) {
     lastPreviewRev = state.preview_revision;
-    $('reference').src = `/api/preview?v=${state.preview_revision}`;
-    $('reference').hidden = false;
+    showReference(`/api/preview?v=${state.preview_revision}`);
+  } else if (!state.position) {
+    $('reference').hidden = true;
+    lastPreviewRev = -1;
   }
   if ($('grid-preview-on').checked && state.position) refreshGrid(state.position);
 }
@@ -551,6 +701,7 @@ $('grid-canvas').addEventListener('click', async event => {
   restoreForm();
   try {
     const info = await (await fetch('/api/info')).json();
+    controlAvailable = info.control_available ?? true;
     const floors = info.floors?.length ? info.floors : [...Array(16).keys()];
     $('floor').replaceChildren(...floors.map(z => {
       const o = document.createElement('option');
@@ -567,7 +718,7 @@ $('grid-canvas').addEventListener('click', async event => {
   // available, which is what every disabled button below depends on.
   try {
     const r = await fetch('/api/state');
-    if (r.ok) render(await r.json());
+    if (r.ok) { brainAvailable = true; render(await r.json()); }
     else $('input-status').textContent = (await r.json()).reason ?? 'Sterowanie wyłączone.';
   } catch { /* jak wyżej */ }
 })();

@@ -35,7 +35,9 @@
         <label>Minimalny wynik<input id="threshold" type="number" min="0.5" max="1" step="0.005" value="0.85"></label>
         <label>Minimalny odstęp od konkurenta<input id="gap" type="number" min="0.001" max="0.2" step="0.001" value="0.015"></label>
       </details>
-      <label class="check"><input id="live" type="checkbox" disabled>Wysyłaj klatki do bota</label>
+      <button id="locate" disabled>Znajdź pozycję</button>
+      <p class="hint">Ze screenshotu: pojedynczy odczyt. Z udostępnionego ekranu: znajdź pozycję i śledź ją na bieżąco. Kolejne kliknięcie rozpoczyna wyszukiwanie od nowa.</p>
+      <label class="check"><input id="live" type="checkbox" disabled>Śledź XYZ na bieżąco</label>
       <p class="hint">Zegar tej pętli siedzi w Web Workerze, bo karta panelu jest w tle zawsze, gdy grasz — a tam przeglądarka dławi zwykłe timery do jednego tyknięcia na sekundę.</p>
       <details><summary>Zakres śledzenia</summary><label>Zakładana maks. prędkość (kratki/s)<input id="speed" type="number" min="1" max="100" value="20"></label><label>Zmiana piętra: promień XY (kratki)<input id="floor-radius" type="number" min="1" max="32" value="8"></label><p class="hint">Zwykły ruch: obszar rośnie do 64 kratek. Przejścia Z ±1: sprawdzany jest mały obszar wokół ostatniego XY. Po trzech nieudanych odczytach tester ponownie przeszuka mapę.</p></details>
       <p class="hint">Podczas pierwszego, pełnego wyszukiwania pozostań w miejscu. Potem możesz chodzić ręcznie, również po schodach. Po zmianie zoomu wybierz Auto. Z możesz też wskazać ręcznie.</p>

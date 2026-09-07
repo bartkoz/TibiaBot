@@ -46,15 +46,16 @@ func main() {
 	}
 	if em != nil {
 		s.driver = input.NewDriver(em, *staleMS)
-		s.loop = brain.NewLoop(brain.Deps{
-			Locator: s.locator, Planner: s.planner, Blocks: s.blocks,
-			Driver: s.driver, Tile: s.tileVerdict, Now: time.Now,
-		})
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-		go s.loop.Run(ctx)
 		log.Printf("Sterowanie: %s — wykonawca startuje rozbrojony. Próg świeżości: %d ms.", *mode, *staleMS)
 	}
+	deps := brain.Deps{Locator: s.locator, Planner: s.planner, Blocks: s.blocks, Tile: s.tileVerdict, Now: time.Now}
+	if s.driver != nil {
+		deps.Driver = s.driver
+	}
+	s.loop = brain.NewLoop(deps)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go s.loop.Run(ctx)
 	log.Printf("Minimap Lab: http://%s — mapy: %s", *addr, *dir)
 	h := &http.Server{Addr: *addr, Handler: s.routes(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 20 * time.Second, WriteTimeout: 60 * time.Second, IdleTimeout: 60 * time.Second}
 	log.Fatal(h.ListenAndServe())

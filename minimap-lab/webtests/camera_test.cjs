@@ -108,6 +108,20 @@ test('snapshot z odpowiedzi trafia do wywołania zwrotnego', async () => {
   assert.equal(seen[0].state_version, 1);
 });
 
+test('odpowiedź ze starej sesji nie przywraca starej pozycji', async () => {
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  const snapshots = [];
+  const cam = camera({fetch: async () => { await gate; return ok(); }, onSnapshot: s => snapshots.push(s)});
+  cam.setSession('1');
+  cam.setRegion(REGION.minimap, {x: 0, y: 0, w: 1, h: 1});
+  const pending = cam.sendFrame(fakeVideo());
+  cam.setSession('2');
+  release();
+  await pending;
+  assert.equal(snapshots.length, 0);
+});
+
 // A refusal carries a reason the panel has to show; swallowing it would look
 // exactly like a request that never happened.
 test('odmowa serwera trafia do obsługi błędu, nie do snapshotu', async () => {
