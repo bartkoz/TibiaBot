@@ -28,6 +28,9 @@ const (
 	logDepth = 50
 	// planMargin of zero lets the planner pick its own default.
 	planMargin = 0
+	// matchTimeout bounds one match. A full floor search is the slow case; the
+	// value is the same 45 s the panel's own README promises.
+	matchTimeout = 45 * time.Second
 )
 
 // Controls is the keyboard the loop drives. It is an interface so the loop can
@@ -156,6 +159,8 @@ type Loop struct {
 	routeNext string
 
 	lastFrameSeq   uint64
+	lastMatchSeq   uint64
+	matchPending   bool
 	lastVideoUS    uint64
 	hasVideoUS     bool
 	captureSession uint64
@@ -420,6 +425,13 @@ func (l *Loop) handleFrame(ctx context.Context, env frameEnvelope) {
 	}
 
 	capturedAt := env.receivedAt.Add(-time.Duration(env.f.AgeMS) * time.Millisecond)
+	// One match at a time. Frames arriving while one runs still feed vision
+	// above; the newest of them starts the next match when this one lands.
+	// Queuing them would answer with a picture of where the character used to
+	// be, which is the same reason Submit keeps only one frame.
+	if l.matchPending {
+		return
+	}
 	req := locate.Request{
 		Options: locate.Options{Zoom: l.cfg.Zoom, MarkerX: l.cfg.MarkerX, MarkerY: l.cfg.MarkerY,
 			MaskRadius: l.cfg.MaskRadius, MinScore: l.cfg.MinScore, MinGap: l.cfg.MinGap},
@@ -429,9 +441,39 @@ func (l *Loop) handleFrame(ctx context.Context, env frameEnvelope) {
 		near := hint.Near
 		req.Near, req.Radius = &near, hint.Radius
 	}
-	matchCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
-	result, _, err := l.deps.Locator.Locate(matchCtx, im, req)
-	cancel()
+	l.startMatch(ctx, im, req, capturedAt, env.f.Seq)
+}
+
+// startMatch runs one match off the loop goroutine and applies its answer as a
+// command, exactly the way requestPlan does with a path. The frame's pixels are
+// safe to read from another goroutine: frameapi deliberately does not pool the
+// request body, so each frame owns its buffer for as long as anyone holds it.
+func (l *Loop) startMatch(ctx context.Context, im *image.NRGBA, req locate.Request, capturedAt time.Time, seq uint64) {
+	l.matchPending = true
+	go func() {
+		matchCtx, cancel := context.WithTimeout(ctx, matchTimeout)
+		result, _, err := l.deps.Locator.Locate(matchCtx, im, req)
+		cancel()
+		apply := func() {
+			l.matchPending = false
+			l.lastMatchSeq = seq
+			l.applyMatch(ctx, result, err, req, capturedAt)
+			// The map sieve is run again now that this frame's position is
+			// settled. finishVision recomputes from the raw bars rather than
+			// accumulating, so running it twice cannot double any count.
+			l.finishVision()
+			l.publish()
+		}
+		select {
+		case l.cmds <- apply:
+		case <-ctx.Done():
+		}
+	}()
+}
+
+// applyMatch is everything handleFrame used to do after Locate returned. It
+// runs on the loop goroutine, so it owns the same state it always did.
+func (l *Loop) applyMatch(ctx context.Context, result locate.Result, err error, req locate.Request, capturedAt time.Time) {
 	completedAt := l.deps.Now()
 	if err != nil {
 		l.match = MatchState{Reason: err.Error()}
@@ -462,6 +504,9 @@ func (l *Loop) handleFrame(ctx context.Context, env frameEnvelope) {
 	// The floor the tracker believes in follows what was actually found, so a
 	// confirmed transition does not leave the next search looking one floor up.
 	l.cfg.Floor = pos.Z
+	// Likewise for zoom: once Auto (0) resolves to an actual scale, later
+	// frames search at that scale instead of paying for a full auto-zoom scan
+	// on every single one.
 	l.cfg.Zoom = result.Zoom
 
 	l.record(pos)
@@ -672,6 +717,7 @@ func (l *Loop) publish() {
 		Zoom:            l.cfg.Zoom,
 		StateVersion:    l.version,
 		LastFrameSeq:    l.lastFrameSeq,
+		LastMatchSeq:    l.lastMatchSeq,
 		Match:           l.match,
 		Combat:          l.combat,
 		Executor:        l.executor.State(),

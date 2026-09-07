@@ -407,8 +407,11 @@ func TestCaptureTracksMovingFramesWithoutControl(t *testing.T) {
 		if w := f.post(t, "/api/frame", f.frameWith(im, im.Bounds().Dx(), im.Bounds().Dy())); w.Code != 200 {
 			t.Fatalf("frame: %s", w.Body.String())
 		}
-		deadline := time.Now().Add(5 * time.Second)
-		for s.loop.Snapshot().LastFrameSeq < f.seq {
+		// The match now runs off the loop goroutine, so LastFrameSeq alone
+		// would race ahead of a real (possibly multi-second) full scan; wait
+		// for the match this frame started to actually land.
+		deadline := time.Now().Add(10 * time.Second)
+		for s.loop.Snapshot().LastMatchSeq < f.seq {
 			if time.Now().After(deadline) {
 				t.Fatal("frame was not processed")
 			}

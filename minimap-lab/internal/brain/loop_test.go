@@ -91,6 +91,22 @@ type scriptedLocator struct {
 	// missed forces Locate to answer "not found" regardless of pos - set by
 	// miss(), the way a match in the dark does.
 	missed bool
+	// gate, when non-nil, parks Locate until the test closes it. It is how a test
+	// proves the loop keeps working while a match is in flight.
+	gate chan struct{}
+	// entered reports that a match really started, so a test can tell "parked
+	// mid-match" from "not started yet".
+	entered chan struct{}
+}
+
+// hold arms the gate: the next Locate call (and any concurrent with it) parks
+// until the returned channel is closed, after first signalling entered.
+func (s *scriptedLocator) hold() (gate chan struct{}, entered chan struct{}) {
+	gate, entered = make(chan struct{}), make(chan struct{}, 8)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.gate, s.entered = gate, entered
+	return gate, entered
 }
 
 func (s *scriptedLocator) set(p mapdata.Position) {
@@ -114,8 +130,20 @@ func (s *scriptedLocator) matches() int {
 
 func (s *scriptedLocator) Locate(context.Context, image.Image, locate.Request) (locate.Result, *mapdata.Atlas, error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	gate, entered := s.gate, s.entered
 	s.calls++
+	s.mu.Unlock()
+	if entered != nil {
+		select {
+		case entered <- struct{}{}:
+		default:
+		}
+	}
+	if gate != nil {
+		<-gate
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s.missed || s.pos == nil {
 		return locate.Result{Found: false, Mode: "local", Reason: "brak"}, nil, nil
 	}
@@ -226,13 +254,27 @@ func (h *harness) tick(t *testing.T) *State {
 	return h.await(t, f.Seq)
 }
 
-// await waits until the loop has published its answer to one frame.
+// awaitFrame waits until the loop has finished with one frame. It says nothing
+// about the match that frame may have started - use await for that.
+func (h *harness) awaitFrame(t *testing.T, seq uint64) *State {
+	t.Helper()
+	return h.awaitState(t, seq, func(s *State) bool { return s.LastFrameSeq >= seq })
+}
+
+// await waits until the answer to one frame's match has been applied. The
+// match runs off the loop goroutine, so a published snapshot carrying the
+// frame's own sequence number does not yet describe its position.
 func (h *harness) await(t *testing.T, seq uint64) *State {
+	t.Helper()
+	return h.awaitState(t, seq, func(s *State) bool { return s.LastMatchSeq >= seq })
+}
+
+func (h *harness) awaitState(t *testing.T, seq uint64, done func(*State) bool) *State {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
 	for {
 		s := h.loop.Snapshot()
-		if s.LastFrameSeq == seq {
+		if done(s) {
 			return s
 		}
 		if time.Now().After(deadline) {
@@ -242,10 +284,16 @@ func (h *harness) await(t *testing.T, seq uint64) *State {
 	}
 }
 
+// baseConfig is the configuration every test starts from: enough to make the
+// loop match and follow, nothing switched on that a test did not ask for.
+func baseConfig() Config {
+	return Config{Zoom: 1, MinScore: .85, MinGap: .015, Speed: 20, FloorRadius: 8,
+		RecordEvery: 10, Tolerance: 1, Floor: 7}
+}
+
 func (h *harness) config(t *testing.T, edit func(*Config)) {
 	t.Helper()
-	c := Config{Zoom: 1, MinScore: .85, MinGap: .015, Speed: 20, FloorRadius: 8,
-		RecordEvery: 10, Tolerance: 1, Floor: 7}
+	c := baseConfig()
 	edit(&c)
 	if err := h.loop.SetConfig(h.ctx, c); err != nil {
 		t.Fatalf("SetConfig: %v", err)
@@ -505,5 +553,82 @@ func TestPreviewRevisionChangesOnlyWhenTheTileDoes(t *testing.T) {
 	h.at(101, 100, 7)
 	if moved := h.tick(t).PreviewRevision; moved == first {
 		t.Error("zmiana kratki nie podniosła rewizji podglądu")
+	}
+}
+
+// The whole point of moving the match off the loop goroutine: a full search
+// takes up to 45 seconds, and nothing else may wait for it.
+func TestConfigDoesNotWaitForAMatchInFlight(t *testing.T) {
+	h := newHarness(t)
+	h.config(t, func(c *Config) {})
+	h.at(100, 100, 7)
+	gate, entered := h.locator.hold()
+
+	f := h.minimapFrame(t)
+	h.loop.Submit(f, h.clock.now())
+	select {
+	case <-entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("pętla nie zaczęła dopasowania")
+	}
+
+	errs := make(chan error, 1)
+	go func() {
+		c := baseConfig()
+		c.Speed = 30
+		errs <- h.loop.SetConfig(h.ctx, c)
+	}()
+	select {
+	case err := <-errs:
+		if err != nil {
+			t.Fatalf("SetConfig: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("SetConfig czekał na dopasowanie w locie")
+	}
+
+	close(gate)
+	if s := h.await(t, f.Seq); s.Position == nil {
+		t.Fatal("dopasowanie nie zostało zastosowane po odblokowaniu")
+	}
+}
+
+// Frames keep arriving while a match runs. Starting a second one would put two
+// matches on the same service mutex and answer with the older of the two.
+func TestOnlyOneMatchRunsAtATime(t *testing.T) {
+	h := newHarness(t)
+	h.config(t, func(c *Config) {})
+	h.at(100, 100, 7)
+	gate, entered := h.locator.hold()
+
+	first := h.minimapFrame(t)
+	h.loop.Submit(first, h.clock.now())
+	select {
+	case <-entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("pętla nie zaczęła dopasowania")
+	}
+	for i := 0; i < 3; i++ {
+		f := h.minimapFrame(t)
+		h.loop.Submit(f, h.clock.now())
+		h.awaitFrame(t, f.Seq)
+	}
+	if got := h.locator.matches(); got != 1 {
+		t.Fatalf("dopasowań = %d, oczekiwano jednego w locie", got)
+	}
+	close(gate)
+}
+
+// The panel has to tell "my frame was processed" from "its position is known",
+// and after this change those are two different moments.
+func TestSnapshotSaysWhichFrameTheMatchAnswers(t *testing.T) {
+	h := newHarness(t)
+	h.config(t, func(c *Config) {})
+	h.at(100, 100, 7)
+	f := h.minimapFrame(t)
+	h.loop.Submit(f, h.clock.now())
+	s := h.await(t, f.Seq)
+	if s.LastMatchSeq != f.Seq {
+		t.Fatalf("last_match_seq = %d, oczekiwano %d", s.LastMatchSeq, f.Seq)
 	}
 }

@@ -18,6 +18,10 @@ type State struct {
 	// does not describe the frame that fetched it.
 	StateVersion uint64 `json:"state_version"`
 	LastFrameSeq uint64 `json:"last_frame_seq"`
+	// LastMatchSeq says which frame the position below answers. The match runs
+	// off the loop goroutine, so a snapshot carrying LastFrameSeq for a frame
+	// does not yet describe where that frame found the character.
+	LastMatchSeq uint64 `json:"last_match_seq"`
 
 	Armed  bool   `json:"armed"`
 	Zoom   int    `json:"zoom"`
