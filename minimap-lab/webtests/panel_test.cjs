@@ -583,3 +583,44 @@ test('kalibracja prostokąta widzenia po minimapie nie rusza jej regionu', async
   assert.equal(new Uint8Array(last.body)[5], 2,
     'region minimapy zniknął po kalibracji okna gry');
 });
+
+test('wskaźnik widzenia pokazuje potwory, cel liczony od jedynki i niewiarygodny odczyt HP jako kreskę', async () => {
+  const p = panel({state: {
+    combat: {
+      calibrated: true, bars_total: 4, monsters_in_range: 3, rejected_by_map: 1,
+      mixed_crowd: true, battle_rows: 5, battle_truncated: false, target_row: 2,
+      hp_pct: 0.42, hp_ok: false, mana_pct: 0.77, mana_ok: true,
+    },
+    match: {}, route: {}, executor: {}, recorder: {},
+  }});
+  await p.settled();
+
+  assert.equal(p.el('vision-monsters').textContent, '3 (mieszany tłum)');
+  assert.equal(p.el('vision-bars').textContent, '4');
+  assert.equal(p.el('vision-rejected').textContent, '1');
+  assert.equal(p.el('vision-rows').textContent, '5');
+  // target_row jest liczone od zera na drucie; człowiek czyta wiersze od jedynki.
+  assert.equal(p.el('vision-target').textContent, '3');
+  // hp_ok: false - kalibracja najpewniej się rozjechała, więc kreska, nie 42%.
+  assert.equal(p.el('vision-hp').textContent, '—');
+  assert.equal(p.el('vision-mana').textContent, '77%');
+});
+
+test('wskaźnik widzenia pokazuje same kreski bez kalibracji', async () => {
+  const p = panel({state: {match: {}, route: {}, executor: {}, recorder: {}}});
+  await p.settled();
+
+  for (const id of ['vision-monsters', 'vision-bars', 'vision-rejected', 'vision-rows', 'vision-target', 'vision-hp', 'vision-mana']) {
+    assert.equal(p.el(id).textContent, '—', `${id} powinno pokazać kreskę bez state.combat`);
+  }
+
+  // Ten sam wynik, gdy combat istnieje, ale calibrated jest false - reguła
+  // mówi "combat brak LUB calibrated false", nie tylko brak pola.
+  const p2 = panel({state: {
+    combat: {calibrated: false, monsters_in_range: 9, hp_ok: true, hp_pct: 1},
+    match: {}, route: {}, executor: {}, recorder: {},
+  }});
+  await p2.settled();
+  assert.equal(p2.el('vision-monsters').textContent, '—');
+  assert.equal(p2.el('vision-hp').textContent, '—');
+});

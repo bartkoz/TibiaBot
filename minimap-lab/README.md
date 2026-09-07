@@ -197,11 +197,22 @@ Pasek zdrowia nad stworem nie zaczyna się dokładnie na środku jego kratki —
 
 ### Sito danych mapy nie jest pełne
 
-Pozycja stwora na ekranie nic nie mówi o tym, na którym piętrze on stoi — klient rysuje stwory z innych pięter przez dziury i na zboczach tak samo jak swoich. Tani sposób na odsianie części z nich to dane mapy: pasek zmapowany na kratkę, którą mapa uważa za nieprzechodnią, jest odrzucany, a ich liczba trafia do stanu bota jako `rejected_by_map`. To sito **nie jest kompletne** — stwór stojący na przechodniej kratce piętro wyżej przejdzie przez nie bez przeszkód, bo z punktu widzenia danych mapy ta kratka jest zwykłym terenem.
+Pozycja stwora na ekranie nic nie mówi o tym, na którym piętrze on stoi — klient rysuje stwory z innych pięter przez dziury i na zboczach tak samo jak swoich. Tani sposób na odsianie części z nich to dane mapy: pasek zmapowany na kratkę, którą mapa uważa za nieprzechodnią, jest odrzucany, a ich liczbę pokazuje wskaźnik stanu w panelu, w polu „Odrzucone przez mapę". To sito **nie jest kompletne** — stwór stojący na przechodniej kratce piętro wyżej przejdzie przez nie bez przeszkód, bo z punktu widzenia danych mapy ta kratka jest zwykłym terenem.
 
 ### Test „mieszany tłum" jest jednostronny
 
-Battle lista z filtrami klienta („ukryj graczy", „ukryj NPC") daje sufit na liczbę potworów na ekranie. Gdy pasków w wycinku jest więcej niż wierszy na liście, odczyt dostaje flagę `mixed_crowd` — bo skoro `wiersze_ekran ≥ potwory_ekran ≥ potwory_wycinek`, to `paski_wycinek > wiersze_ekran` dowodzi, że coś w wycinku nie jest potworem. Odwrotnego wniosku nie ma: rzędy liczą się z całego ekranu, a paski tylko z wycinka, więc **brak flagi niczego nie dowodzi** — mieszany tłum poza wycinkiem zostanie niezauważony.
+Battle lista z filtrami klienta („ukryj graczy", „ukryj NPC") daje sufit na liczbę potworów na ekranie. Gdy pasków w wycinku jest więcej niż wierszy na liście, odczyt dostaje flagę `mixed_crowd` — bo skoro `wiersze_ekran ≥ potwory_ekran ≥ potwory_wycinek`, to `paski_wycinek > wiersze_ekran` dowodzi, że coś w wycinku nie jest potworem. Odwrotnego wniosku nie ma: rzędy liczą się z całego ekranu, a paski tylko z wycinka, więc **brak flagi niczego nie dowodzi** — mieszany tłum poza wycinkiem zostanie niezauważony. Wskaźnik stanu w panelu dopisuje „(mieszany tłum)" wprost przy liczbie potworów, gdy flaga jest ustawiona — właśnie po to, żeby ta jednostronność była widoczna tam, gdzie ktoś czyta liczbę, a nie tylko w logu.
+
+### Wskaźnik stanu
+
+Sekcja 7 ma teraz swój telemetryczny pasek, tej samej postaci co licznik śledzenia w sekcji 3: **Potwory w promieniu**, **Widziane paski**, **Odrzucone przez mapę**, **Wiersze battle listy**, **Cel**, **HP**, **Mana**. Czyta go wprost ze snapshotu (`state.combat`), więc — inaczej niż obrysy na podglądzie — nie potrzebuje osobnego żądania i aktualizuje się na każdej klatce.
+
+Kilka zasad czytania tych liczb:
+
+- dopóki okno gry i wycinek nie są skalibrowane (`calibrated: false` albo pole `combat` w ogóle nieobecne), każde pole pokazuje kreskę — nie zero, żeby „nic nie widzę" nie wyglądało jak „widzę pustą okolicę";
+- **Cel** liczy wiersz battle listy od jedynki, dla człowieka — `target_row` na drucie liczy od zera, bo to wprost indeks w tablicy wierszy; brak celu to `brak`, nie `0`;
+- **HP** i **Mana** pokazują zaokrągloną wartość procentową, ale kreskę zamiast liczby, gdy odpowiadająca flaga `_ok` jest fałszywa — niewiarygodny odczyt (kalibracja zjechana z paska) nie może wyglądać jak prawdziwe, tylko niskie zdrowie;
+- **Wiersze battle listy** dopisuje „(przewinięta)", gdy lista jest przewinięta (`battle_truncated`) — bo wtedy liczba wierszy jest podłogą, nie sumą, i sufit na liczbę potworów przestaje obowiązywać.
 
 ### Liczenie potworów nie potrzebuje pozycji z minimapy
 

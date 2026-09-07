@@ -404,6 +404,37 @@ async function fetchVision() {
   finally { visionPending = false; }
 }
 
+// VISION_STATE_IDS covers every telemetry field the indicator fills - kept as
+// a list so the "everything shows a dash" branch cannot forget one of them.
+const VISION_STATE_IDS = [
+  'vision-monsters', 'vision-bars', 'vision-rejected', 'vision-rows', 'vision-target', 'vision-hp', 'vision-mana',
+];
+
+// renderVisionState is the aggregate readout the spec's panel section calls
+// for and phase 1's acceptance criterion depends on: monster count, HP/mana.
+// It reads only state.combat, which rides on every snapshot - unlike the
+// per-bar preview from /api/vision, this needs no extra request.
+function renderVisionState(combat) {
+  const c = combat?.calibrated ? combat : null;
+  if (!c) {
+    for (const id of VISION_STATE_IDS) $(id).textContent = '—';
+    return;
+  }
+  $('vision-monsters').textContent = `${c.monsters_in_range}${c.mixed_crowd ? ' (mieszany tłum)' : ''}`;
+  $('vision-bars').textContent = String(c.bars_total);
+  $('vision-rejected').textContent = String(c.rejected_by_map);
+  $('vision-rows').textContent = `${c.battle_rows}${c.battle_truncated ? ' (przewinięta)' : ''}`;
+  // target_row counts from zero in the wire format, because that is what a
+  // click into the battle list's row array needs; a human reading the panel
+  // counts rows from one.
+  $('vision-target').textContent = c.target_row == null ? 'brak' : String(c.target_row + 1);
+  // An unreliable reading must not look like a real one: hp_ok/mana_ok false
+  // means the calibration has likely slipped, and a dash says so where a
+  // plausible-looking 0% would not.
+  $('vision-hp').textContent = c.hp_ok ? `${Math.round(c.hp_pct * 100)}%` : '—';
+  $('vision-mana').textContent = c.mana_ok ? `${Math.round(c.mana_pct * 100)}%` : '—';
+}
+
 function drawVision(view) {
   const crop = cropRect();
   if (!crop || !view?.have) return;
@@ -655,6 +686,7 @@ function render(state) {
   }
   if ($('grid-preview-on').checked && state.position) refreshGrid(state.position);
 
+  renderVisionState(state.combat);
   if ($('vision-preview').checked && state.combat?.calibrated) fetchVision();
 }
 

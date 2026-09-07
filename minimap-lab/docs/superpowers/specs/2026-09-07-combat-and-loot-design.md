@@ -130,9 +130,10 @@ Okno gry to największy region w systemie. Rachunek, bez upiększania:
 | 64 px | 2,6 MB/klatkę | 1,9 MB/klatkę | 27% |
 
 Panel wycina **okno o promieniu decyzji**: kratka postaci plus `decision_radius + 1`
-kratek w każdą stronę, domyślnie 5, czyli 11×11 kratek. Kamera klienta jest
-wyśrodkowana na postaci, więc ten prostokąt jest **stały względem okna gry** i
-nie musi jechać w klatce.
+kratek w każdą stronę — przy domyślnym `decision_radius = 4` daje to zasięg
+5 kratek w każdą stronę, czyli 11×11 kratek. Kamera klienta jest wyśrodkowana
+na postaci, więc ten prostokąt jest **stały względem okna gry** i nie musi
+jechać w klatce.
 
 Trzeba powiedzieć wyraźnie, ile to daje: **około jednej czwartej, nie
 wielokrotność**. Okno gry ma tylko 11 kratek wysokości, więc wycinek o promieniu
