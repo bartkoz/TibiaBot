@@ -7,7 +7,10 @@ import (
 	"image/color"
 	"math"
 	"math/rand"
+	"runtime"
 	"sort"
+	"sync"
+	"sync/atomic"
 
 	"minimap-lab/internal/mapdata"
 )
@@ -226,39 +229,45 @@ func locateIn(ctx context.Context, atlas *mapdata.Atlas, im image.Image, o Optio
 	bestPoint := image.Pt(-1, -1)
 	bestLoss := maxLoss + 1
 	scan := func(limit int, exclude *image.Point) (image.Point, int, error) {
+		workers := 1
+		if worldArea == nil && result.SearchPositions >= 64*1024 {
+			workers = min(4, runtime.GOMAXPROCS(0))
+		}
+		var sharedBest atomic.Int64
+		sharedBest.Store(int64(limit + 1))
+		type scanResult struct {
+			point image.Point
+			loss  int
+			err   error
+		}
+		results := make([]scanResult, workers)
+		var group sync.WaitGroup
+		for worker := 0; worker < workers; worker++ {
+			area := search
+			area.Min.Y = search.Min.Y + search.Dy()*worker/workers
+			area.Max.Y = search.Min.Y + search.Dy()*(worker+1)/workers
+			run := func() {
+				defer group.Done()
+				p, loss, err := scanRows(ctx, pix, atlas.Image.Stride, area, samples, offsets, limit, exclude, &sharedBest)
+				results[worker] = scanResult{p, loss, err}
+			}
+			group.Add(1)
+			if workers == 1 {
+				run()
+			} else {
+				go run()
+			}
+		}
+		group.Wait()
 		point := image.Pt(-1, -1)
 		lossBest := limit + 1
-		for y := search.Min.Y; y < search.Max.Y; y++ {
-			if y%8 == 0 {
-				if err := ctx.Err(); err != nil {
-					return point, lossBest, err
-				}
+		// Stripes are reduced in row order, preserving the serial tie-break.
+		for _, r := range results {
+			if r.err != nil {
+				return point, lossBest, r.err
 			}
-			for x := search.Min.X; x < search.Max.X; x++ {
-				// Even a one-cell alternative matters when reporting tile coordinates.
-				if exclude != nil && x == exclude.X && y == exclude.Y {
-					continue
-				}
-				base := y*atlas.Image.Stride + x*4
-				if pix[base+3] != 255 {
-					continue
-				}
-				loss := 0
-				for i, s := range samples {
-					p := base + offsets[i]
-					if pix[p+3] != 255 {
-						loss = lossBest
-						break
-					}
-					loss += abs(int(pix[p])-s.r) + abs(int(pix[p+1])-s.g) + abs(int(pix[p+2])-s.b)
-					if loss >= lossBest {
-						break
-					}
-				}
-				if loss < lossBest {
-					lossBest = loss
-					point = image.Pt(x, y)
-				}
+			if r.point.X >= 0 && r.loss < lossBest {
+				point, lossBest = r.point, r.loss
 			}
 		}
 		return point, lossBest, nil
@@ -293,6 +302,55 @@ func locateIn(ctx context.Context, atlas *mapdata.Atlas, im image.Image, o Optio
 	result.Position = &p
 	result.Reason = "Znaleziono pozycję na wybranym piętrze."
 	return result, nil
+}
+
+// Every candidate still uses the same samples and exact RGB loss. Workers
+// share only a pruning bound; +1 keeps equal losses eligible so scheduling
+// cannot change which of two identical candidates wins the row-order tie.
+func scanRows(ctx context.Context, pix []byte, stride int, search image.Rectangle, samples []sample, offsets []int, limit int, exclude *image.Point, sharedBest *atomic.Int64) (image.Point, int, error) {
+	point := image.Pt(-1, -1)
+	lossBest := limit + 1
+	for y := search.Min.Y; y < search.Max.Y; y++ {
+		lossLimit := min(lossBest, int(sharedBest.Load())+1)
+		if y%8 == 0 {
+			if err := ctx.Err(); err != nil {
+				return point, lossBest, err
+			}
+		}
+		for x := search.Min.X; x < search.Max.X; x++ {
+			// Even a one-cell alternative matters when reporting tile coordinates.
+			if exclude != nil && x == exclude.X && y == exclude.Y {
+				continue
+			}
+			base := y*stride + x*4
+			if pix[base+3] != 255 {
+				continue
+			}
+			loss := 0
+			for i, s := range samples {
+				p := base + offsets[i]
+				if pix[p+3] != 255 {
+					loss = lossLimit
+					break
+				}
+				loss += abs(int(pix[p])-s.r) + abs(int(pix[p+1])-s.g) + abs(int(pix[p+2])-s.b)
+				if loss >= lossLimit {
+					break
+				}
+			}
+			if loss < lossLimit {
+				lossBest = loss
+				point = image.Pt(x, y)
+				for old := sharedBest.Load(); int64(loss) < old; old = sharedBest.Load() {
+					if sharedBest.CompareAndSwap(old, int64(loss)) {
+						break
+					}
+				}
+				lossLimit = min(lossBest, int(sharedBest.Load())+1)
+			}
+		}
+	}
+	return point, lossBest, nil
 }
 
 func abs(v int) int {

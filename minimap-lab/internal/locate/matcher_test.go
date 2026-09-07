@@ -6,11 +6,52 @@ import (
 	"image/color"
 	"image/draw"
 	"path/filepath"
+	"reflect"
+	"runtime"
 	"testing"
 
 	"minimap-lab/internal/mapdata"
 	"minimap-lab/internal/testenv"
 )
+
+func TestParallelSearchMatchesSerial(t *testing.T) {
+	previous := runtime.GOMAXPROCS(4)
+	defer runtime.GOMAXPROCS(previous)
+	for _, kind := range []string{"exact", "duplicate", "below threshold", "missing data"} {
+		t.Run(kind, func(t *testing.T) {
+			a := mapdata.DemoAtlas()
+			im := mapdata.DemoSnippet(a).(*image.NRGBA)
+			switch kind {
+			case "duplicate":
+				draw.Draw(a.Image, image.Rect(10, 10, 105, 105), a.Image, image.Pt(153, 133), draw.Src)
+			case "below threshold":
+				for i := 0; i < len(im.Pix); i += 4 {
+					im.Pix[i], im.Pix[i+1], im.Pix[i+2] = 255-im.Pix[i], 255-im.Pix[i+1], 255-im.Pix[i+2]
+				}
+			case "missing data":
+				draw.Draw(a.Image, image.Rect(180, 0, 230, 320), image.Transparent, image.Point{}, draw.Src)
+			}
+			area := a.Image.Bounds().Add(a.Origin)
+			serial, err := locateIn(context.Background(), a, im, demoOptions(), &area)
+			if err != nil {
+				t.Fatal(err)
+			}
+			serial.Mode = "global"
+			if serial.SearchPositions < 64*1024 {
+				t.Fatal("test must exercise parallel scan")
+			}
+			for i := 0; i < 4; i++ {
+				parallel, err := locateIn(context.Background(), a, im, demoOptions(), nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !reflect.DeepEqual(serial, parallel) {
+					t.Fatalf("serial: %+v\nparallel: %+v", serial, parallel)
+				}
+			}
+		})
+	}
+}
 
 func demoOptions() Options {
 	return Options{Zoom: 2, MarkerX: 94, MarkerY: 94, MaskRadius: 5, MinScore: .94, MinGap: .015}
