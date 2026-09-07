@@ -5,7 +5,7 @@ package input
 import "testing"
 
 // darwinKeys carries the real macOS virtual key codes for every name
-// hotkeyNames (the portable table /api/input/config validates against)
+// hotkeyNames (the portable table PUT /api/config validates against)
 // claims to know. A name missing here would pass validation and then fail
 // at TapKey with "nieznany klawisz", so completeness matters as much as the
 // individual values.

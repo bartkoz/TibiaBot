@@ -2,7 +2,7 @@ package input
 
 import "testing"
 
-// hotkeyNames is the portable table /api/input/config validates a submitted
+// hotkeyNames is the portable table PUT /api/config validates a submitted
 // key name against; it must build (and be correct) on every platform, so its
 // coverage of the ANSI letters and top-row digits is tested here rather than
 // in a platform-tagged file.

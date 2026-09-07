@@ -9,10 +9,12 @@ const webFile = name => join(__dirname, '..', 'web', name);
 // The panel is exercised with only drawing and media permission stubbed. What
 // it decides - which rectangle, which settings, when to post - is all that is
 // left of it, and all of it is checked here.
-function panel({state = {}, onRequest = () => null} = {}) {
+function panel({state = {}, onRequest = () => null, storage = {}} = {}) {
   const elements = new Map(), requests = [];
   const context2d = new Proxy({}, {get: () => () => ({data: new Uint8ClampedArray(4)})});
   let workerMessages = [], workerTick = null;
+  let clock = 0, timerID = 0;
+  const timers = new Map();
 
   function element(id = '') {
     return {
@@ -54,7 +56,15 @@ function panel({state = {}, onRequest = () => null} = {}) {
 
   const sandbox = {
     document, Image, ImageData, Worker, Blob, URL: {createObjectURL: () => 'blob:x', revokeObjectURL() {}},
-    performance: {now: () => 100}, console,
+    performance: {now: () => clock}, console,
+    localStorage: {
+      store: new Map(Object.entries(storage)),
+      getItem(k) { return this.store.has(k) ? this.store.get(k) : null; },
+      setItem(k, v) { this.store.set(k, String(v)); },
+      removeItem(k) { this.store.delete(k); },
+    },
+    setTimeout(fn, delay) { timers.set(++timerID, {fn, at: clock + (delay ?? 0)}); return timerID; },
+    clearTimeout(id) { timers.delete(id); },
     navigator: {mediaDevices: {async getDisplayMedia() { return {getTracks: () => [track], getVideoTracks: () => [track]}; }}},
     async fetch(url, options = {}) {
       requests.push({url, method: options.method ?? 'GET', body: options.body});
@@ -76,7 +86,12 @@ function panel({state = {}, onRequest = () => null} = {}) {
   vm.runInContext(readFileSync(webFile('panel.js'), 'utf8'), sandbox);
   return {
     sandbox, requests, el: id => document.getElementById(id),
+    stored: () => sandbox.localStorage.store,
     tick: () => workerTick?.(),
+    advance(ms) {
+      clock += ms;
+      for (const [id, t] of [...timers]) if (t.at <= clock) { timers.delete(id); t.fn(); }
+    },
     workerMessages: () => workerMessages,
     settled: () => new Promise(r => setImmediate(r)),
   };
@@ -89,6 +104,14 @@ async function shareAndSelect(p) {
   await p.settled();
   drag(p.el('screen'), [10, 10], [110, 110]);
   await p.settled();
+}
+
+// armNow clicks Arm and runs the countdown out, which is what a user does by
+// switching to the game and waiting.
+async function armNow(p) {
+  p.el('input-arm').click();
+  await p.settled();
+  for (let i = 0; i < 6; i++) { p.advance(1000); await p.settled(); }
 }
 
 const drag = (el, from, to) => {
@@ -126,8 +149,7 @@ test('token sesji większy niż 2^53 trafia do nagłówka klatki bez zmian', asy
   const p = panel();
   await p.settled();
   await shareAndSelect(p);
-  p.el('input-arm').click();
-  await p.settled();
+  await armNow(p);
 
   p.el('video').currentTime = 1.5;
   p.el('live').checked = true;
@@ -244,8 +266,7 @@ test('zmiana rozdzielczości źródła rozbraja i kasuje zaznaczenie', async () 
   await p.settled();
   drag(p.el('screen'), [10, 10], [110, 110]);
   await p.settled();
-  p.el('input-arm').click();
-  await p.settled();
+  await armNow(p);
 
   p.el('video').videoWidth = 1024;
   p.el('snapshot').click();
@@ -254,8 +275,7 @@ test('zmiana rozdzielczości źródła rozbraja i kasuje zaznaczenie', async () 
 
   // The old rectangle must be gone too, not merely unarmed: arming again
   // without selecting the minimap afresh must still send nothing.
-  p.el('input-arm').click();
-  await p.settled();
+  await armNow(p);
   const before = p.requests.filter(r => r.url === '/api/frame').length;
   p.el('video').currentTime = 9;
   p.el('live').checked = true;
@@ -264,4 +284,68 @@ test('zmiana rozdzielczości źródła rozbraja i kasuje zaznaczenie', async () 
   await p.settled();
   assert.equal(p.requests.filter(r => r.url === '/api/frame').length, before,
     'panel dalej wysyła klatki prostokątem sprzed zmiany rozdzielczości');
+});
+
+// The browser has focus at the moment its own button is clicked, and the
+// driver memorises whatever window is focused when the request arrives.
+// Arming straight away would memorise the panel, and the first key would
+// disarm on lost focus. The countdown is the window to switch to the game.
+test('uzbrojenie czeka pięć sekund, zanim cokolwiek wyśle', async () => {
+  const p = panel();
+  await p.settled();
+
+  p.el('input-arm').click();
+  await p.settled();
+  assert.equal(p.requests.filter(r => r.url === '/api/arm').length, 0,
+    'uzbrojono natychmiast — sterownik zapamiętałby okno przeglądarki');
+  assert.match(p.el('status').textContent, /okno gry/);
+
+  for (let i = 0; i < 6; i++) { p.advance(1000); await p.settled(); }
+  assert.equal(p.requests.filter(r => r.url === '/api/arm').length, 1);
+});
+
+test('drugie kliknięcie w trakcie odliczania anuluje uzbrajanie', async () => {
+  const p = panel();
+  await p.settled();
+  p.el('input-arm').click();
+  await p.settled();
+  p.el('input-arm').click();
+  await p.settled();
+  for (let i = 0; i < 8; i++) { p.advance(1000); await p.settled(); }
+  assert.equal(p.requests.filter(r => r.url === '/api/arm').length, 0);
+});
+
+// Twelve key fields retyped after every refresh is not a workflow.
+test('klawisze przeżywają odświeżenie karty', async () => {
+  const first = panel();
+  await first.settled();
+  first.el('dir-preset-wsad').click();
+  first.el('hotkey-rope').value = 'f7';
+  first.el('hotkey-rope').fire('change');
+  await first.settled();
+
+  const saved = Object.fromEntries(first.stored());
+  const second = panel({storage: saved});
+  await second.settled();
+
+  assert.equal(second.el('dir-n').value, 'w');
+  assert.equal(second.el('hotkey-rope').value, 'f7');
+});
+
+// A reload must never resume walking on its own.
+test('przełączniki, które każą botowi działać, nie są zapamiętywane', async () => {
+  const first = panel();
+  await first.settled();
+  for (const id of ['input-walk', 'input-actions', 'route-follow', 'route-record']) {
+    first.el(id).checked = true;
+    first.el(id).fire('change');
+  }
+  await first.settled();
+
+  const second = panel({storage: Object.fromEntries(first.stored())});
+  await second.settled();
+
+  for (const id of ['input-walk', 'input-actions', 'route-follow', 'route-record']) {
+    assert.equal(second.el(id).checked, false, `${id} wrócił zaznaczony po odświeżeniu`);
+  }
 });

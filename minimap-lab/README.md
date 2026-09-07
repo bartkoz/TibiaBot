@@ -164,25 +164,27 @@ a komunikat nazywa konkretną przyczynę: brak danych mapy, nauczoną blokadę
 
 Sekcja **6. Podgląd przechodności** rysuje okno 65×65 kratek wokół postaci. Ciemna zieleń to teren przejezdny, czerwień — nieprzechodni w danych mapy, grafit — brak danych (nie ma kafla PNG; to nie to samo co ściana), żółć — blokada nauczona tymczasowa, fiolet — trwała. Kliknięcie kratki z nauczoną blokadą usuwa ją i mówi, co dokładnie zniknęło — rodzaj, liczbę epizodów i czas pozostały do wygaśnięcia. Kratki opisanej przez dane mapy nie da się w ten sposób ruszyć.
 
-Okno odświeża się po zmianie kratki postaci albo co pół sekundy i nigdy nie ma dwóch żądań naraz. Endpoint nie korzysta z zamka pętli `/api/locate` i ma własny cache kafli — planer trasy pyta o prostokąt rozpięty na całej trasie, podgląd o małe okno wokół postaci, a jeden wspólny cache kazałby im wypierać się nawzajem przy każdym odczycie. Podgląd działa niezależnie od podążania za trasą; przydaje się właśnie wtedy, gdy żadna trasa nie jest uruchomiona.
+Okno odświeża się po zmianie kratki postaci albo co pół sekundy i nigdy nie ma dwóch żądań naraz. Endpoint ma własny cache kafli, niezależny od planera trasy — planer trasy pyta o prostokąt rozpięty na całej trasie, podgląd o małe okno wokół postaci, a jeden wspólny cache kazałby im wypierać się nawzajem przy każdym odczycie. Podgląd działa niezależnie od podążania za trasą; przydaje się właśnie wtedy, gdy żadna trasa nie jest uruchomiona.
 
 To także narzędzie diagnostyczne: lada, przez którą postać nie przejdzie, a która świeci na zielono, jest dowodem, że dane mapy jej nie znają.
 
 ## Sterowanie
 
-Flaga `-input` wybiera tryb: `off` (domyślny — każda trasa `/api/arm`, `/api/input` itd. odpowiada 503, panel działa wyłącznie jako podgląd), `dry` (emiter zapamiętuje zdarzenia w pamięci i nic nie wysyła do systemu — cały przepływ da się przećwiczyć bez ryzyka) albo `system` (prawdziwe zdarzenia klawiatury i myszy). `-input system` ma emiter tylko na macOS (CoreGraphics przez `purego`) i Windows (`user32.dll`/`SendInput`); na Linuksie i innych platformach nie ma jeszcze emitera systemowego, więc start z `-input system` tam kończy się błędem — dostępne pozostają `off` i `dry`.
+Flaga `-input` wybiera tryb: `off` (domyślny — mózg w ogóle nie startuje, a `/api/frame`, `/api/state`, `/api/config` i `/api/route` odpowiadają 503; panel działa wyłącznie jako podgląd), `dry` (emiter zapamiętuje zdarzenia w pamięci i nic nie wysyła do systemu — cały przepływ da się przećwiczyć bez ryzyka) albo `system` (prawdziwe zdarzenia klawiatury i myszy). `-input system` ma emiter tylko na macOS (CoreGraphics przez `purego`) i Windows (`user32.dll`/`SendInput`); na Linuksie i innych platformach nie ma jeszcze emitera systemowego, więc start z `-input system` tam kończy się błędem — dostępne pozostają `off` i `dry`.
 
 ### Uzbrajanie i rozbrajanie
 
 Kliknięcie **Uzbrój** w panelu (sekcja **5. Sterowanie**) nie uzbraja od razu — uruchamia **5-sekundowe odliczanie**, widoczne w `#input-status`. Dopiero po jego upływie panel wysyła `POST /api/arm`, a Go zapamiętuje aktywne w tej właśnie chwili okno (PID i identyfikator procesu — bundle ID na macOS, ścieżka pliku na Windows) jako jedyny cel, do którego wolno coś wysłać. **W tym oknie przełącz się na klienta gry** — panel nie rozpoznaje, które okno to Tibia, tylko zapamiętuje to, co ma focus w chwili wysłania żądania, a bez odliczenia tym oknem byłaby zawsze przeglądarka, bo to jej przycisk został właśnie kliknięty. Drugie kliknięcie **Uzbrój** w trakcie odliczania je anuluje, bez wysyłania czegokolwiek.
 
-Każde zdarzenie sprawdza focus tuż przed wysłaniem, więc utrata focusu przez zapamiętany proces (np. alt-tab) rozbraja wykonawcę — to podstawowy, ręczny kill-switch. Wykonawca rozbraja się też sam, gdy panel przestanie odpowiadać na heartbeat dłużej niż 750 ms (np. zamknięta karta) — działa to niezależnie od alt-taba.
+Każde zdarzenie sprawdza focus tuż przed wysłaniem, więc utrata focusu przez zapamiętany proces (np. alt-tab) rozbraja wykonawcę — to podstawowy, ręczny kill-switch. Wykonawca rozbraja się też sam, gdy przez ponad 750 ms nie przyjdzie żadna klatka (zamknięta karta, zatrzymane udostępnianie, zawieszona przeglądarka). Osobnego heartbeatu już nie ma: strumień klatek **jest** oznaką życia, a watchdog po stronie Go działa także wtedy, gdy żądania ustają zupełnie.
 
 ### Świeżość obserwacji
 
-Każdy krok niesie wiek pozycji, na której się opiera; wykonawca odrzuca krok starszy niż `-stale-ms` (domyślnie **400 ms**) komunikatem „pozycja starsza niż … ms" — to zabezpieczenie ważniejsze niż heartbeat, bo nie pozwala chodzić na podstawie nieaktualnego obrazu (np. z zakładki throttlowanej w tle). Jeśli na danym sprzęcie krok po kroku wraca sama ta odmowa, sprawdź w panelu telemetrię **Cały odczyt** — to czas przechwycenia klatki, dopasowania i odpowiedzi razem; gdy regularnie przekracza próg, podnieś go: `go run . -input system -stale-ms 600`. Zbyt wysoki próg to świadomy kompromis (starsza pozycja jako podstawa kroku), nie błąd konfiguracji.
+Każdy krok niesie wiek pozycji, na której się opiera; wykonawca odrzuca krok starszy niż `-stale-ms` (domyślnie **400 ms**) komunikatem „pozycja starsza niż … ms" — to zabezpieczenie ważniejsze niż watchdog klatek, bo nie pozwala chodzić na podstawie nieaktualnego obrazu (np. z zakładki throttlowanej w tle). Jeśli na danym sprzęcie krok po kroku wraca sama ta odmowa, sprawdź w panelu telemetrię **Cały odczyt** — to czas przechwycenia klatki, dopasowania i odpowiedzi razem; gdy regularnie przekracza próg, podnieś go: `go run . -input system -stale-ms 600`. Zbyt wysoki próg to świadomy kompromis (starsza pozycja jako podstawa kroku), nie błąd konfiguracji.
 
-`-stale-ms` przyjmuje wyłącznie **100–600**; poza tym zakresem program kończy się błędem przy starcie zamiast po cichu rozstroić bramkę. Dolna granica to najszybszy takt śledzenia (10 Hz = 100 ms) — poniżej niej żaden odczyt nie miałby szans zmieścić się w budżecie. Górna zostaje wyraźnie poniżej limitu heartbeatu (750 ms): przy wartości bliskiej temu progowi wykonawca i tak rozbroiłby się z powodu martwego pulsu, zanim obserwacja zdążyłaby aż tak się zestarzeć, więc bramka świeżości przestałaby cokolwiek znaczyć.
+`-stale-ms` przyjmuje wyłącznie **100–600**; poza tym zakresem program kończy się błędem przy starcie zamiast po cichu rozstroić bramkę. Dolna granica to najszybszy takt śledzenia (10 Hz = 100 ms) — poniżej niej żaden odczyt nie miałby szans zmieścić się w budżecie. Górna zostaje wyraźnie poniżej watchdoga klatek (750 ms): przy wartości bliskiej temu progowi wykonawca i tak rozbroiłby się z powodu ciszy kamery, zanim obserwacja zdążyłaby aż tak się zestarzeć, więc bramka świeżości przestałaby cokolwiek znaczyć.
+
+**Wiek liczony jest od ostatniej dobrej obserwacji pozycji**, a nie od ostatniej klatki. To rozróżnienie ma znaczenie, odkąd klatka może nieść więcej niż jeden region: świeży obraz paska nie odmładza pozycji odczytanej z minimapy.
 
 ### macOS: zgoda Accessibility
 
@@ -207,13 +209,13 @@ Kliknięcia akcji (lina, drabina, dziura, łopata) celują we współrzędne kra
 
 **Chodź automatycznie** włącza rzeczywiste wysyłanie kroków: dopóki jest odznaczony (albo wykonawca nie jest uzbrojony), panel tylko pokazuje kierunek i liczy trasę, dokładnie jak przed tą funkcją. **Wykonuj akcje pięter** dotyczy wyłącznie akcji na przedmiotach — liny, drabiny, dziury i łopaty: gdy jest odznaczony, wykonawca zatrzymuje się przed takim waypointem i czeka, mimo że chodzenie jest włączone. Nie dotyczy to **schodów** (`stairs`) — schody pokonuje się zwykłym krokiem w ich stronę, bez żadnego hotkeya, więc są wykonywane zawsze, gdy tylko włączone jest chodzenie automatyczne, niezależnie od stanu tego checkboxa.
 
-Oba checkboxy można zaznaczyć **przed uzbrojeniem**, także w trakcie odliczania — zaznaczenie samo w sobie nic nie wysyła (blokuje to `!inputClient.armed`), więc nie trzeba wracać do przeglądarki po uzbrojeniu, żeby dopiero wtedy je zaznaczyć: to właśnie kradłoby focus grze i rozbrajało wykonawcę na najbliższym kroku. Prawdziwe rozbrojenie — z panelu albo z Go (utrata focusu, martwy heartbeat) — zawsze odznacza **Chodź automatycznie**, więc uzbrojenie nigdy nie wznawia chodzenia po cichu.
+Oba checkboxy można zaznaczyć **przed uzbrojeniem**, także w trakcie odliczania — zaznaczenie samo w sobie nic nie wysyła, bo mózg nie emituje niczego przy rozbrojonym wykonawcy, więc nie trzeba wracać do przeglądarki po uzbrojeniu: to właśnie kradłoby focus grze i rozbrajało wykonawcę na najbliższym kroku. Żaden z przełączników każących botowi działać — **Chodź automatycznie**, **Wykonuj akcje pięter**, **Podążaj za trasą**, **Nagrywaj trasę** — nie jest zapamiętywany między odświeżeniami karty, więc przeładowanie panelu nigdy nie wznawia chodzenia samo z siebie.
 
 ### Klawisze akcji pięter
 
 Wykonawca nie zna żadnego hotkeya, dopóki nie zostanie skonfigurowany z panelu — bez tego każda akcja piętra (lina, drabina, dziura, łopata) kończy się odmową „brak hotkeya dla akcji …”, a **Wykonuj akcje pięter** wygląda na włączony, ale nic nie robi. Cztery pola tekstowe w sekcji **5. Sterowanie** przyjmują nazwę klawisza dla każdego typu (np. `f7`); zaakceptowane nazwy to `f1`–`f12`, `up`/`down`/`left`/`right`, `numpad1`–`numpad9` (bez `numpad5`) oraz litery `a`–`z` i cyfry `0`–`9` — te same, których używają emitery macOS i Windows. Pusty klawisz zostawia daną akcję odrzucaną. Checkbox **Klawisz działa na własnej kratce (bez klikania po nim)** odpowiada temu, czy hotkey sam kończy akcję (np. lina użyta na sobie) czy wymaga kliknięcia we wskazaną wcześniej kratkę postaci (**Wskaż kratkę postaci**) — to drugie dodaje krótkie kliknięcie ~120 ms po tapnięciu klawisza.
 
-Konfiguracja jest zapisywana w `localStorage` (przeżywa odświeżenie karty) i wysyłana do wykonawcy przy każdym uzbrojeniu oraz przy każdej zmianie pola, o ile sesja jest aktywna — zmiana klawisza z rozbrojonym wykonawcą tylko zapisuje wartość lokalnie, wysyła ją dopiero kolejne uzbrojenie. Schody (`stairs`) nie mają tu żadnego pola: pokonuje się je krokiem, nie hotkeyem.
+Konfiguracja jedzie do Go przy każdej zmianie pola i ponownie przy uzbrajaniu, jednym żądaniem `PUT /api/config` obejmującym całą powierzchnię ustawień naraz — walidacja jest wszystko-albo-nic, więc jedno złe pole nie wyczyści po cichu niezwiązanego z nim. Same pola formularza są dodatkowo zapisywane w `localStorage`, żeby przeżyły odświeżenie karty; źródłem prawdy pozostaje serwer. Schody (`stairs`) nie mają tu żadnego pola: pokonuje się je krokiem, nie hotkeyem.
 
 ### Klawisze kierunków
 
@@ -260,28 +262,45 @@ go test ./...
 node --test webtests/*.cjs
 ```
 
+Warto uruchamiać Go z `-race`: mózg działa we własnej goroutine, a atrapy w testach czytają to, co ona zapisuje. Cztery wyścigi wyszły dopiero pod tą flagą.
+
+Najbardziej dowodzący jest `go test . -run EndToEnd` — prawdziwy zrzut minimapy z Venore wchodzi binarną klatką po HTTP, przez prawdziwy matcher i prawdziwą pętlę, a test sprawdza, że mózg ustala z niego pozycję `(32958, 32077, 7)`. Wszystko pod spodem ma testy jednostkowe; dopiero ten mówi, że kawałki są ze sobą połączone.
+
 ## Układ katalogów
 
 ```
 main.go          flagi i start; server.go — struktura serwera i tablica tras
-locateapi.go     /api/info, /api/locate, wybór atlasu lokalnego i przejścia Z
-pathapi.go  gridapi.go  blocksapi.go  inputapi.go
-web/             panel przeglądarkowy, wkompilowany przez //go:embed web/*
+frameapi.go      /api/frame, /api/state, /api/config, /api/route, /api/preview
+locateapi.go     /api/info oraz wycinanie podglądu okolicy
+pathapi.go  gridapi.go  blocksapi.go
+web/             kamera i widok, wkompilowane przez //go:embed web/*
+  worker.js        zegar pętli, odporny na dławienie karty w tle
+  camera.js        wycinanie regionów i binarny format klatki
+  panel.js         DOM, formularz ustawień, rysowanie snapshotu
 webtests/        testy panelu: node --test webtests/*.cjs
 testdata/        wycinki referencyjne dzielone przez wszystkie pakiety
 internal/
+  brain/         mózg bota: tracker, recorder, executor, follower, pętla, stan
+  frame/         parsowanie binarnego ciała /api/frame
+  route/         format pliku trasy
   mapdata/       atlas i siatka kosztów z paczki map, typ Position, mapa demo
   locate/        dopasowywanie obrazu minimapy do atlasu
-  nav/           A*, siatka przechodniości i nauczone blokady
+  nav/           A*, siatka przechodniości, nauczone blokady i planer tras
   input/         emitery klawiatury i myszy oraz uzbrajany wykonawca
   testenv/       ścieżki i fixture'y wspólne dla testów wszystkich pakietów
 ```
 
-Zależności biegną w jedną stronę: `main → {locate, nav, input, mapdata}`, `locate → mapdata`, `nav → mapdata`, a `input` nie zależy od niczego w projekcie. Uchwyty HTTP są metodami na `server`, więc muszą leżeć w jednym pakiecie z nim — i to samo trzyma `web/` w korzeniu, bo wzorce `//go:embed` są względne wobec pakietu i nie mogą wychodzić w górę przez `..`.
+Zależności biegną w jedną stronę: `main → {brain, frame, route, locate, nav, input, mapdata}`, `brain → {locate, nav, input, route, frame, mapdata}`, `locate → mapdata`, `nav → mapdata`, a `input` nie zależy od niczego w projekcie. Uchwyty HTTP są metodami na `server`, więc muszą leżeć w jednym pakiecie z nim — i to samo trzyma `web/` w korzeniu, bo wzorce `//go:embed` są względne wobec pakietu i nie mogą wychodzić w górę przez `..`.
 
 Testy panelu leżą w `webtests/`, a nie w `web/`, właśnie z powodu tego wzorca: w `web/` trafiłyby do binarki i serwer zacząłby je wystawiać po HTTP.
 
 ## Jak działa
+
+**Cała logika decyzyjna jest w Go.** Przeglądarka robi to jedno, czego Go zrobić nie może: przechwytuje obraz ekranu. Wycina skonfigurowane prostokąty, wysyła surowe piksele przez `POST /api/frame` i rysuje snapshot, który wraca w odpowiedzi. Nie podejmuje żadnej decyzji — o kolejnym kroku, o tym, czy krok się udał, i o tym, czego nieudany krok uczy o mapie, decyduje pętla mózgu w `internal/brain`.
+
+Pętla to jedna goroutine i jedyny właściciel stanu. Klatki wchodzą do niej jednoslotowym kanałem: nowsza nadpisuje nieodczytaną starszą, bo kolejka oznaczałaby działanie na obrazkach tego, gdzie postać była kiedyś. Handler HTTP niczego nie liczy — przyjmuje klatkę i oddaje to, co pętla wie w tej chwili, razem z numerem klatki, którą naprawdę skończyła.
+
+Zegar pętli po stronie panelu siedzi w **Web Workerze**. To nie jest ozdoba: karta panelu jest w tle zawsze, gdy grasz, a przeglądarki dławią tam `setTimeout` do mniej więcej jednego tyknięcia na sekundę i zatrzymują `requestAnimationFrame` zupełnie. Timery w workerach są z tego zwolnione.
 
 - Ładuje `Minimap_Color_X_Y_Z.png` (256×256, jedna kratka na piksel) i scala piętro z zachowaniem początku współrzędnych. Wycinek może przechodzić przez granice kafli. Brakujące kafle są przezroczyste i nie mogą być uznane za zgodny teren.
 - Próbkuje kratki względem wskazanego znacznika, pomijając maskę i przezroczystość. Zachowuje czarne ściany, które opisują kształt jaskiń. Używa do 1024 próbek z pierwszeństwem granic kolorów. Wymaga co najmniej 64 nieczarnych kratek i zróżnicowania kolorów.
@@ -294,12 +313,31 @@ Pełne wyszukiwanie ma limit 45 s; przy wolnym działaniu podaj katalog z mapami
 
 ## HTTP API
 
-`POST /api/locate`, multipart:
+`POST /api/frame`, ciało binarne — **jedyne wejście obrazu**. Nagłówek 36 bajtów, potem po 12 bajtów na region i surowe piksele RGBA:
 
-- `image`: **już wycięta** minimapa PNG/JPEG, bok 8–1024 px, formularz do 8 MB.
-- `options`: JSON, np. `{"floor":7,"demo":false,"zoom":0,"marker_x":52,"marker_y":57,"mask_radius":5,"min_score":0.85,"min_gap":0.015}`. `zoom:0` oznacza automatyczną kalibrację 1–4. Pole `zoom` w odpowiedzi wskazuje użytą skalę; `scale_scores` pokazuje sprawdzone skale.
-- Kolejny, lokalny odczyt: ustaw wykrytą skalę `zoom:1` i dodaj `"near":{"x":32958,"y":32077,"z":7},"radius":5,"no_preview":true`. Wymagane Z zgodne z `near.z` lub różniące się o 1, znana skala i promień ruchu 1–64. Odpowiedź zawiera `mode`, `search_positions`, `match_ms`. Brak `near` oznacza pełne wyszukiwanie.
-- Automatyczne przejścia: dodaj `"adjacent_floors":true,"floor_radius":8`. Gdy `floor == near.z` i bieżące dopasowanie zawodzi, serwer sprawdza sąsiednie poziomy. Gdy `floor` różni się od `near.z` o 1, sprawdza tylko wskazane piętro wokół poprzedniego XY. `floor_radius:0` oznacza domyślne 8. Odpowiedź dodaje `searched_floors`, `unavailable_floors` i `floor_changed`.
+```
+0   4   magic "MLF1"
+4   1   wersja formatu (1)
+5   1   liczba regionów
+6   2   flagi (zarezerwowane, muszą być zerowe)
+8   8   token sesji przechwytywania (uint64)
+16  8   numer klatki w sesji (uint64, rosnący)
+24  8   czas wideo w mikrosekundach (z video.currentTime)
+32  4   wiek w chwili wysłania w ms (od wycięcia pikseli do wysyłki)
+36  ..  nagłówki regionów: id, format, 2 bajty wyrównania, w, h, len
+```
+
+Identyfikatory regionów: `1` minimapa, `2` pasek HP, `3` pasek many (dwa ostatnie czekają na moduł leczenia). `len` musi się zgadzać z `w × h × 4` — tak wygląda ucięty upload, a zaufanie zadeklarowanej długości oznaczałoby czytanie poza buforem. Ciało jest ograniczone do 4 MB, powtórzony region i nieznany identyfikator są odrzucane.
+
+Odpowiedzią jest **snapshot stanu bota**, ten sam, który zwraca `GET /api/state`: pozycja i jej wiek, metryki dopasowania, postęp trasy, stan wykonawcy, licznik nagrywania, ostatnia akcja i ogon logu. Snapshot ma stały, ograniczony rozmiar — nie ma w nim waypointów ani atlasu, bo jedzie przy każdej klatce. Pola `state_version` i `last_frame_seq` mówią, czego dotyczy: handler nigdy nie czeka na dopasowanie, więc snapshot **nie** opisuje właśnie przesłanej klatki.
+
+Klatka ze złym tokenem sesji przechwytywania dostaje 403. Token wydaje `POST /api/arm` i **jest napisem dziesiętnym**, nie liczbą: to uint64, a liczby JSON tracą precyzję powyżej 2⁵³ w każdej przeglądarce — zaokrąglony w drodze nigdy by już nie pasował.
+
+`PUT /api/config` — cała powierzchnia ustawień jednym dokumentem: `{"brain":{…},"keys":{"rope":"f7"},"click_after_hotkey":false,"directions":{"N":"numpad8"},"tile":{"x":0.5,"y":0.5}}`. Walidacja jest wszystko-albo-nic; jedno złe pole kończy się kodem 400 z powodem, a stara konfiguracja zostaje nietknięta.
+
+`PUT /api/route` przyjmuje plik trasy w formacie z sekcji **Trasy waypointów**, `GET /api/route` oddaje ją z powrotem **wraz z punktami dopisanymi przez nagrywanie** — to jedyna droga do waypointów, bo w snapshocie ich nie ma. `POST /api/route/waypoint` dopisuje punkt na bieżącej kratce.
+
+`GET /api/preview` zwraca PNG 129×129 kratek wokół ostatniej pozycji, z celownikiem na środku. Podgląd nie jedzie już w odpowiedzi dopasowania — snapshot musi zostać mały — więc panel pobiera go wtedy, gdy `preview_revision` w snapshocie się zmieni, czyli po zmianie kratki.
 
 `POST /api/path`, czysty JSON (bez obrazu i bez multipart):
 
@@ -307,13 +345,13 @@ Pełne wyszukiwanie ma limit 45 s; przy wolnym działaniu podaj katalog z mapami
 {"from":{"x":32786,"y":32061,"z":7},"to":{"x":32786,"y":32121,"z":7},"margin":64}
 ```
 
-Odpowiedź: `{"found":true,"status":"ok","steps":[[32786,32061],[32786,32062]],"tiles":63,"cost":102.6,"reason":"","elapsed_ms":5.2,"overlay_revision":12}`. `overlay_revision` rośnie z każdą zmianą warstwy nauczonych blokad i pochodzi z tego samego zdjęcia, na którym liczona była trasa. Panel odrzuca odpowiedź starszą niż rewizja z ostatnio przyjętej obserwacji: żądanie trasy wysłane tuż przed nauczeniem blokady wracałoby inaczej z trasą sprzed niej i zawracało bota wprost na kratkę, której dopiero co się nauczył. Odpowiedź `POST /api/blocks/observe` niesie tę samą rewizję w polu `revision`. Pole `status` przyjmuje `ok`, `blocked_start`, `blocked_goal`, `no_route`, `different_floor`, `limit` i `cancelled`; `reason` opisuje to samo słowami. Żadna z tych sytuacji nie jest błędem HTTP.
+Odpowiedź: `{"found":true,"status":"ok","steps":[[32786,32061],[32786,32062]],"tiles":63,"cost":102.6,"reason":"","elapsed_ms":5.2,"overlay_revision":12}`. `overlay_revision` rośnie z każdą zmianą warstwy nauczonych blokad i pochodzi z tego samego zdjęcia, na którym liczona była trasa. Mózg odrzuca odpowiedź starszą niż rewizja z ostatnio przyjętej obserwacji: żądanie trasy wysłane tuż przed nauczeniem blokady wracałoby inaczej z trasą sprzed niej i zawracało bota wprost na kratkę, której dopiero co się nauczył. Odpowiedź `POST /api/blocks/observe` niesie tę samą rewizję w polu `revision`. Pole `status` przyjmuje `ok`, `blocked_start`, `blocked_goal`, `no_route`, `different_floor`, `limit` i `cancelled`; `reason` opisuje to samo słowami. Żadna z tych sytuacji nie jest błędem HTTP.
 
 Kod 400 zwracany jest wyłącznie przy niepoprawnym wejściu: brakujące lub niepełne `from`/`to` (każde wymaga `x`, `y` i `z`), współrzędne poza 0–65535, piętro poza 0–15, `margin` poza 0–256, uszkodzony JSON, treść z doklejonym drugim dokumentem oraz obszar wyszukiwania przekraczający 4 mln kratek — same współrzędne nie są ograniczeniem, dwa poprawne punkty na przeciwległych krańcach mapy alokowałyby gigabajty. Żądanie porzucone przez przeglądarkę kończy się kodem 408 i nie wczytuje kafli.
 
 Przed wyszukiwaniem serwer robi jedno zdjęcie warstwy nauczonych blokad dla całego obszaru — A* zakłada, że koszt zamkniętego wierzchołka się nie zmienia, więc graf nie może się przesunąć w trakcie. Kratka `from` jest przy okazji kasowana z tej warstwy: skoro postać tam stoi, wpis jest po prostu błędny. Bazowa siatka kosztów nigdy nie jest modyfikowana, bo współdzieli tablicę pikseli z cache'em piętra.
 
-A* działa na kaflach `Minimap_WaypointCost_X_Y_Z.png` z katalogu podanego przez `-maps`, w prostokącie rozpiętym na obu punktach i powiększonym o `margin` (0 oznacza domyślne 64, maksimum 256), z limitem 5 s. Trasa wymagająca objazdu poza tym prostokątem zwróci `no_route` — zwiększ margines albo dodaj waypoint pośredni. Ruch po przekątnej między dwiema ścianami jest niemożliwy, tak jak w grze, a **jeden krok po skosie kosztuje tyle, co trzy proste** — bo tyle właśnie zajmuje w grze. Geometria mówiłaby √2, ale bot nie wydaje odległości, tylko czas: przy √2 trasa cięła otwarty teren po przekątnej, co daje najkrótszą drogę w kratkach i najwolniejszą w praktyce. Przy trójce skos wygrywa dopiero tam, gdzie realnie oszczędza więcej niż dwa proste kroki, które zastępuje — czyli głównie przy omijaniu narożników i w wąskich przejściach. Koszt kratki pochodzi wprost z indeksu palety: 255 to teren nieprzechodni, niższe wartości to koszt chodzenia, gdzie 100 odpowiada jednemu krokowi. W danych występują kratki tańsze niż 100, więc oszacowanie odległości jest skalowane najtańszą kratką w obszarze — inaczej A* przestaje zwracać najtańszą trasę. Brakujące kafle są nieprzechodnie. Zapytania o trasę mają własny zamek i własny cache, więc nie odbierają przepustowości pętli `/api/locate`.
+A* działa na kaflach `Minimap_WaypointCost_X_Y_Z.png` z katalogu podanego przez `-maps`, w prostokącie rozpiętym na obu punktach i powiększonym o `margin` (0 oznacza domyślne 64, maksimum 256), z limitem 5 s. Trasa wymagająca objazdu poza tym prostokątem zwróci `no_route` — zwiększ margines albo dodaj waypoint pośredni. Ruch po przekątnej między dwiema ścianami jest niemożliwy, tak jak w grze, a **jeden krok po skosie kosztuje tyle, co trzy proste** — bo tyle właśnie zajmuje w grze. Geometria mówiłaby √2, ale bot nie wydaje odległości, tylko czas: przy √2 trasa cięła otwarty teren po przekątnej, co daje najkrótszą drogę w kratkach i najwolniejszą w praktyce. Przy trójce skos wygrywa dopiero tam, gdzie realnie oszczędza więcej niż dwa proste kroki, które zastępuje — czyli głównie przy omijaniu narożników i w wąskich przejściach. Koszt kratki pochodzi wprost z indeksu palety: 255 to teren nieprzechodni, niższe wartości to koszt chodzenia, gdzie 100 odpowiada jednemu krokowi. W danych występują kratki tańsze niż 100, więc oszacowanie odległości jest skalowane najtańszą kratką w obszarze — inaczej A* przestaje zwracać najtańszą trasę. Brakujące kafle są nieprzechodnie. Zapytania o trasę mają własny zamek i własny cache, więc nie odbierają przepustowości dopasowywania minimapy. `POST /api/path` zostaje jako narzędzie diagnostyczne — mózg woła planer wprost, w tym samym procesie.
 
 `POST /api/blocks/observe`, czysty JSON: `{"from":{"x":…,"y":…,"z":…},"to":{…},"outcome":"no_motion","still_frames":3,"last_frame_age_ms":140}`. `outcome` przyjmuje `no_motion` i `entered`. Decyzję podejmuje serwer i zwraca ją jako `{"result":"temp","reason":"Pierwszy epizod; blokada tymczasowa."}`; `result` to `ignored`, `temp`, `promoted` albo `cleared`, a `reason` zawsze tłumaczy dlaczego — odrzucona obserwacja nie może wyglądać jak zgubione żądanie.
 
@@ -329,7 +367,7 @@ Testy obejmują znane współrzędne, przesunięcie, skalę i maskę, brak dopas
 
 Dodatkowy test na mapach obecnych w repozytorium: `MINIMAP_REAL_MAP_TEST=1 go test ./internal/locate/ -run TestLocalMapIntegration -v`. Porównuje wycinek atlasu ze znaną pozycją `(32369,32241,7)`; nadal nie jest to test zrzutu z klienta gry.
 
-Test prawdziwego wycinka z przechwytywania: `MINIMAP_REAL_MAP_TEST=1 go test ./internal/locate/ -run TestActualCaptureAgainstWholeFloor -v`. Dla zapisanej minimapy z Venore znajduje wskazany punkt `(32958,32077,7)` przy skali 1 i wyniku około 86,5%. Zwykłe `go test ./...` sprawdza też ten obraz na mniejszym atlasie oraz jego wariant powiększony 2×. `node --test webtests/ui_test.cjs` sprawdza przepływ demo → screenshot/udostępnianie, przywracanie kalibracji oraz wczytanie trasy, nagrywanie i podążanie; nie wymaga zainstalowanej przeglądarki. `webtests/route_test.cjs`, `webtests/recorder_test.cjs` i `webtests/follower_test.cjs` obejmują format pliku, nagrywanie z parowaniem punktów przejścia oraz stan podążania.
+Test prawdziwego wycinka z przechwytywania: `MINIMAP_REAL_MAP_TEST=1 go test ./internal/locate/ -run TestActualCaptureAgainstWholeFloor -v`. Dla zapisanej minimapy z Venore znajduje wskazany punkt `(32958,32077,7)` przy skali 1 i wyniku około 86,5%. Zwykłe `go test ./...` sprawdza też ten obraz na mniejszym atlasie oraz jego wariant powiększony 2×. `node --test webtests/*.cjs` sprawdza to, co panelowi zostało, i nie wymaga zainstalowanej przeglądarki: `camera_test.cjs` obejmuje binarny format klatki, jeden POST w locie, pomijanie zamrożonej klatki i przeniesienie tokenu sesji bez utraty precyzji, a `panel_test.cjs` — zaznaczanie minimapy, wysyłkę całej konfiguracji jednym dokumentem, pięciosekundowe odliczanie przed uzbrojeniem, malowanie snapshotu i to, że przełączniki każące botowi działać nie przeżywają odświeżenia karty. Logika, która kiedyś była testowana po stronie panelu — format trasy, nagrywanie, podążanie, wykonawca kroków — mieszka teraz w `internal/route` i `internal/brain` i ma tam własne testy.
 
 Testy trasy na mapach z repozytorium: `MINIMAP_REAL_MAP_TEST=1 go test ./internal/nav/ -run TestRealMap -v`. Prowadzą 63-kratkową trasę przez największy spójny obszar powierzchni Venore i sprawdzają, że każdy krok stoi na terenie przechodnim, sąsiaduje z poprzednim i nie przecina zamkniętego rogu. Sprawdzają też, że ściana jako waypoint zwraca `blocked_goal`, a teren odgrodzony murem — `no_route`.
 

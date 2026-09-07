@@ -223,11 +223,42 @@ async function pushConfig(tile) {
   } catch (e) { status(e.message, 'error'); return false; }
 }
 
+// The settings live on the server for as long as it runs, but the form has to
+// survive a page reload too - twelve key fields retyped after every refresh is
+// not a workflow. Only the fields are remembered; the server stays the truth.
+const REMEMBERED = ['floor', 'zoom', 'mask', 'threshold', 'gap', 'floor-auto', 'floor-radius',
+  'speed', 'route-every', 'route-tolerance', 'route-loop', 'input-own-tile',
+  ...Object.values(HOTKEYS), ...Object.values(DIRECTIONS)];
+const STORAGE_KEY = 'minimap-lab.panel';
+
+function saveForm() {
+  const state = {};
+  for (const id of REMEMBERED) {
+    const el = $(id);
+    state[id] = el.type === 'checkbox' ? el.checked : el.value;
+  }
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch { /* tryb prywatny */ }
+}
+
+function restoreForm() {
+  let state;
+  try { state = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? 'null'); } catch { return; }
+  if (!state) return;
+  for (const id of REMEMBERED) {
+    if (!(id in state)) continue;
+    const el = $(id);
+    if (el.type === 'checkbox') el.checked = !!state[id];
+    else el.value = state[id];
+  }
+}
+
+// The three switches that actually make the bot act are deliberately not
+// remembered: a reload must never resume walking on its own.
 for (const id of ['zoom', 'mask', 'threshold', 'gap', 'floor', 'floor-auto', 'floor-radius',
   'speed', 'route-every', 'route-tolerance', 'route-loop', 'route-record', 'route-follow',
   'input-walk', 'input-actions', 'input-own-tile',
   ...Object.values(HOTKEYS), ...Object.values(DIRECTIONS)]) {
-  $(id).addEventListener('change', () => pushConfig());
+  $(id).addEventListener('change', () => { saveForm(); pushConfig(); });
 }
 
 const NUMPAD = {NW: 'numpad7', N: 'numpad8', NE: 'numpad9', W: 'numpad4', E: 'numpad6',
@@ -235,12 +266,44 @@ const NUMPAD = {NW: 'numpad7', N: 'numpad8', NE: 'numpad9', W: 'numpad4', E: 'nu
 const WSAD = {NW: 'q', N: 'w', NE: 'e', W: 'a', E: 'd', SW: 'z', S: 's', SE: 'c'};
 function applyPreset(preset) {
   for (const [dir, id] of Object.entries(DIRECTIONS)) $(id).value = preset[dir] ?? '';
+  saveForm();
   pushConfig();
 }
 $('dir-preset-numpad').onclick = () => applyPreset(NUMPAD);
 $('dir-preset-wsad').onclick = () => applyPreset(WSAD);
 
 // --- uzbrajanie i pętla klatek ---
+
+// ARM_DELAY_MS exists because the browser has focus at the moment its own
+// button is clicked, and the driver memorises whatever window is focused when
+// the request arrives. Without the wait it would always memorise the panel,
+// and the first key would disarm on "okno gry straciło focus". The countdown
+// is the window in which the user switches to the game.
+const ARM_DELAY_MS = 5000;
+let armTimer = null;
+
+function cancelArm() {
+  clearTimeout(armTimer);
+  armTimer = null;
+  $('input-arm').textContent = 'Uzbrój';
+}
+
+function beginArm() {
+  if (armTimer) { cancelArm(); status('Uzbrajanie anulowane.'); return; }
+  let left = Math.round(ARM_DELAY_MS / 1000);
+  const tick = () => {
+    if (left <= 0) {
+      cancelArm();
+      arm();
+      return;
+    }
+    status(`Przełącz się na okno gry — uzbrojenie za ${left} s. Kliknij ponownie, żeby anulować.`);
+    $('input-arm').textContent = `Anuluj (${left})`;
+    left--;
+    armTimer = setTimeout(tick, 1000);
+  };
+  tick();
+}
 
 async function arm() {
   try {
@@ -261,8 +324,8 @@ async function disarm() {
   try { await fetch('/api/disarm', {method: 'POST'}); } catch { /* nic tu nie pomoże */ }
 }
 
-$('input-arm').onclick = arm;
-$('input-disarm').onclick = () => { disarm(); status('Rozbrojono.'); };
+$('input-arm').onclick = beginArm;
+$('input-disarm').onclick = () => { cancelArm(); disarm(); status('Rozbrojono.'); };
 $('input-calibrate').onclick = () => {
   calibrating = true;
   status('Kliknij na obrazie kratkę, na której stoi postać.');
@@ -393,7 +456,7 @@ function render(state) {
   $('input-status').textContent = state.armed
     ? 'Uzbrojony. Alt-tab albo cisza kamery rozbraja.'
     : 'Rozbrojony.';
-  $('input-arm').disabled = state.armed;
+  $('input-arm').disabled = state.armed && !armTimer;
   $('input-disarm').disabled = !state.armed;
   $('input-calibrate').disabled = !ready;
   $('route-add').disabled = !state.position;
@@ -485,6 +548,7 @@ $('grid-canvas').addEventListener('click', async event => {
 // --- start ---
 
 (async () => {
+  restoreForm();
   try {
     const info = await (await fetch('/api/info')).json();
     const floors = info.floors?.length ? info.floors : [...Array(16).keys()];
@@ -495,6 +559,9 @@ $('grid-canvas').addEventListener('click', async event => {
     }));
     $('floor').value = floors.includes(7) ? '7' : String(floors[0]);
     $('maps').textContent = info.message || `Mapy: ${info.maps}`;
+    // The floor list arrives after restoreForm, so the remembered floor is
+    // applied once the options it names actually exist.
+    restoreForm();
   } catch { /* panel działa też bez /api/info */ }
   // A state poll costs one request and tells the panel whether control is even
   // available, which is what every disabled button below depends on.

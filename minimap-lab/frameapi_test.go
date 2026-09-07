@@ -5,9 +5,12 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/json"
+	"fmt"
 	"image"
+	"image/draw"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -18,6 +21,7 @@ import (
 	"minimap-lab/internal/input"
 	"minimap-lab/internal/locate"
 	"minimap-lab/internal/mapdata"
+	"minimap-lab/internal/testenv"
 )
 
 // slowLocator parks inside a match until the test releases it, and announces
@@ -282,4 +286,94 @@ func TestCaptureSessionTravelsAsAStringNotANumber(t *testing.T) {
 	if _, ok := raw["session"].(string); !ok {
 		t.Fatalf("session = %T, oczekiwano napisu", raw["session"])
 	}
+}
+
+// The whole stack in one test: a real capture, the real matcher, the real
+// loop, over HTTP. Everything below it is unit-tested, but only this says the
+// pieces are actually wired to each other.
+func TestFrameEndToEndLocatesTheCharacter(t *testing.T) {
+	dir := t.TempDir()
+	testenv.SavePNG(t, filepath.Join(dir, "Minimap_Color_32768_32000_7.png"),
+		testenv.LoadFixture(t, "venore-reference.png"))
+
+	s := newServer(dir)
+	em, err := input.SelectEmitter("dry")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.driver = input.NewDriver(em, input.DefaultMaxObservationAgeMS)
+	s.loop = brain.NewLoop(brain.Deps{
+		Locator: s.locator, Planner: s.planner, Blocks: s.blocks,
+		Driver: s.driver, Tile: s.tileVerdict, Now: time.Now,
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go s.loop.Run(ctx)
+
+	f := &brainFixture{server: s}
+	w := httptest.NewRecorder()
+	s.routes().ServeHTTP(w, httptest.NewRequest("POST", "http://127.0.0.1:8095/api/arm", nil))
+	var armed struct {
+		Session string `json:"session"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &armed); err != nil {
+		t.Fatal(err)
+	}
+	f.session, err = strconv.ParseUint(armed.Session, 10, 64)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	c := testenv.VenoreCalibration()
+	cfg := fmt.Sprintf(`{"brain":{"zoom":%d,"marker_x":%d,"marker_y":%d,"mask_radius":%d,
+		"min_score":%v,"min_gap":%v,"floor":7,"speed":20,"floor_radius":8,
+		"record_every":10,"tolerance":1}}`, c.Zoom, c.MarkerX, c.MarkerY, c.MaskRadius, c.MinScore, c.MinGap)
+	if w := f.request(t, "PUT", "/api/config", []byte(cfg)); w.Code != 200 {
+		t.Fatalf("konfiguracja: %d %s", w.Code, w.Body.String())
+	}
+
+	capture := testenv.LoadFixture(t, "venore-capture.png")
+	b := capture.Bounds()
+	im := image.NewNRGBA(image.Rect(0, 0, b.Dx(), b.Dy()))
+	draw.Draw(im, im.Bounds(), capture, b.Min, draw.Src)
+
+	deadline := time.Now().Add(30 * time.Second)
+	for {
+		if w := f.post(t, "/api/frame", f.frameWith(im, b.Dx(), b.Dy())); w.Code != 200 {
+			t.Fatalf("klatka: %d %s", w.Code, w.Body.String())
+		}
+		var state brain.State
+		if err := json.Unmarshal(f.request(t, "GET", "/api/state", nil).Body.Bytes(), &state); err != nil {
+			t.Fatal(err)
+		}
+		if state.Position != nil {
+			want := mapdata.Position{X: 32958, Y: 32077, Z: 7}
+			if *state.Position != want {
+				t.Fatalf("pozycja = %+v, oczekiwano %+v", *state.Position, want)
+			}
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("mózg nie ustalił pozycji z prawdziwego zrzutu minimapy")
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+// frameWith wraps real pixels in the binary body the panel would send.
+func (f *brainFixture) frameWith(im *image.NRGBA, w, h int) []byte {
+	f.seq++
+	f.videoUS += 100_000
+	body := make([]byte, frame.HeaderSize+frame.RegionHeader)
+	copy(body[0:4], frame.Magic)
+	body[4], body[5] = frame.FormatVersion, 1
+	binary.LittleEndian.PutUint64(body[8:], f.session)
+	binary.LittleEndian.PutUint64(body[16:], f.seq)
+	binary.LittleEndian.PutUint64(body[24:], f.videoUS)
+	hdr := body[frame.HeaderSize:]
+	hdr[0] = byte(frame.RegionMinimap)
+	binary.LittleEndian.PutUint16(hdr[4:], uint16(w))
+	binary.LittleEndian.PutUint16(hdr[6:], uint16(h))
+	binary.LittleEndian.PutUint32(hdr[8:], uint32(len(im.Pix)))
+	return append(body, im.Pix...)
 }

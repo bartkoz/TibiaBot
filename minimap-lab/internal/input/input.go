@@ -48,7 +48,7 @@ func SelectEmitter(mode string) (Emitter, error) {
 // hotkeyNames lists every key name the platform emitters recognise for a
 // floor-action hotkey or a direction. input_darwin.go and input_windows.go
 // each carry the real per-platform codes for the same set of names; this
-// portable table is the one inputapi.go's /api/input/config handler checks a
+// portable table is the one the PUT /api/config handler checks a
 // submitted key against, since it must build (and validate) on every
 // platform regardless of which emitter is actually running.
 var hotkeyNames = map[string]bool{
