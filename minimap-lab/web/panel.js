@@ -321,6 +321,139 @@ const DIRECTIONS = {NW: 'dir-nw', N: 'dir-n', NE: 'dir-ne', W: 'dir-w', E: 'dir-
   SW: 'dir-sw', S: 'dir-s', SE: 'dir-se'};
 const HOTKEYS = {rope: 'hotkey-rope', ladder: 'hotkey-ladder', hole: 'hotkey-hole', shovel: 'hotkey-shovel'};
 
+// --- leczenie ---
+
+// healRules is the panel's copy of the rule list. The rows are rebuilt from it
+// on every change rather than read back out of the DOM: the array is the truth
+// that gets sent and remembered, and rebuilding keeps row ids in step with the
+// order after a move.
+let healRules = [];
+
+const HEAL_DEFAULT = {enabled: true, resource: 'hp', below_pct: 60, hotkey: 'f1',
+  cooldown_ms: 1000, min_mana_pct: 0};
+
+function healConfig() {
+  return {enabled: $('heal-on').checked, rules: healRules.map(r => ({...r}))};
+}
+
+function healField(row, id, label, value, type, attrs = {}) {
+  const wrap = document.createElement('label');
+  wrap.textContent = label;
+  const input = document.createElement('input');
+  input.id = id;
+  input.type = type;
+  if (type === 'checkbox') input.checked = value; else input.value = value;
+  for (const [k, v] of Object.entries(attrs)) input.setAttribute(k, v);
+  wrap.append(input);
+  row.append(wrap);
+  return input;
+}
+
+function healButton(row, id, text) {
+  const b = document.createElement('button');
+  b.id = id;
+  b.className = 'secondary';
+  b.textContent = text;
+  row.append(b);
+  return b;
+}
+
+function renderHealRules() {
+  const host = $('heal-rules');
+  const rows = healRules.map((rule, i) => {
+    const row = document.createElement('div');
+    row.className = 'route-grid';
+
+    const on = healField(row, `heal-${i}-enabled`, 'Włączona', rule.enabled, 'checkbox');
+    on.onclick = () => { healRules[i].enabled = on.checked; healChanged(); };
+
+    const resource = document.createElement('select');
+    resource.id = `heal-${i}-resource`;
+    for (const [value, text] of [['hp', 'HP'], ['mana', 'mana']]) {
+      const option = document.createElement('option');
+      option.value = value; option.textContent = text;
+      resource.append(option);
+    }
+    resource.value = rule.resource;
+    resource.addEventListener('input', () => {
+      healRules[i].resource = resource.value; healChanged();
+    });
+    const resourceLabel = document.createElement('label');
+    resourceLabel.textContent = 'Zasób';
+    resourceLabel.append(resource);
+    row.append(resourceLabel);
+
+    const below = healField(row, `heal-${i}-below`, 'Próg %', rule.below_pct, 'number',
+      {min: 1, max: 99, step: 1});
+    below.addEventListener('input', () => {
+      healRules[i].below_pct = Number(below.value); healChanged();
+    });
+
+    const hotkey = healField(row, `heal-${i}-hotkey`, 'Hotkey', rule.hotkey, 'text');
+    hotkey.addEventListener('input', () => {
+      healRules[i].hotkey = hotkey.value.trim(); healChanged();
+    });
+
+    const cooldown = healField(row, `heal-${i}-cooldown`, 'Cooldown ms', rule.cooldown_ms,
+      'number', {min: 100, max: 60000, step: 50});
+    cooldown.addEventListener('input', () => {
+      healRules[i].cooldown_ms = Number(cooldown.value); healChanged();
+    });
+
+    const mana = healField(row, `heal-${i}-mana`, 'Min. mana %', rule.min_mana_pct,
+      'number', {min: 0, max: 99, step: 1});
+    mana.addEventListener('input', () => {
+      healRules[i].min_mana_pct = Number(mana.value); healChanged();
+    });
+
+    healButton(row, `heal-${i}-up`, '▲').onclick = () => moveHealRule(i, -1);
+    healButton(row, `heal-${i}-down`, '▼').onclick = () => moveHealRule(i, 1);
+    healButton(row, `heal-${i}-del`, 'Usuń').onclick = () => {
+      healRules.splice(i, 1); renderHealRules(); healChanged();
+    };
+    return row;
+  });
+  host.replaceChildren(...rows);
+}
+
+function moveHealRule(from, delta) {
+  const to = from + delta;
+  if (to < 0 || to >= healRules.length) return;
+  [healRules[from], healRules[to]] = [healRules[to], healRules[from]];
+  renderHealRules();
+  healChanged();
+}
+
+function healChanged() {
+  saveForm();
+  pushConfig();
+}
+
+$('heal-add').onclick = () => {
+  if (healRules.length >= 8) {
+    status('Reguł leczenia może być najwyżej osiem.', 'error');
+    return;
+  }
+  healRules.push({...HEAL_DEFAULT});
+  renderHealRules();
+  healChanged();
+};
+$('heal-on').onclick = healChanged;
+
+// renderHealState is the one line the user reads to know whether healing is
+// working: what fired last and how long ago, or why nothing did.
+function renderHealState(heal) {
+  if (!heal?.enabled) { $('heal-status').textContent = 'Leczenie wyłączone.'; return; }
+  const parts = [];
+  if (heal.last_hotkey && heal.last_age_ms != null) {
+    parts.push(`ostatnie: ${heal.last_hotkey}, ${(heal.last_age_ms / 1000).toFixed(1).replace('.', ',')} s temu`);
+  } else {
+    parts.push('nic jeszcze nie poleciało');
+  }
+  if (heal.reason) parts.push(heal.reason);
+  $('heal-status').textContent = parts.join(' · ');
+}
+
 function brainConfig() {
   return {
     zoom: num('zoom'),
@@ -342,6 +475,7 @@ function brainConfig() {
     action_tolerance: 0,
     loop_route: $('route-loop').checked,
     combat: combatConfig(),
+    heal: healConfig(),
   };
 }
 
@@ -388,6 +522,10 @@ function saveForm() {
     const el = $(id);
     state[id] = el.type === 'checkbox' ? el.checked : el.value;
   }
+  // The rules are a list, not a field, so they ride beside the remembered
+  // inputs rather than in them. The master switch deliberately stays out: it
+  // is a switch that makes the bot act, and those never survive a reload.
+  state.heal_rules = healRules;
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch { /* tryb prywatny */ }
 }
 
@@ -400,6 +538,10 @@ function restoreForm() {
     const el = $(id);
     if (el.type === 'checkbox') el.checked = !!state[id];
     else el.value = state[id];
+  }
+  if (Array.isArray(state.heal_rules)) {
+    healRules = state.heal_rules.map(r => ({...HEAL_DEFAULT, ...r}));
+    renderHealRules();
   }
 }
 
@@ -841,6 +983,7 @@ function render(state) {
   if ($('grid-preview-on').checked && state.position) refreshGrid(state.position);
 
   renderVisionState(state.combat);
+  renderHealState(state.heal);
   if ($('vision-preview').checked && state.combat?.calibrated) fetchVision();
 }
 

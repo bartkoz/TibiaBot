@@ -39,7 +39,18 @@ function panel({state = {}, onRequest = () => null, storage = {}} = {}) {
   }
   const document = {
     getElementById(id) { if (!elements.has(id)) elements.set(id, element(id)); return elements.get(id); },
-    createElement: element,
+    // A created element joins the lookup table the moment it is given an id,
+    // the way appending it to the document does in a browser. Without this the
+    // panel's dynamically built rule rows would be unreachable from a test.
+    createElement(tag) {
+      const el = element();
+      let id = '';
+      Object.defineProperty(el, 'id', {
+        get: () => id,
+        set(value) { id = value; if (value) elements.set(value, el); },
+      });
+      return el;
+    },
   };
   for (const [id, value] of Object.entries({
     zoom: '1', mask: '5', floor: '7', threshold: '0.85', gap: '0.015', speed: '20',
@@ -750,4 +761,88 @@ test('wskaźnik widzenia pokazuje same kreski bez kalibracji', async () => {
   await p2.settled();
   assert.equal(p2.el('vision-monsters').textContent, '—');
   assert.equal(p2.el('vision-hp').textContent, '—');
+});
+
+test('dodana reguła leczenia jedzie w konfiguracji', async () => {
+  const p = panel();
+  await p.settled();
+  p.el('heal-on').checked = true;
+  p.el('heal-add').click();
+  await p.settled();
+  p.el('heal-0-below').value = '55';
+  p.el('heal-0-below').fire('input');
+  p.el('heal-0-hotkey').value = 'f2';
+  p.el('heal-0-hotkey').fire('input');
+  await p.settled();
+
+  const heal = lastConfig(p).brain.heal;
+  assert.equal(heal.enabled, true);
+  assert.equal(heal.rules.length, 1);
+  assert.deepEqual(heal.rules[0], {
+    enabled: true, resource: 'hp', below_pct: 55, hotkey: 'f2',
+    cooldown_ms: 1000, min_mana_pct: 0,
+  });
+});
+
+test('strzałka zmienia kolejność reguł', async () => {
+  const p = panel();
+  await p.settled();
+  p.el('heal-add').click();
+  await p.settled();
+  p.el('heal-0-hotkey').value = 'f1';
+  p.el('heal-0-hotkey').fire('input');
+  p.el('heal-add').click();
+  await p.settled();
+  p.el('heal-1-hotkey').value = 'f2';
+  p.el('heal-1-hotkey').fire('input');
+  await p.settled();
+
+  p.el('heal-1-up').click();
+  await p.settled();
+
+  const keys = lastConfig(p).brain.heal.rules.map(r => r.hotkey);
+  assert.deepEqual(keys, ['f2', 'f1']);
+});
+
+test('usunięcie reguły zdejmuje ją z konfiguracji', async () => {
+  const p = panel();
+  await p.settled();
+  p.el('heal-add').click();
+  await p.settled();
+  p.el('heal-0-del').click();
+  await p.settled();
+  assert.deepEqual(lastConfig(p).brain.heal.rules, []);
+});
+
+test('reguły przeżywają odświeżenie karty, a włącznik leczenia nie', async () => {
+  const first = panel();
+  await first.settled();
+  first.el('heal-on').checked = true;
+  first.el('heal-add').click();
+  await first.settled();
+  first.el('heal-0-hotkey').value = 'f3';
+  first.el('heal-0-hotkey').fire('input');
+  await first.settled();
+
+  const second = panel({storage: Object.fromEntries(first.stored())});
+  await second.settled();
+  assert.equal(second.el('heal-0-hotkey').value, 'f3');
+  assert.equal(second.el('heal-on').checked, false);
+});
+
+test('linijka stanu leczenia pokazuje ostatnią regułę i powód ciszy', async () => {
+  const p = panel({state: {heal: {
+    enabled: true, rule_count: 2, last_index: 0, last_hotkey: 'f1',
+    last_age_ms: 2300, reason: '',
+  }}});
+  await p.settled();
+  assert.match(p.el('heal-status').textContent, /f1/);
+  assert.match(p.el('heal-status').textContent, /2,3 s/);
+
+  const quiet = panel({state: {heal: {
+    enabled: true, rule_count: 2, last_index: -1, last_hotkey: '',
+    last_age_ms: null, reason: 'cooldown klawisza f1',
+  }}});
+  await quiet.settled();
+  assert.match(quiet.el('heal-status').textContent, /cooldown klawisza f1/);
 });

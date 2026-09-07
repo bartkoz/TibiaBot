@@ -171,6 +171,15 @@
     <div id="vision-info" role="status" aria-live="polite">—</div>
     <p class="hint">Różowy obrys: stwór w promieniu decyzji. Szary: widziany, ale za daleko. Pasek przycięty krawędzią wycinka nie jest obrysowywany wcale — dlatego wycinek bierze jedną kratkę zapasu.</p>
   </section>
+  <section class="panel heal">
+    <h2>8. Leczenie</h2>
+    <p>Reguły sprawdzane są od góry: wygrywa pierwsza, którą naprawdę da się wykonać — reguła bez pokrycia w manie albo z klawiszem w cooldownie ustępuje następnej. Hotkeye muszą być w kliencie ustawione na „użyj na sobie": po stuknięciu panel niczego nie klika.</p>
+    <label class="check"><input id="heal-on" type="checkbox">Lecz automatycznie</label>
+    <p class="hint">Wymaga zaznaczonych prostokątów paska HP i paska many w sekcji 7 oraz uzbrojonego wykonawcy. Leczenie działa też wtedy, gdy pozycja na mapie jest nieznana, i wywłaszcza krok chodzenia: w klatce, w której poleciał klawisz leczenia, bot nie idzie.</p>
+    <div id="heal-rules"></div>
+    <button id="heal-add" class="secondary">Dodaj regułę</button>
+    <div id="heal-status" role="status" aria-live="polite">—</div>
+  </section>
   <footer><p id="maps"></p><p>Wynik dopasowania nie jest prawdopodobieństwem. Wybierz piętro startowe; dalsze przejścia Z ±1 mogą być rozpoznawane z obrazu. Pierwszy test na grze wymaga kalibracji i sprawdzenia znanego miejsca.</p></footer>
 </main>
 <video id="video" autoplay muted playsinline hidden></video>
