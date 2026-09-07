@@ -180,6 +180,11 @@ type BarView struct {
 	DX   float64 `json:"dx"`
 	DY   float64 `json:"dy"`
 	Dist float64 `json:"dist"`
+	// InRange is whether this bar counted toward MonstersInRange, decided
+	// here rather than left for the panel to re-derive: the preview must
+	// never recompute the radius threshold, or the two would drift the
+	// moment the rule changes on this side.
+	InRange bool `json:"in_range"`
 }
 
 type RowView struct {

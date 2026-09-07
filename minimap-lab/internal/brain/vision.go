@@ -121,13 +121,18 @@ func (l *Loop) finishVision() {
 		// half-integer radius (legal down to 0.5) reaches one ring further
 		// than its own number suggests - at 0.5 the threshold is 1.0, so the
 		// whole 3x3 ring around the character counts.
-		if dist <= cc.DecisionRadius+0.5 {
+		//
+		// Computed once and reused for both the counter and BarView.InRange,
+		// so the panel's preview can colour by the same answer instead of
+		// re-deriving this threshold in JS.
+		inRange := dist <= cc.DecisionRadius+0.5
+		if inRange {
 			l.combat.MonstersInRange++
 		}
 		if len(l.view.Bars) < maxVisionBars {
 			l.view.Bars = append(l.view.Bars, BarView{
 				X: b.X, Y: b.Y, Fill: b.Fill, HP: b.HP(cc.geometry()),
-				DX: dx, DY: dy, Dist: dist,
+				DX: dx, DY: dy, Dist: dist, InRange: inRange,
 			})
 		}
 	}

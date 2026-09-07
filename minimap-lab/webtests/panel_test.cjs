@@ -519,3 +519,67 @@ test('podgląd widzenia nie wywraca się na pustym ekranie (bars: null)', async 
 
   assert.equal(p.el('vision-info').textContent, 'Nie widzę żadnego stwora.');
 });
+
+// Mirrors 'zmiana rozdzielczości źródła rozbraja i kasuje zaznaczenie' above,
+// but for a vision rectangle instead of the minimap: the failure mode is a
+// stale crop from the previous resolution still being cut and posted.
+test('zmiana rozdzielczości źródła kasuje też prostokąty widzenia', async () => {
+  const p = panel();
+  await p.settled();
+  await shareOnly(p);
+  await calibrate(p, 'viewport', [100, 50], [339, 225]);
+  await armNow(p);
+
+  p.el('video').currentTime = 1;
+  p.el('live').checked = true;
+  p.el('live').fire('change');
+  p.tick();
+  await p.settled();
+  const before = p.requests.filter(r => r.url === '/api/frame').length;
+  assert.ok(before >= 1, 'nie wysłano klatki przed zmianą rozdzielczości');
+
+  p.el('video').videoWidth = 1024;
+  p.el('snapshot').click();
+  await p.settled();
+
+  // Re-arming without recalibrating must still send nothing: if the old
+  // viewport rectangle survived, the panel would keep cutting and posting a
+  // crop measured against a screen that no longer exists.
+  await armNow(p);
+  p.el('video').currentTime = 9;
+  p.el('live').checked = true;
+  p.el('live').fire('change');
+  p.tick();
+  await p.settled();
+  assert.equal(p.requests.filter(r => r.url === '/api/frame').length, before,
+    'panel dalej wysyła klatki prostokątem widzenia sprzed zmiany rozdzielczości');
+});
+
+// The existing minimap-then-vision test above covers one order; the two
+// orders run through different pointerup branches, so both need covering.
+test('kalibracja prostokąta widzenia po minimapie nie rusza jej regionu', async () => {
+  const p = panel();
+  await p.settled();
+  await shareOnly(p);
+  await calibrate(p, 'minimap', [0, 0], [105, 108]);
+  await armNow(p);
+
+  p.el('video').currentTime = 1;
+  p.el('live').checked = true;
+  p.el('live').fire('change');
+  p.tick();
+  await p.settled();
+  const withMinimapOnly = new Uint8Array(p.requests.find(r => r.url === '/api/frame').body)[5];
+  assert.equal(withMinimapOnly, 1, 'oczekiwano samej minimapy przed kalibracją okna gry');
+
+  await calibrate(p, 'viewport', [100, 50], [339, 225]);
+  p.el('video').currentTime = 2;
+  p.tick();
+  await p.settled();
+
+  const last = p.requests.filter(r => r.url === '/api/frame').at(-1);
+  // If calibrating the vision rectangle had cleared the minimap's region,
+  // the count would still be one instead of growing to two.
+  assert.equal(new Uint8Array(last.body)[5], 2,
+    'region minimapy zniknął po kalibracji okna gry');
+});

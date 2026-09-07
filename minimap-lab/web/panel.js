@@ -318,6 +318,7 @@ $('dir-preset-wsad').onclick = () => applyPreset(WSAD);
 // --- widzenie ---
 
 const VISION_RECTS = ['viewport', 'battle', 'hp', 'mana'];
+const VISION_RECT_LABELS = {viewport: 'okno gry', battle: 'battle lista', hp: 'pasek HP', mana: 'pasek many'};
 const EMPTY_RECT = {x: 0, y: 0, w: 0, h: 0};
 let rects = {viewport: null, battle: null, hp: null, mana: null};
 let visionPending = false;
@@ -354,7 +355,7 @@ function applyVisionRegions() {
   camera.setRegion(FRAME_REGION.mana, rects.mana);
   const named = VISION_RECTS.filter(k => rects[k]);
   $('vision-rects').textContent = named.length
-    ? named.map(k => `${k}: ${rects[k].w} × ${rects[k].h} px`).join(' · ')
+    ? named.map(k => `${VISION_RECT_LABELS[k]}: ${rects[k].w} × ${rects[k].h} px`).join(' · ')
     : 'Nic jeszcze nie zaznaczone.';
 }
 
@@ -411,12 +412,14 @@ function drawVision(view) {
   const c = canvas.getContext('2d');
   if (stream) c.drawImage(video, crop.x, crop.y, crop.w, crop.h, 0, 0, crop.w, crop.h);
   else c.clearRect(0, 0, crop.w, crop.h);
-  const radius = num('decision-radius');
   // Go marshals a nil slice as JSON null, and there is no creature bar at all
   // for most of a frame's life - an empty screen must not throw here.
   const bars = view.bars ?? [];
+  // in_range is Go's own answer to the same radius threshold that decides
+  // MonstersInRange - the preview colours by it rather than recomputing the
+  // comparison, so the two can never silently drift apart.
   for (const b of bars) {
-    c.strokeStyle = b.dist <= radius + 0.5 ? '#ff2bd1' : '#8899aa';
+    c.strokeStyle = b.in_range ? '#ff2bd1' : '#8899aa';
     c.strokeRect(b.x + 0.5, b.y + 0.5, num('bar-width') - 1, num('bar-height') - 1);
   }
   $('vision-info').textContent = bars.length

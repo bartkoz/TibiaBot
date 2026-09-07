@@ -250,13 +250,23 @@ func TestVisionSnapshotCarriesOffsetsButStateDoesNot(t *testing.T) {
 	h := newHarness(t)
 	h.config(t, func(c *Config) { c.Combat = visionCalibration() })
 	h.at(1000, 1000)
-	h.submit(t, h.visionFrame(t, region{frame.RegionViewport, crop(image.Pt(1, 0))}))
+	// Two creatures, one inside the default radius (4) and one past it, so
+	// BarView.InRange can be checked both ways from a single frame.
+	h.submit(t, h.visionFrame(t, region{frame.RegionViewport, crop(image.Pt(1, 0), image.Pt(5, 0))}))
 	view := h.loop.VisionSnapshot(h.ctx)
-	if !view.Have || len(view.Bars) != 1 {
+	if !view.Have || len(view.Bars) != 2 {
 		t.Fatalf("podgląd widzenia: %+v", view)
 	}
 	if dx := view.Bars[0].DX; dx < 0.9 || dx > 1.1 {
 		t.Errorf("offset dx = %.3f, oczekiwano około 1", dx)
+	}
+	// InRange must be the same answer finishVision uses for MonstersInRange
+	// (dist <= DecisionRadius+0.5 = 4.5 here), not re-derived by the panel.
+	if !view.Bars[0].InRange {
+		t.Errorf("bliski stwór (dist ≈ 1) powinien mieć InRange = true")
+	}
+	if view.Bars[1].InRange {
+		t.Errorf("daleki stwór (dist ≈ 5) powinien mieć InRange = false")
 	}
 	data, err := marshalState(h.loop.Snapshot())
 	if err != nil {
