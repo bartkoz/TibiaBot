@@ -308,3 +308,20 @@ func remainingPath(path [][2]int, p mapdata.Position) [][2]int {
 func directionTo(from mapdata.Position, next [2]int) string {
 	return executorCompass[sign(next[1]-from.Y)+1][sign(next[0]-from.X)+1]
 }
+
+// SetOptions adjusts the follower in place. Rebuilding it would be simpler but
+// would throw away which waypoint the route had reached, so a user nudging the
+// tolerance mid-route would be sent back to the start.
+func (f *Follower) SetOptions(o FollowerOptions) {
+	if o.Tolerance != nil {
+		f.tolerance = *o.Tolerance
+	}
+	f.actionTolerance = o.ActionTolerance
+	f.loop = o.Loop
+	if o.Replan > 0 {
+		f.replan = o.Replan
+	}
+	if o.Retry > 0 {
+		f.retry = o.Retry
+	}
+}

@@ -74,18 +74,18 @@ type Intent struct {
 }
 
 type ExecState struct {
-	Waiting    bool
-	Retries    int
-	Cycles     int
-	Blocked    bool
-	Halted     bool
-	Stopped    bool
-	ActionDone bool
+	Waiting    bool `json:"waiting"`
+	Retries    int  `json:"retries"`
+	Cycles     int  `json:"cycles"`
+	Blocked    bool `json:"blocked"`
+	Halted     bool `json:"halted"`
+	Stopped    bool `json:"stopped"`
+	ActionDone bool `json:"-"`
 	// AwaitingEmit is true while a step is pending but the key has not been
 	// confirmed as having left the driver - distinct from waiting on the
 	// character to move.
-	AwaitingEmit bool
-	StepID       uint64
+	AwaitingEmit bool   `json:"awaiting_emit"`
+	StepID       uint64 `json:"-"`
 }
 
 // target identifies the tile a step aims at. FloorKnown is false for walk
