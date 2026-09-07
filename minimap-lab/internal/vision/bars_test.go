@@ -25,6 +25,21 @@ func canvas(w, h int) *image.NRGBA {
 	return im
 }
 
+// darkBackground stands in for the real game view, which is mostly dark:
+// unlike the neutral grey above, it is itself within BlackMax, so a bar
+// found against it is not getting free help telling border from background.
+var darkBackground = color.NRGBA{R: 20, G: 20, B: 20, A: 255}
+
+func darkCanvas(w, h int) *image.NRGBA {
+	im := image.NewNRGBA(image.Rect(0, 0, w, h))
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			im.SetNRGBA(x, y, darkBackground)
+		}
+	}
+	return im
+}
+
 // paint draws one bar the way the client does: a black rectangle with a
 // coloured prefix inside it. The unfilled remainder stays black, which is why
 // the detector's rule is the same at every health level.
@@ -84,6 +99,24 @@ func TestFind(t *testing.T) {
 			want: nil,
 		},
 		{
+			name: "wypełnienie jednopikselowe",
+			build: func() (*image.NRGBA, vision.Options) {
+				im := canvas(120, 60)
+				paint(im, classic, image.Pt(10, 20), 1, green)
+				return im, opts(classic)
+			},
+			want: []vision.Bar{{X: 10, Y: 20, Fill: 1}},
+		},
+		{
+			name: "pasek na ciemnym tle gry jest wykrywany",
+			build: func() (*image.NRGBA, vision.Options) {
+				im := darkCanvas(120, 60)
+				paint(im, classic, image.Pt(10, 20), 12, green)
+				return im, opts(classic)
+			},
+			want: []vision.Bar{{X: 10, Y: 20, Fill: 12}},
+		},
+		{
 			name: "dwa paski obok siebie",
 			build: func() (*image.NRGBA, vision.Options) {
 				im := canvas(120, 60)
@@ -92,6 +125,22 @@ func TestFind(t *testing.T) {
 				return im, opts(classic)
 			},
 			want: []vision.Bar{{X: 5, Y: 10, Fill: 20}, {X: 40, Y: 30, Fill: 7}},
+		},
+		{
+			name: "dwa nachodzące paski są liczone oba, lewy z obciętym wypełnieniem",
+			build: func() (*image.NRGBA, vision.Options) {
+				im := canvas(120, 60)
+				paint(im, classic, image.Pt(10, 20), 20, green) // A: painted with fill 20
+				paint(im, classic, image.Pt(25, 20), 10, green) // B: starts inside A's fill span, painted after A
+				return im, opts(classic)
+			},
+			// B is painted after A, so B's own black left border (at x=25)
+			// overwrites part of A's colour and cuts A's run short there. A's
+			// coloured run then measures from its first fill column
+			// (A.X+Border=11) up to B's left border column (25):
+			// 25 - (10 + 1) = 14, not the 20 it was painted with. B itself is
+			// untouched, since nothing overlaps its right side.
+			want: []vision.Bar{{X: 10, Y: 20, Fill: 14}, {X: 25, Y: 20, Fill: 10}},
 		},
 		{
 			name: "pasek przycięty prawą krawędzią nie jest zgłaszany",
@@ -103,11 +152,31 @@ func TestFind(t *testing.T) {
 			want: nil,
 		},
 		{
+			name: "pasek przycięty lewą krawędzią nie jest zgłaszany",
+			build: func() (*image.NRGBA, vision.Options) {
+				im := canvas(120, 60)
+				// The left border falls left of the image.
+				paint(im, classic, image.Pt(-1, 20), 12, green)
+				return im, opts(classic)
+			},
+			want: nil,
+		},
+		{
 			name: "pasek przycięty górną krawędzią nie jest zgłaszany",
 			build: func() (*image.NRGBA, vision.Options) {
 				im := canvas(120, 60)
-				// Górna obwódka wypada nad obrazem.
+				// The top border falls above the image.
 				paint(im, classic, image.Pt(10, -1), 12, green)
+				return im, opts(classic)
+			},
+			want: nil,
+		},
+		{
+			name: "pasek przycięty dolną krawędzią nie jest zgłaszany",
+			build: func() (*image.NRGBA, vision.Options) {
+				im := canvas(120, 60)
+				// The bottom border falls below the image.
+				paint(im, classic, image.Pt(10, im.Bounds().Dy()-classic.Height+1), 12, green)
 				return im, opts(classic)
 			},
 			want: nil,
@@ -127,8 +196,8 @@ func TestFind(t *testing.T) {
 			name: "potwór kratkę nad postacią nie jest wykluczany razem z własnym paskiem",
 			build: func() (*image.NRGBA, vision.Options) {
 				im := canvas(120, 120)
-				paint(im, classic, image.Pt(46, 28), 25, green) // własny
-				paint(im, classic, image.Pt(46, 60), 18, green) // kratkę niżej
+				paint(im, classic, image.Pt(46, 28), 25, green) // own
+				paint(im, classic, image.Pt(46, 60), 18, green) // one tile below
 				o := opts(classic)
 				o.Exclude = []image.Point{{X: 46, Y: 28}}
 				return im, o

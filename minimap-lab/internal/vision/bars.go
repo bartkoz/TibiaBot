@@ -5,10 +5,7 @@
 // internal/combat.
 package vision
 
-import (
-	"image"
-	"image/color"
-)
+import "image"
 
 // Geometry describes one health bar as the client draws it: a black border
 // with a coloured prefix inside. The classic numbers are 27x4 with a 1px
@@ -69,6 +66,13 @@ type Bar struct {
 }
 
 // HP is how full the bar is, 0-1.
+//
+// Limitation: when another creature's bar overlaps this one's fill span, the
+// coloured run is measured by Find only as far as that other bar's own black
+// border, not as far as this bar's true interior black - so Fill, and
+// therefore HP, reads low for the overlapped bar. The count of bars stays
+// correct; only the fill fraction is affected. A consumer that reads HP must
+// tolerate this.
 func (b Bar) HP(g Geometry) float64 {
 	if g.InnerWidth() <= 0 {
 		return 0
@@ -90,14 +94,8 @@ func Find(im *image.NRGBA, o Options) []Bar {
 	}
 	b := im.Bounds()
 	var out []Bar
-	// claimed marks pixels already accounted for by a bar, so one bar is not
-	// reported once per row of its fill.
-	claimed := image.NewAlpha(b)
 	for y := b.Min.Y; y < b.Max.Y; y++ {
 		for x := b.Min.X; x < b.Max.X; x++ {
-			if claimed.AlphaAt(x, y).A != 0 {
-				continue
-			}
 			run := o.fillRun(im, x, y)
 			if run == 0 {
 				continue
@@ -105,12 +103,6 @@ func Find(im *image.NRGBA, o Options) []Bar {
 			bar := Bar{X: x - g.Border, Y: y - g.Border, Fill: run}
 			if !o.confirm(im, bar, run) {
 				continue
-			}
-			whole := image.Rect(bar.X, bar.Y, bar.X+g.Width, bar.Y+g.Height)
-			for cy := whole.Min.Y; cy < whole.Max.Y; cy++ {
-				for cx := whole.Min.X; cx < whole.Max.X; cx++ {
-					claimed.SetAlpha(cx, cy, color.Alpha{A: 255})
-				}
 			}
 			if o.excluded(bar) {
 				continue
@@ -153,9 +145,9 @@ func (o Options) fillRun(im *image.NRGBA, x, y int) int {
 	if !o.isDark(im, x-1, y) || !o.isFill(im, x, y) {
 		return 0
 	}
-	max := o.Geometry.InnerWidth()
+	limit := o.Geometry.InnerWidth()
 	n := 0
-	for n < max && o.isFill(im, x+n, y) {
+	for n < limit && o.isFill(im, x+n, y) {
 		n++
 	}
 	if n == 0 || !o.isDark(im, x+n, y) {
