@@ -314,7 +314,12 @@ func (l *Loop) SetConfig(ctx context.Context, c Config) error {
 			// per frame. Without this, switching healing off would leave the
 			// last reason published until the next frame arrives - forever, if
 			// the camera stopped.
-			l.healState = HealState{LastIndex: -1}
+			//
+			// hasHealed is cleared too, not just healState: healSnapshot
+			// attaches LastAgeMS whenever it is true, and leaving it set would
+			// publish an age for a heal that LastIndex == -1 now denies ever
+			// happened.
+			l.healState, l.hasHealed = HealState{LastIndex: -1}, false
 		}
 		l.cfg.Combat = c.Combat.withDefaults()
 		if !l.cfg.Combat.Enabled() {
@@ -666,14 +671,9 @@ func (l *Loop) follow(ctx context.Context, pos mapdata.Position, capturedAt, now
 		l.follower.DropPath()
 	}
 	l.wasBlocked = blockedNow
-	// Healing preempts the step. This sits where it does for the same reason
-	// the floor-action pause does: asking the executor for an intent first
-	// would create a pending step nobody confirms or resets, which times out
-	// into a retry and then into a permanent block on this waypoint.
-	//
-	// The flag describes the newest frame, not necessarily the frame this
-	// match answers - follow runs from the match callback. That is what we
-	// want: whether to hold the step is a question about now.
+	// Healing preempts the step, for the same reason as the floor-action gate
+	// just below: asking the executor for an intent first would leave a
+	// pending step nobody confirms or resets.
 	if l.healedLastFrame {
 		return
 	}

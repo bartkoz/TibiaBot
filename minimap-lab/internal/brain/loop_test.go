@@ -91,8 +91,9 @@ func (c *fakeControls) healKeys() []string {
 	return append([]string(nil), c.heals...)
 }
 
-// setStatus makes the next call answer with something other than "emitted", so
-// a test can exercise the refused path without a real driver.
+// setStatus makes every following call answer with the given status instead
+// of "emitted", until the next setStatus - so a test can exercise the refused
+// path without a real driver.
 func (c *fakeControls) setStatus(status string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
