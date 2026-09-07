@@ -389,12 +389,12 @@ function renderHealRules() {
       healRules[i].below_pct = Number(below.value); healChanged();
     });
 
-    const hotkey = healField(row, `heal-${i}-hotkey`, 'Hotkey', rule.hotkey, 'text');
+    const hotkey = healField(row, `heal-${i}-hotkey`, 'Klawisz', rule.hotkey, 'text');
     hotkey.addEventListener('input', () => {
-      healRules[i].hotkey = hotkey.value.trim(); healChanged();
+      healRules[i].hotkey = hotkey.value.trim().toLowerCase(); healChanged();
     });
 
-    const cooldown = healField(row, `heal-${i}-cooldown`, 'Cooldown ms', rule.cooldown_ms,
+    const cooldown = healField(row, `heal-${i}-cooldown`, 'Cooldown (ms)', rule.cooldown_ms,
       'number', {min: 100, max: 60000, step: 50});
     cooldown.addEventListener('input', () => {
       healRules[i].cooldown_ms = Number(cooldown.value); healChanged();

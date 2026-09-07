@@ -846,3 +846,44 @@ test('linijka stanu leczenia pokazuje ostatnią regułę i powód ciszy', async 
   await quiet.settled();
   assert.match(quiet.el('heal-status').textContent, /cooldown klawisza f1/);
 });
+
+// The first heal test only drives below_pct and hotkey through their
+// handlers; deepEqual there proves HEAL_DEFAULT is seeded, not that resource,
+// cooldown, min_mana_pct and the row's own switch write back to healRules[i].
+// This exercises the other four, so a handler writing to the wrong property
+// would fail the deepEqual below.
+test('pozostałe pola wiersza (zasób, cooldown, min. mana, włącznik) trafiają do konfiguracji', async () => {
+  const p = panel();
+  await p.settled();
+  p.el('heal-add').click();
+  await p.settled();
+  p.el('heal-0-resource').value = 'mana';
+  p.el('heal-0-resource').fire('input');
+  p.el('heal-0-cooldown').value = '5000';
+  p.el('heal-0-cooldown').fire('input');
+  p.el('heal-0-mana').value = '40';
+  p.el('heal-0-mana').fire('input');
+  p.el('heal-0-enabled').checked = false;
+  p.el('heal-0-enabled').click();
+  await p.settled();
+
+  assert.deepEqual(lastConfig(p).brain.heal.rules[0], {
+    enabled: false, resource: 'mana', below_pct: 60, hotkey: 'f1',
+    cooldown_ms: 5000, min_mana_pct: 40,
+  });
+});
+
+// The client prints and the hotkey dialog writes keys in capitals ("F1"), but
+// the driver's key table is lowercase-only - a capital letter must not become
+// a silent server-side refusal.
+test('klawisz wpisany wielkimi literami jedzie małymi', async () => {
+  const p = panel();
+  await p.settled();
+  p.el('heal-add').click();
+  await p.settled();
+  p.el('heal-0-hotkey').value = 'F1';
+  p.el('heal-0-hotkey').fire('input');
+  await p.settled();
+
+  assert.equal(lastConfig(p).brain.heal.rules[0].hotkey, 'f1');
+});
