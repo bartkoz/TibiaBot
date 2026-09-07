@@ -118,8 +118,13 @@ type CombatState struct {
 	// measured; everything below is then zero.
 	Calibrated bool `json:"calibrated"`
 	// BarsTotal counts creature bars inside the crop, excluding the
-	// character's own. MonstersInRange counts those within the decision
-	// radius, measured as a Chebyshev distance in tiles.
+	// character's own and any the map sieve rejected - BarsTotal +
+	// RejectedByMap is the raw count vision.Find returned.
+	// MonstersInRange counts those within the decision radius, measured as a
+	// Chebyshev distance in tiles and rounded to the nearest whole tile (see
+	// finishVision), so the effective radius is round(DecisionRadius): a
+	// half-integer radius (legal down to 0.5) reaches one ring further than
+	// its own number suggests, and at 0.5 the whole 3x3 ring counts.
 	BarsTotal       int `json:"bars_total"`
 	MonstersInRange int `json:"monsters_in_range"`
 	// RejectedByMap counts bars dropped because the map data calls their tile

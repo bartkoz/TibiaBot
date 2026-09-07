@@ -151,6 +151,50 @@ func TestCombatSurvivesLostPosition(t *testing.T) {
 	}
 }
 
+// The map sieve is the whole reason observeVision and finishVision are split
+// and the frame handler defers finishVision to the end: a bar drawn from
+// another floor must not inflate the count. Without this test the sieve ran
+// on every other test in this file with the tile forced walkable, so
+// blockedTile's math.Round conversion, its choice of p.Z, and its position-nil
+// short-circuit were all unverified - and the failure mode of a bug there is
+// silent under-reporting of monsters, the direction combatconfig.go itself
+// calls the most dangerous.
+func TestCombatSieveRejectsBarsOnBlockedTiles(t *testing.T) {
+	h := newHarness(t)
+	h.config(t, func(c *Config) { c.Combat = visionCalibration() })
+	h.setTile(TileBlocked)
+	h.at(1000, 1000)
+	s := h.submit(t, h.visionFrame(t, region{frame.RegionViewport,
+		crop(image.Pt(1, 0), image.Pt(3, 0))}))
+	if s.Combat.RejectedByMap != 2 {
+		t.Errorf("RejectedByMap = %d, oczekiwano 2", s.Combat.RejectedByMap)
+	}
+	if s.Combat.BarsTotal != 0 {
+		t.Errorf("BarsTotal = %d, oczekiwano 0 — obie kratki są nieprzechodnie", s.Combat.BarsTotal)
+	}
+	if s.Combat.MonstersInRange != 0 {
+		t.Errorf("MonstersInRange = %d, oczekiwano 0", s.Combat.MonstersInRange)
+	}
+}
+
+// The documented contract is "always zero while the position is unknown,
+// because the sieve has no tile to ask about" - pinned here rather than left
+// as a comment nobody runs.
+func TestCombatSieveNeedsAPositionToReject(t *testing.T) {
+	h := newHarness(t)
+	h.config(t, func(c *Config) { c.Combat = visionCalibration() })
+	h.setTile(TileBlocked)
+	h.locator.miss()
+	s := h.submit(t, h.visionFrame(t, region{frame.RegionViewport, crop(image.Pt(1, 0))}))
+	if s.Combat.RejectedByMap != 0 {
+		t.Errorf("RejectedByMap = %d, oczekiwano 0 — pozycja nieznana, sito nie ma czego pytać",
+			s.Combat.RejectedByMap)
+	}
+	if s.Combat.BarsTotal != 1 {
+		t.Errorf("BarsTotal = %d, oczekiwano 1", s.Combat.BarsTotal)
+	}
+}
+
 func TestCombatIsSilentWithoutViewportRegion(t *testing.T) {
 	h := newHarness(t)
 	h.config(t, func(c *Config) { c.Combat = visionCalibration() })

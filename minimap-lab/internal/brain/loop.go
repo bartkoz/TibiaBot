@@ -261,6 +261,13 @@ func (l *Loop) SetConfig(ctx context.Context, c Config) error {
 	l.do(ctx, func() {
 		l.cfg = c
 		l.cfg.Combat = c.Combat.withDefaults()
+		if !l.cfg.Combat.Enabled() {
+			// Combat is only reset inside observeVision, which runs once per
+			// frame. Without this, turning calibration off would leave the
+			// old counts (and Calibrated: true) published until the next
+			// non-duplicate frame arrives - indefinitely if frames stopped.
+			l.combat, l.view, l.bars = CombatState{}, VisionView{}, nil
+		}
 		l.recorder.Auto, l.recorder.Every = c.RecordAuto, c.RecordEvery
 		// Options are updated in place rather than by rebuilding the follower:
 		// a user nudging the tolerance mid-route must not lose their progress.
@@ -363,8 +370,11 @@ func (l *Loop) handleFrame(ctx context.Context, env frameEnvelope) {
 	l.lastFrameAt = env.receivedAt
 	// Vision is finished and the snapshot published on every path out of this
 	// function, including the early returns. The two go together because the
-	// map sieve needs the position this frame produced - or the absence of it -
-	// and that is only settled once the match is over.
+	// map sieve needs a position to work with, and normally that is this
+	// frame's own - settled only once the match is over. On the duplicate-
+	// frame and no-minimap paths below, the match never runs at all, so the
+	// sieve falls back to whatever position the previous frame left: at frame
+	// cadence that lag is sub-tile, and there is no better candidate anyway.
 	defer func() {
 		l.finishVision()
 		l.publish()
@@ -460,7 +470,12 @@ func (l *Loop) observeVision(f frame.Frame) {
 	if im, ok := f.Image(frame.RegionBattle); ok {
 		o, err := cc.battleOptions()
 		if err != nil {
-			l.combat.Reason = err.Error()
+			// Unreachable on a config that passed validate() - it already
+			// parses every colour - but guarded the same as Mana's, so an
+			// earlier failure is never clobbered by a later one.
+			if l.combat.Reason == "" {
+				l.combat.Reason = err.Error()
+			}
 		} else {
 			list := battle.Read(im, o)
 			l.combat.BattleRows = len(list.Rows)
@@ -482,7 +497,11 @@ func (l *Loop) observeVision(f frame.Frame) {
 	}
 	o, err := cc.barOptions()
 	if err != nil {
-		l.combat.Reason = err.Error()
+		// Same guard as above - unreachable on a validated config, but reads
+		// like the other two error sites rather than clobbering unconditionally.
+		if l.combat.Reason == "" {
+			l.combat.Reason = err.Error()
+		}
 		return
 	}
 	l.visionGrid = cc.grid()
@@ -510,6 +529,16 @@ func (l *Loop) finishVision() {
 		}
 		dist := vision.Distance(dx, dy)
 		l.combat.BarsTotal++
+		// Chebyshev(fractional) <= R+0.5 is rounding to the nearest whole
+		// tile, expressed as an inequality: the threshold sits at the
+		// midpoint of a walk, maximally far from every resting value, so a
+		// creature standing still at distance R cannot flicker in and out of
+		// the count when detection jitters by a pixel (1/16 of a tile at
+		// this calibration). It errs toward counting rather than missing,
+		// and it means the effective radius is round(DecisionRadius): a
+		// half-integer radius (legal down to 0.5) reaches one ring further
+		// than its own number suggests - at 0.5 the threshold is 1.0, so the
+		// whole 3x3 ring around the character counts.
 		if dist <= cc.DecisionRadius+0.5 {
 			l.combat.MonstersInRange++
 		}

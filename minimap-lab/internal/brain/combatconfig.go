@@ -66,6 +66,9 @@ type CombatConfig struct {
 	// DecisionRadius is the upper bound on everything: it sizes the crop and
 	// it is the radius the snapshot counts creatures in. A spell rule may not
 	// ask for more, or it would be asking about tiles the panel never sent.
+	// The count itself rounds to the nearest whole tile (see finishVision),
+	// so the effective radius is round(DecisionRadius) - a half-integer value
+	// reaches one ring further than its own number suggests.
 	DecisionRadius float64 `json:"decision_radius"`
 
 	BattleBarWidth       int     `json:"battle_bar_width"`
