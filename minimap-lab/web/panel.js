@@ -80,7 +80,7 @@ function stopShare() {
   stopLoop();
   if (stream) stream.getTracks().forEach(t => t.stop());
   stream = null; video.srcObject = null;
-  $('snapshot').disabled = $('stop').disabled = $('live').disabled = true;
+  $('snapshot').disabled = $('stop').disabled = $('live').disabled = $('frame-save').disabled = true;
 }
 
 async function readImage(url) {
@@ -124,13 +124,27 @@ $('share').onclick = async () => {
       stopShare(); status('Udostępnianie zakończone.');
     });
     setSource(video);
-    $('snapshot').disabled = $('stop').disabled = $('live').disabled = false;
+    $('snapshot').disabled = $('stop').disabled = $('live').disabled = $('frame-save').disabled = false;
     $('source').textContent = 'Udostępniony ekran · wybierz minimapę i skalibruj znacznik.';
     status('Pobrano klatkę. Zaznacz minimapę.');
   } catch (e) { stopShare(); status(`Nie udało się udostępnić ekranu: ${e.message}`, 'error'); }
 };
 
 $('snapshot').onclick = () => { try { setSource(video, false); } catch (e) { status(e.message, 'error'); } };
+// Zapis idzie z kanwy źródłowej, a nie z podglądu: podgląd jest przeskalowany
+// do 800 px szerokości, a pomiary pikselowe pasków wymagają rozdzielczości,
+// w jakiej klient je narysował.
+$('frame-save').onclick = () => {
+  if (!ready) { status('Najpierw udostępnij ekran albo wczytaj obraz.', 'error'); return; }
+  source.toBlob(blob => {
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'combat-capture.png';
+    link.click();
+    URL.revokeObjectURL(url);
+  }, 'image/png');
+};
 $('stop').onclick = () => { stopShare(); status('Udostępnianie zakończone.'); };
 
 // --- zaznaczanie obszaru ---

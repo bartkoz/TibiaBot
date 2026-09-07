@@ -29,6 +29,7 @@ function panel({state = {}, onRequest = () => null, storage = {}} = {}) {
       click() { this.listeners.click?.(); this.onclick?.(); },
       fire(type, event = {}) { this.listeners[type]?.(event); },
       async play() {},
+      toBlob(cb) { cb({}); },
       videoWidth: 800, videoHeight: 600, currentTime: 0,
     };
   }
@@ -330,6 +331,28 @@ test('klawisze przeżywają odświeżenie karty', async () => {
 
   assert.equal(second.el('dir-n').value, 'w');
   assert.equal(second.el('hotkey-rope').value, 'f7');
+});
+
+test('zapis pełnej klatki tworzy pobranie w rozdzielczości źródła', async () => {
+  const p = panel();
+  await p.settled();
+  p.el('share').click();
+  await p.settled();
+  // Podglądamy tworzenie elementów, bo pobranie to element <a> z atrybutem
+  // download - w sandboxie nie ma prawdziwego DOM, żeby je zobaczyć inaczej.
+  const created = [];
+  const make = p.sandbox.document.createElement;
+  p.sandbox.document.createElement = tag => {
+    const el = make(tag);
+    created.push(el);
+    return el;
+  };
+  p.el('frame-save').click();
+  await p.settled();
+  const link = created.find(el => el.download);
+  assert.ok(link, 'nie utworzono odnośnika pobrania');
+  assert.equal(link.download, 'combat-capture.png');
+  assert.equal(link.href, 'blob:x');
 });
 
 // A reload must never resume walking on its own.
