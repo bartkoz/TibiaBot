@@ -8,6 +8,7 @@ import (
 	"image"
 	"io"
 	"net/http"
+	"strconv"
 	"time"
 
 	"minimap-lab/internal/brain"
@@ -61,7 +62,11 @@ func (s *server) arm(w http.ResponseWriter, r *http.Request) {
 	s.sessionMu.Lock()
 	s.session = session
 	s.sessionMu.Unlock()
-	writeJSON(w, map[string]any{"armed": state.Armed, "target": state.Target, "session": session})
+	// The session travels as a decimal string, not a number: it is a uint64,
+	// and JSON numbers lose precision above 2^53 in every browser. Rounded on
+	// the way in, it would never match again and every frame would be refused.
+	writeJSON(w, map[string]any{"armed": state.Armed, "target": state.Target,
+		"session": strconv.FormatUint(session, 10)})
 }
 
 func (s *server) disarm(w http.ResponseWriter, r *http.Request) {

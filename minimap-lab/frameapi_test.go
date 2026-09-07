@@ -8,6 +8,7 @@ import (
 	"image"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -74,15 +75,16 @@ func brainServer(t *testing.T, locator brain.Locator) *brainFixture {
 		t.Fatalf("arm: %d %s", w.Code, w.Body.String())
 	}
 	var armed struct {
-		Session uint64 `json:"session"`
+		Session string `json:"session"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &armed); err != nil {
 		t.Fatal(err)
 	}
-	if armed.Session == 0 {
-		t.Fatal("uzbrojenie nie zwróciło tokenu sesji przechwytywania")
+	session, err := strconv.ParseUint(armed.Session, 10, 64)
+	if err != nil || session == 0 {
+		t.Fatalf("uzbrojenie nie zwróciło tokenu sesji: %q (%v)", armed.Session, err)
 	}
-	f.session = armed.Session
+	f.session = session
 	return f
 }
 
@@ -265,5 +267,19 @@ func TestBrainRoutesAnswer503WithoutALoop(t *testing.T) {
 		if w.Code != http.StatusServiceUnavailable {
 			t.Errorf("%s %s: kod = %d, oczekiwano 503", c.method, c.path, w.Code)
 		}
+	}
+}
+
+// The session is a uint64, and a JSON number would be rounded by every browser
+// above 2^53 - after which no frame would ever match again.
+func TestCaptureSessionTravelsAsAStringNotANumber(t *testing.T) {
+	f := brainServer(t, nil)
+	w := f.post(t, "/api/arm", nil)
+	var raw map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &raw); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := raw["session"].(string); !ok {
+		t.Fatalf("session = %T, oczekiwano napisu", raw["session"])
 	}
 }

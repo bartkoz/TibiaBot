@@ -156,6 +156,7 @@ type Loop struct {
 	hasPosition bool
 	match       MatchState
 
+	previewRev  uint64
 	recSkipped  int
 	recWaiting  bool
 	wasBlocked  bool
@@ -377,6 +378,11 @@ func (l *Loop) handleFrame(ctx context.Context, env frameEnvelope) {
 		return
 	}
 	pos := *result.Position
+	// The neighbourhood picture only changes when the tile does, so the panel
+	// is told to refetch it then and not on every single frame.
+	if l.position == nil || *l.position != pos {
+		l.previewRev++
+	}
 	l.position, l.positionAt, l.hasPosition = &pos, capturedAt, true
 	// The floor the tracker believes in follows what was actually found, so a
 	// confirmed transition does not leave the next search looking one floor up.
@@ -588,11 +594,12 @@ func (l *Loop) logf(format string, args ...any) {
 func (l *Loop) publish() {
 	l.version++
 	s := &State{
-		StateVersion: l.version,
-		LastFrameSeq: l.lastFrameSeq,
-		Match:        l.match,
-		Executor:     l.executor.State(),
-		LastAction:   l.lastAction,
+		StateVersion:    l.version,
+		LastFrameSeq:    l.lastFrameSeq,
+		Match:           l.match,
+		Executor:        l.executor.State(),
+		PreviewRevision: l.previewRev,
+		LastAction:      l.lastAction,
 		Recorder: RecorderState{Auto: l.cfg.RecordAuto, Count: len(l.recorder.Waypoints()),
 			Skipped: l.recSkipped, Waiting: l.recWaiting},
 		Route: RouteState{

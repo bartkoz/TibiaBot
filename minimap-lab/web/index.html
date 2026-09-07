@@ -35,10 +35,8 @@
         <label>Minimalny wynik<input id="threshold" type="number" min="0.5" max="1" step="0.005" value="0.85"></label>
         <label>Minimalny odstęp od konkurenta<input id="gap" type="number" min="0.001" max="0.2" step="0.001" value="0.015"></label>
       </details>
-      <button id="locate" disabled>Znajdź pozycję</button>
-      <button id="relocalize" class="secondary" disabled>Szukaj od nowa na całej mapie</button>
-      <label>Częstotliwość testera<select id="hz"><option value="10">10 odczytów / s</option><option value="5">5 odczytów / s</option></select></label>
-      <label class="check"><input id="live" type="checkbox" disabled>Włącz śledzenie XYZ</label>
+      <label class="check"><input id="live" type="checkbox" disabled>Wysyłaj klatki do bota</label>
+      <p class="hint">Zegar tej pętli siedzi w Web Workerze, bo karta panelu jest w tle zawsze, gdy grasz — a tam przeglądarka dławi zwykłe timery do jednego tyknięcia na sekundę.</p>
       <details><summary>Zakres śledzenia</summary><label>Zakładana maks. prędkość (kratki/s)<input id="speed" type="number" min="1" max="100" value="20"></label><label>Zmiana piętra: promień XY (kratki)<input id="floor-radius" type="number" min="1" max="32" value="8"></label><p class="hint">Zwykły ruch: obszar rośnie do 64 kratek. Przejścia Z ±1: sprawdzany jest mały obszar wokół ostatniego XY. Po trzech nieudanych odczytach tester ponownie przeszuka mapę.</p></details>
       <p class="hint">Podczas pierwszego, pełnego wyszukiwania pozostań w miejscu. Potem możesz chodzić ręcznie, również po schodach. Po zmianie zoomu wybierz Auto. Z możesz też wskazać ręcznie.</p>
       <div class="telemetry"><div>Odczyty/s <strong id="actual-hz">—</strong></div><div>Cały odczyt <strong id="round-trip">—</strong></div><div>Dopasowanie Go <strong id="match-time">—</strong></div><div>Wiek pozycji <strong id="position-age">—</strong></div><div>Poprawne odczyty <strong id="success-rate">—</strong></div><div>Obszar <strong id="search-area">—</strong></div></div>
@@ -51,7 +49,7 @@
   </div>
   <section class="panel route">
     <h2>4. Trasa</h2>
-    <p>Waypointy żyją w tym panelu i w pliku JSON, który sam wczytujesz i pobierasz. Serwer ich nie przechowuje.</p>
+    <p>Waypointy żyją w mózgu bota po stronie Go. Panel je wczytuje z pliku JSON i pobiera z powrotem; nic nie jest zapisywane na dysk poza nauczonymi blokadami.</p>
     <div class="toolbar">
       <label class="button">Wczytaj JSON<input id="route-file" type="file" accept="application/json,.json" hidden></label>
       <button id="route-save" class="secondary" disabled>Pobierz JSON</button>
@@ -76,7 +74,7 @@
   </section>
   <section class="panel control">
     <h2>5. Sterowanie</h2>
-    <p>Wykonawca startuje rozbrojony. Kliknięcie „Uzbrój” uruchamia 5-sekundowe odliczanie — w tym czasie przełącz się na okno gry, bo to ono zostanie zapamiętane jako aktywne w chwili wysłania żądania. Drugie kliknięcie podczas odliczania je anuluje. Alt-tab po uzbrojeniu rozbraja. Wymagane jest udostępnienie całego ekranu i praca na jednym monitorze.</p>
+    <p>Wykonawca startuje rozbrojony. Przed kliknięciem „Uzbrój” ustaw okno gry jako aktywne — to ono zostanie zapamiętane. Alt-tab po uzbrojeniu rozbraja, tak samo jak cisza kamery dłuższa niż 750 ms. Wymagane jest udostępnienie całego ekranu i praca na jednym monitorze.</p>
     <div class="toolbar">
       <button id="input-arm" disabled>Uzbrój</button>
       <button id="input-disarm" class="secondary" disabled>Rozbrój</button>
@@ -130,12 +128,6 @@
   <footer><p id="maps"></p><p>Wynik dopasowania nie jest prawdopodobieństwem. Wybierz piętro startowe; dalsze przejścia Z ±1 mogą być rozpoznawane z obrazu. Pierwszy test na grze wymaga kalibracji i sprawdzenia znanego miejsca.</p></footer>
 </main>
 <video id="video" autoplay muted playsinline hidden></video>
-<script src="/tracker.js"></script>
-<script src="/route.js"></script>
-<script src="/recorder.js"></script>
-<script src="/follower.js"></script>
-<script src="/executor.js"></script>
-<script src="/input.js"></script>
-<script src="/blocks.js"></script>
-<script src="/app.js"></script>
+<script src="/camera.js"></script>
+<script src="/panel.js"></script>
 </html>

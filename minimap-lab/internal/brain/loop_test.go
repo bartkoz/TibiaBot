@@ -487,3 +487,22 @@ func TestNewlyBlockedTargetDropsTheCachedPath(t *testing.T) {
 		t.Errorf("trasa z pamięci przetrwała zablokowanie celu (%d kratek)", s.Route.PathLen)
 	}
 }
+
+// The neighbourhood preview is a separate request now, so the panel needs to
+// be told when it is worth making again - and only then.
+func TestPreviewRevisionChangesOnlyWhenTheTileDoes(t *testing.T) {
+	h := newHarness(t)
+	h.config(t, func(c *Config) {})
+	h.at(100, 100, 7)
+	first := h.tick(t).PreviewRevision
+	if first == 0 {
+		t.Fatal("pierwsza pozycja nie podniosła rewizji podglądu")
+	}
+	if same := h.tick(t).PreviewRevision; same != first {
+		t.Errorf("rewizja = %d, oczekiwano bez zmiany na tej samej kratce", same)
+	}
+	h.at(101, 100, 7)
+	if moved := h.tick(t).PreviewRevision; moved == first {
+		t.Error("zmiana kratki nie podniosła rewizji podglądu")
+	}
+}

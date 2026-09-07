@@ -27,7 +27,9 @@ func TestHTTPValidationAndStaticPanel(t *testing.T) {
 		code                 int
 	}{
 		{"GET", "http://127.0.0.1:8095/", "", 200},
-		{"GET", "http://127.0.0.1:8095/app.js", "", 200},
+		{"GET", "http://127.0.0.1:8095/panel.js", "", 200},
+		{"GET", "http://127.0.0.1:8095/camera.js", "", 200},
+		{"GET", "http://127.0.0.1:8095/worker.js", "", 200},
 		{"GET", "http://127.0.0.1:8095/api/info", "", 200},
 		{"POST", "http://127.0.0.1:8095/api/path", "", 400},
 		{"POST", "http://127.0.0.1:8095/api/path", "https://example.org", 403},
