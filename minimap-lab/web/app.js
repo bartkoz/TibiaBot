@@ -22,6 +22,7 @@ import {createBlocks} from './blocks.js';
 import {createTabs} from './tabs.js';
 
 const LOOP_INTERVAL_MS = 100;
+const DIAGNOSTICS_TAB = 'diagnostyka';
 
 export function createPanel(env) {
   const dom = createDom(env.document);
@@ -38,6 +39,7 @@ export function createPanel(env) {
   ctx.pushConfig = pushConfig;
   ctx.loop = {start: startLoop, stop: stopLoop};
   ctx.reveal = reveal;
+  ctx.forgetStateVersion = forgetStateVersion;
 
   ctx.camera = new Camera({
     fetch: (...a) => env.fetch(...a),
@@ -133,8 +135,27 @@ export function createPanel(env) {
       lastStateVersion = state.state_version;
     }
     lastState = state;
-    $('json').textContent = JSON.stringify(state, null, 2);
+    renderJSON(state);
     for (const m of modules) m.render?.(state);
+  }
+
+  // The dump is the most expensive thing the loop does - the whole snapshot
+  // stringified with indentation - and it lives on a tab that is hidden by
+  // default. Paying that ten times a second for a <pre> nobody can see is the
+  // cost the tab gating exists to avoid.
+  function renderJSON(state) {
+    if (ctx.tabs.visible(DIAGNOSTICS_TAB)) {
+      $('json').textContent = JSON.stringify(state, null, 2);
+    }
+  }
+
+  // The version counter belongs to the server process, not to the panel. A
+  // restarted server publishes version 1 again, and without this the guard
+  // would drop every snapshot from it and freeze the panel on stale data with
+  // nothing on screen to say so.
+  function forgetStateVersion() {
+    lastStateVersion = -1;
+    lastState = null;
   }
 
   // reveal runs when a tab comes on screen. The two gated previews only fetch
@@ -144,7 +165,9 @@ export function createPanel(env) {
   // stamps the age clock in render(), and restarting that on every tab switch
   // would make a stale reading look fresh.
   function reveal() {
-    if (lastState) for (const m of modules) m.reveal?.(lastState);
+    if (!lastState) return;
+    renderJSON(lastState);
+    for (const m of modules) m.reveal?.(lastState);
   }
 
   async function start() {
@@ -173,6 +196,9 @@ export function createPanel(env) {
       if (r.ok) { brainAvailable = true; render(await r.json()); }
       else $('input-status').textContent = (await r.json()).reason ?? 'Sterowanie wyłączone.';
     } catch { /* jak wyżej */ }
+    // Only now may anything be written back to storage: before this the floor
+    // select had no options and would have been saved as empty.
+    ctx.form.enable();
   }
 
   // stop puts the panel down: the browser entry never calls it, but a test that
@@ -183,6 +209,15 @@ export function createPanel(env) {
     // later, into a panel that is no longer running.
     ctx.control.cancelArm();
     ctx.source.stopShare();
+  }
+
+  // A module that gates itself on a tab declares which one, and the name is
+  // checked here rather than trusted: tabs.visible() answers false for an id
+  // that does not exist, so a typo would disable that preview forever without
+  // a word. This turns it into a failure at construction, which every test
+  // trips over immediately.
+  for (const m of modules) {
+    if (m.tab && !ctx.tabs.knows(m.tab)) throw new Error(`nieznana zakładka modułu: ${m.tab}`);
   }
 
   for (const m of modules) m.mount?.();

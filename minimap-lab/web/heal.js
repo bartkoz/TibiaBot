@@ -127,6 +127,5 @@ export function createHeal(ctx) {
       rules = saved.map(r => ({...HEAL_DEFAULT, ...r}));
       renderRules();
     },
-    enabled: () => $('heal-on').checked,
   };
 }

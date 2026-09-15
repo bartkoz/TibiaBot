@@ -15,25 +15,26 @@ const REMEMBERED = ['floor', 'zoom', 'mask', 'threshold', 'gap', 'floor-auto', '
   'battle-frame', 'battle-frame-coverage',
   ...Object.values(HOTKEYS), ...Object.values(DIRECTIONS)];
 
-// The three switches that actually make the bot act are deliberately absent
-// from REMEMBERED but present here: they still push the new setting to the
-// server, they just never come back after a reload. A refresh must not resume
-// walking on its own.
-const WATCHED = ['zoom', 'mask', 'threshold', 'gap', 'floor', 'floor-auto', 'floor-radius',
-  'speed', 'route-every', 'route-tolerance', 'route-loop', 'route-record', 'route-follow',
-  'input-walk', 'input-actions', 'input-own-tile',
-  'calib-target', 'grid-cols', 'grid-rows', 'decision-radius',
-  'bar-width', 'bar-height', 'bar-border', 'bar-tolerance', 'black-max',
-  'bar-colors', 'self-bar-on', 'self-bar-x', 'self-bar-y',
-  'battle-bar-width', 'battle-bar-height', 'battle-bar-border', 'battle-pitch',
-  'battle-frame', 'battle-frame-coverage',
-  ...Object.values(HOTKEYS), ...Object.values(DIRECTIONS)];
+// Everything remembered is also watched, plus the four switches that actually
+// make the bot act: they push the new setting to the server but never come back
+// after a reload, because a refresh must not resume walking on its own. Derived
+// rather than copied - two hand-synced lists is one list that goes stale.
+const WATCHED = [...REMEMBERED,
+  'route-record', 'route-follow', 'input-walk', 'input-actions'];
 
 export function createForm(ctx) {
   const {$} = ctx.dom;
   const {localStorage} = ctx.env;
 
+  // Saving stays shut until the panel has finished starting. The floor list
+  // arrives from /api/info, so until then `#floor` has no options and reads as
+  // empty - and anything that saved during that window (a tab click, a typed
+  // setting) would write that empty value over the remembered floor, which the
+  // second restore would then push back into the now-populated select.
+  let armed = false;
+
   function save() {
+    if (!armed) return;
     const state = {};
     for (const id of REMEMBERED) {
       const el = $(id);
@@ -70,5 +71,5 @@ export function createForm(ctx) {
     }
   }
 
-  return {mount, save, restore};
+  return {mount, save, restore, enable: () => { armed = true; }};
 }

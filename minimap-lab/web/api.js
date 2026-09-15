@@ -1,3 +1,6 @@
+// Every URL the panel knows, in one place - except /api/frame, which Camera
+// posts to with its own fetch on the hot path.
+//
 // Every URL the panel knows, in one place. The calls hand back the raw
 // response rather than a parsed result: the call sites differ in what they
 // need from it - JSON, text, a header, an array buffer - and in what a failure
@@ -26,6 +29,5 @@ export function createApi(env) {
     vision: () => fetch('/api/vision'),
     grid: (x, y, z, r) => fetch(`/api/grid?x=${x}&y=${y}&z=${z}&r=${r}`),
     deleteBlock: p => json('DELETE', '/api/blocks', p),
-    frame: (...a) => fetch(...a),
   };
 }

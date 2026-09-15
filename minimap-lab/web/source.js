@@ -169,7 +169,7 @@ export function createSource(ctx) {
   }
 
   return {
-    mount, drawScreen, drawCrop, setSource, stopShare, refreshPreview,
+    mount, drawScreen, drawCrop, stopShare, refreshPreview,
     canvas, video, screenCanvas, cropCanvas,
     isReady: () => ready,
     isDemo: () => demo,

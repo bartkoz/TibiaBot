@@ -27,6 +27,9 @@ export function createTabs(ctx) {
   // so switching away and back never loses what was drawn.
   function show(id, {remember = true} = {}) {
     if (!TAB_IDS.includes(id)) return;
+    // Clicking the tab you are already on is not a change: without this it
+    // would rewrite the whole stored form and fire another preview request.
+    if (id === active && remember) return;
     active = id;
     for (const t of TABS) {
       const on = t.id === id;
@@ -80,5 +83,6 @@ export function createTabs(ctx) {
     mount, show, setBadge,
     active: () => active,
     visible: id => active === id,
+    knows: id => TAB_IDS.includes(id),
   };
 }

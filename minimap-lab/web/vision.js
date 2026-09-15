@@ -15,6 +15,8 @@ const VISION_STATE_IDS = [
   'vision-monsters', 'vision-bars', 'vision-rejected', 'vision-rows', 'vision-target', 'vision-hp', 'vision-mana',
 ];
 
+const TAB = 'walka';
+
 export function createVision(ctx) {
   const {$, num} = ctx.dom;
   const {api, status} = ctx;
@@ -149,6 +151,16 @@ export function createVision(ctx) {
       : 'Nie widzę żadnego stwora.';
   }
 
+  // blind answers one question: is healing switched on while something it
+  // actually reads cannot be read?
+  function blind(combat) {
+    if (!combat?.calibrated) return true;
+    const rules = ctx.heal.rules().filter(r => r.enabled);
+    const needsHP = rules.some(r => r.resource === 'hp');
+    const needsMana = rules.some(r => r.resource === 'mana' || r.min_mana_pct > 0);
+    return (needsHP && !combat.hp_ok) || (needsMana && !combat.mana_ok);
+  }
+
   function mount() {
     $('vision-canvas').addEventListener('pointerdown', e => {
       const crop = cropRect();
@@ -166,7 +178,7 @@ export function createVision(ctx) {
   // reveal is the gated fetch on its own, so opening the tab pulls a preview
   // without waiting for the next snapshot.
   function reveal(state) {
-    if ($('vision-preview').checked && state.combat?.calibrated && ctx.tabs.visible('walka')) {
+    if ($('vision-preview').checked && state.combat?.calibrated && ctx.tabs.visible(TAB)) {
       fetchVision();
     }
   }
@@ -177,13 +189,14 @@ export function createVision(ctx) {
     // bars is a switch that silently cannot work, and that is worth a mark on
     // a tab the user is not looking at. A monster count is merely useful.
     //
-    // `calibrated` only promises the game window and the crop, so it is not
-    // enough on its own: with the bars unmarked it stays true while hp_ok and
-    // mana_ok go false, and healing refuses on every frame with nothing on
-    // screen to say why.
+    // Which bars have to be readable comes from the rules themselves, exactly
+    // as it does in Go: a rule reads its own resource, and only a rule that
+    // costs mana needs the mana bar (internal/heal/rules.go:44-47 - a rule at
+    // min_mana_pct 0 "deliberately does not care whether the mana bar is
+    // readable at all"). Demanding both would put a permanent warning on the
+    // common HP-only setup and swallow the monster count with it.
     const c = state.combat;
-    const blind = !c?.calibrated || !c.hp_ok || !c.mana_ok;
-    if (state.heal?.enabled && blind) {
+    if (state.heal?.enabled && blind(c)) {
       ctx.tabs.setBadge('walka', {kind: 'warn', text: '!', label: 'leczenie bez odczytu pasków'});
     } else if (c?.calibrated && c.monsters_in_range > 0) {
       ctx.tabs.setBadge('walka', {
@@ -195,7 +208,8 @@ export function createVision(ctx) {
   }
 
   return {
-    mount, render, reveal, applyRegions, cropRect,
+    tab: TAB,
+    mount, render, reveal, applyRegions,
     config: () => ({combat: combatConfig()}),
     setRect: (key, box) => { rects[key] = box; },
     clearRects: () => {

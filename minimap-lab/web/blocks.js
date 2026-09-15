@@ -4,7 +4,11 @@
 
 import {point} from './dom.js';
 
+const TAB = 'trasa';
 const GRID_RADIUS = 32;
+
+// How long a click's answer holds the status line against the frame loop.
+const CLICK_MESSAGE_MS = 4000;
 
 const GRID_COLOURS = {
   free: [40, 70, 40, 255], wall: [150, 40, 40, 255], missing: [40, 40, 45, 255],
@@ -32,7 +36,7 @@ export function createBlocks(ctx) {
   const {api} = ctx;
   const {ImageData} = ctx.env;
 
-  let gridWindow = null, pending = false;
+  let gridWindow = null, pending = false, clickMessageUntil = 0;
 
   async function refresh(p) {
     if (pending) return;
@@ -59,6 +63,9 @@ export function createBlocks(ctx) {
       const x = gridWindow.origin[0] + p.x, y = gridWindow.origin[1] + p.y;
       const r = await api.deleteBlock({x, y, z: gridWindow.z});
       const answer = await r.json().catch(() => ({}));
+      // The frame loop writes this same line ten times a second, so without a
+      // hold the answer to a click would be gone before it could be read.
+      clickMessageUntil = ctx.env.performance.now() + CLICK_MESSAGE_MS;
       $('blocks-status').textContent = answer.cleared
         ? `Usunięto nauczoną blokadę na ${x}, ${y}.`
         : `Na ${x}, ${y} nie ma nauczonej blokady.`;
@@ -66,16 +73,18 @@ export function createBlocks(ctx) {
   }
 
   function reveal(state) {
-    if ($('grid-preview-on').checked && state.position && ctx.tabs.visible('trasa')) {
+    if ($('grid-preview-on').checked && state.position && ctx.tabs.visible(TAB)) {
       refresh(state.position);
     }
   }
 
   function render(state) {
-    const log = state.log ?? [];
-    $('blocks-status').textContent = log.length ? log[log.length - 1].text : '—';
+    if (ctx.env.performance.now() >= clickMessageUntil) {
+      const log = state.log ?? [];
+      $('blocks-status').textContent = log.length ? log[log.length - 1].text : '—';
+    }
     reveal(state);
   }
 
-  return {mount, render, reveal};
+  return {tab: TAB, mount, render, reveal};
 }

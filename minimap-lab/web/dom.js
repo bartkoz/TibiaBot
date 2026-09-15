@@ -41,5 +41,7 @@ export function createDom(document) {
     return b;
   }
 
-  return {document, $, num, point, field, button};
+  // `point` is imported straight from this module where it is needed; it is
+  // not on this object as well, so there is one path to it rather than two.
+  return {document, $, num, field, button};
 }

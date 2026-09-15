@@ -7,6 +7,9 @@ import {panel, shareAndSelect, shareOnly, calibrate, openTab} from './harness.mj
 
 const PANELS = ['pozycja', 'trasa', 'walka', 'leczenie', 'sterowanie', 'diagnostyka'];
 
+const RULE_HP = {"enabled": true, "resource": "hp", "below_pct": 60, "hotkey": "f1", "cooldown_ms": 1000, "min_mana_pct": 0};
+const RULE_COSTS_MANA = {"enabled": true, "resource": "hp", "below_pct": 60, "hotkey": "f1", "cooldown_ms": 1000, "min_mana_pct": 20};
+
 test('widoczna jest dokładnie jedna zakładka', async () => {
   const p = panel();
   await p.settled();
@@ -87,18 +90,51 @@ test('otwarcie zakładki dociąga podgląd bez czekania na kolejną klatkę', as
   assert.ok(calls() >= 1, 'przełączenie na zakładkę nie dociągnęło podglądu');
 });
 
-// `calibrated` obiecuje tylko okno gry i wycinek. Przy niezaznaczonych paskach
-// zostaje prawdziwe, a leczenie odmawia na każdej klatce - bez tej odznaki nic
-// by o tym nie mówiło.
-test('odznaka Walki ostrzega, gdy leczenie nie ma odczytu pasków', async () => {
-  const p = panel({state: {
-    heal: {enabled: true},
-    combat: {calibrated: true, hp_ok: false, mana_ok: true, monsters_in_range: 2},
-  }});
+// `calibrated` obiecuje tylko okno gry i wycinek, więc przy niezaznaczonym
+// pasku HP zostaje prawdziwe, a reguła czytająca HP odmawia na każdej klatce.
+test('odznaka Walki ostrzega, gdy reguła nie ma czym czytać swojego zasobu', async () => {
+  const p = panel({
+    storage: {'minimap-lab.panel': JSON.stringify({heal_rules: [RULE_HP]})},
+    state: {
+      heal: {enabled: true},
+      combat: {calibrated: true, hp_ok: false, mana_ok: true, monsters_in_range: 2},
+    },
+  });
   await p.settled();
 
   assert.equal(p.el('badge-walka').textContent, '!',
-    'skalibrowane okno gry przykryło brak odczytu pasków');
+    'skalibrowane okno gry przykryło brak odczytu paska HP');
+});
+
+// Reguła o zerowym koszcie nie potrzebuje paska many - tak stanowi
+// internal/heal/rules.go:44-47. Ostrzeganie jej z tego powodu zawiesiłoby
+// czerwony wykrzyknik na stałe nad najzwyklejszym ustawieniem samego HP,
+// a przy okazji zjadłoby licznik potworów.
+test('sam pasek HP wystarcza regule, która nic nie kosztuje', async () => {
+  const p = panel({
+    storage: {'minimap-lab.panel': JSON.stringify({heal_rules: [RULE_HP]})},
+    state: {
+      heal: {enabled: true},
+      combat: {calibrated: true, hp_ok: true, mana_ok: false, monsters_in_range: 3},
+    },
+  });
+  await p.settled();
+
+  assert.equal(p.el('badge-walka').textContent, '3',
+    'brak paska many zgasił licznik potworów przy regule, która many nie potrzebuje');
+});
+
+test('reguła płacąca maną ostrzega, gdy paska many nie da się odczytać', async () => {
+  const p = panel({
+    storage: {'minimap-lab.panel': JSON.stringify({heal_rules: [RULE_COSTS_MANA]})},
+    state: {
+      heal: {enabled: true},
+      combat: {calibrated: true, hp_ok: true, mana_ok: false, monsters_in_range: 3},
+    },
+  });
+  await p.settled();
+
+  assert.equal(p.el('badge-walka').textContent, '!');
 });
 
 // Odliczanie siedzi w timerze, nie w strumieniu: panel odłożony w trakcie
@@ -115,4 +151,24 @@ test('zatrzymanie panelu kasuje odliczanie uzbrojenia', async () => {
 
   assert.equal(p.requests.filter(r => r.url === '/api/arm').length, 0,
     'panel zatrzymany, a uzbrojenie i tak poleciało');
+});
+
+test('kliknięcie w zakładkę, na której już jesteś, nic nie kosztuje', async () => {
+  const p = panel({state: {combat: {calibrated: true}}});
+  await p.settled();
+  await shareOnly(p);
+  await calibrate(p, 'viewport', [100, 50], [339, 225]);
+  p.el('vision-preview').checked = true;
+  openTab(p, 'walka');
+  await p.settled();
+
+  const calls = () => p.requests.filter(r => r.url === '/api/vision').length;
+  const before = calls();
+  const stored = p.stored().get('minimap-lab.panel');
+
+  openTab(p, 'walka');
+  await p.settled();
+
+  assert.equal(calls(), before, 'ponowne kliknięcie odpaliło kolejne żądanie podglądu');
+  assert.equal(p.stored().get('minimap-lab.panel'), stored, 'ponowne kliknięcie przepisało zapis');
 });

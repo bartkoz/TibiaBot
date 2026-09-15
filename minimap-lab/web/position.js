@@ -86,6 +86,9 @@ export function createPosition(ctx) {
         if (revision !== ctx.source.revision()) return;
         if (!response.ok || !answer.session) throw new Error(answer.reason ?? 'Nie udało się uruchomić śledzenia.');
         ctx.camera.setSession(answer.session);
+        // A fresh session can come from a restarted server, whose version
+        // counter starts over; the guard has to start over with it.
+        ctx.forgetStateVersion();
         clearReadout();
         ageAtReceipt = null;
       }
@@ -101,6 +104,7 @@ export function createPosition(ctx) {
     ctx.source.bump();
     $('live').checked = false;
     ctx.camera.setSession(null);
+    ctx.forgetStateVersion();
     ctx.control.disarm();
     clearReadout();
     $('actual-hz').textContent = '0.0';
@@ -162,7 +166,7 @@ export function createPosition(ctx) {
   }
 
   return {
-    mount, render, locateOnce, startTracking, stopTracking,
+    mount, render, locateOnce, stopTracking,
     syncLocateButton, clearReadout, tickAge,
     config: () => ({
       zoom: num('zoom'),

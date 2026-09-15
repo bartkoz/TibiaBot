@@ -23,15 +23,18 @@ function panel({state = {}, onRequest = () => null, storage = {}} = {}) {
     return {
       id, value: '', width: 190, height: 190, disabled: false, checked: false,
       textContent: '', hidden: false, className: '', children: [], listeners: {},
-      addEventListener(type, fn) { this.listeners[type] = fn; },
+      // A list per type, like a real EventTarget: ten modules now attach to
+      // the same shared nodes, and keeping only the last one registered would
+      // make tests pass on behaviour the browser does not have.
+      addEventListener(type, fn) { (this.listeners[type] ??= []).push(fn); },
       append(...kids) { this.children.push(...kids); },
       replaceChildren(...kids) { this.children = kids; },
       getContext() { return context2d; },
       toBlob(fn) { fn(new Blob(['png'], {type: 'image/png'})); },
       getBoundingClientRect() { return {left: 0, top: 0, width: this.width, height: this.height}; },
       setPointerCapture() {}, setAttribute() {}, remove() {},
-      click() { this.listeners.click?.(); this.onclick?.(); },
-      fire(type, event = {}) { this.listeners[type]?.(event); },
+      click() { this.fire('click'); this.onclick?.(); },
+      fire(type, event = {}) { for (const fn of this.listeners[type] ?? []) fn(event); },
       async play() {},
       videoWidth: 800, videoHeight: 600, currentTime: 0,
     };

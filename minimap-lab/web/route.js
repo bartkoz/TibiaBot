@@ -108,8 +108,7 @@ export function createRoute(ctx) {
   }
 
   return {
-    mount, render, refreshList, routeStatus,
-    count: () => cache?.waypoints?.length ?? 0,
+    mount, render,
     config: () => ({
       follow: $('route-follow').checked,
       record_auto: $('route-record').checked,

@@ -39,3 +39,20 @@ test('przełączniki, które każą botowi działać, nie są zapamiętywane', a
     assert.equal(second.el(id).checked, false, `${id} wrócił zaznaczony po odświeżeniu`);
   }
 });
+
+// Lista pięter przychodzi z /api/info, więc w chwili pierwszego restore
+// #floor nie ma jeszcze żadnej opcji i czyta się jako pusty. Cokolwiek
+// zapisałoby się w tym oknie — kliknięcie zakładki, wpisane ustawienie —
+// nadpisałoby zapamiętane piętro pustką, którą drugie restore wepchnęłoby
+// z powrotem do już wypełnionego selecta.
+test('zapis jest zamknięty, dopóki panel się nie uruchomi', async () => {
+  const p = panel({storage: {'minimap-lab.panel': JSON.stringify({floor: '6'})}});
+
+  // jeszcze przed odpowiedzią z /api/info
+  p.el('tab-walka').click();
+  await p.settled();
+
+  assert.equal(JSON.parse(p.stored().get('minimap-lab.panel')).floor, '6',
+    'kliknięcie w trakcie startu nadpisało zapamiętane piętro');
+  assert.equal(p.el('floor').value, '6', 'piętro nie wróciło do selecta');
+});

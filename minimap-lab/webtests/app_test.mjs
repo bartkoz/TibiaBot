@@ -88,3 +88,54 @@ test('snapshot maluje pozycję, trasę i stan uzbrojenia', async () => {
   assert.equal(p.el('input-disarm').disabled, false);
   assert.match(p.el('blocks-status').textContent, /walk E/);
 });
+
+// Zrzut stanu to najdroższa rzecz w pętli — cały snapshot z wcięciami — a
+// siedzi na zakładce schowanej domyślnie.
+test('zrzut JSON nie powstaje, dopóki Diagnostyka jest schowana', async () => {
+  const p = panel({state: {state_version: 1, position: {x: 1, y: 2, z: 7}}});
+  await p.settled();
+
+  assert.equal(p.el('json').textContent, '', 'zrzut policzony dla schowanej zakładki');
+
+  p.el('tab-diagnostyka').click();
+  await p.settled();
+
+  assert.match(p.el('json').textContent, /"state_version": 1/,
+    'otwarcie Diagnostyki nie pokazało ostatniego stanu');
+});
+
+// Licznik wersji należy do procesu serwera, nie do panelu: po restarcie
+// minimap-lab publikuje wersję 1 i bez zapomnienia poprzedniej panel
+// odrzucałby każdy snapshot, zamarzając na starych danych bez słowa.
+test('restart śledzenia przyjmuje stan z niższym numerem wersji', async () => {
+  // Pusty na starcie, żeby pierwsze odpytanie nie skonsumowało numeru wersji.
+  // Jedno tyknięcie pętli wysyła klatkę i odpytuje /api/state, więc obie
+  // ścieżki oddają ten sam stan - inaczej druga kasowałaby pierwszą.
+  let snapshot = {};
+  const p = panel({
+    onRequest: url => url === '/api/frame' || url === '/api/state'
+      ? {ok: true, async json() { return snapshot; }}
+      : null,
+  });
+  await p.settled();
+  await shareAndSelect(p);
+  await armNow(p);
+
+  const track = async on => {
+    p.el('live').checked = on;
+    p.el('live').fire('change');
+    for (let i = 0; i < 4; i++) await p.settled();
+  };
+
+  snapshot = {state_version: 9, position: {x: 10, y: 20, z: 7}};
+  await track(true);
+  assert.equal(p.el('coordinates').textContent, '10, 20, 7', 'pierwsza sesja nic nie pokazała');
+
+  // serwer wstaje od nowa i zaczyna numerować od jedynki
+  await track(false);
+  snapshot = {state_version: 1, position: {x: 33, y: 44, z: 7}};
+  await track(true);
+
+  assert.equal(p.el('coordinates').textContent, '33, 44, 7',
+    'stan po restarcie serwera odrzucony jako stary');
+});
