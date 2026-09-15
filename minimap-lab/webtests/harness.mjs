@@ -105,9 +105,11 @@ function panel({state = {}, onRequest = () => null, storage = {}} = {}) {
   };
   // One factory call per test: the panel no longer runs on import, so nothing
   // leaks from one test into the next the way a shared vm context did.
-  createPanel(sandbox).start();
+  const app = createPanel(sandbox);
+  app.start();
   return {
     sandbox, requests, el: id => document.getElementById(id),
+    stop: () => app.stop(),
     draws: () => drawCount,
     stored: () => sandbox.localStorage.store,
     tick: () => workerTick?.(),

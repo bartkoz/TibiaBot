@@ -35,10 +35,16 @@ export function createTabs(ctx) {
       pane(t.id).hidden = !on;
     }
     if (remember) ctx.form.save();
+    ctx.reveal();
   }
 
+  // The glyph is hidden from assistive technology and its meaning is put on
+  // the tab itself: a screen reader announcing "Sterowanie czarne koło" is
+  // worse than no badge at all.
   function setBadge(id, badge) {
     const el = $(`badge-${id}`);
+    const name = TABS.find(t => t.id === id).label;
+    tab(id).setAttribute('aria-label', badge ? `${name} — ${badge.label}` : name);
     if (!badge) {
       el.hidden = true;
       el.textContent = '';
@@ -55,10 +61,13 @@ export function createTabs(ctx) {
       const el = tab(t.id);
       el.addEventListener('click', () => show(t.id));
       el.addEventListener('keydown', e => {
-        const delta = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0;
-        if (!delta) return;
+        const next = e.key === 'ArrowRight' ? TABS[(i + 1) % TABS.length]
+          : e.key === 'ArrowLeft' ? TABS[(i - 1 + TABS.length) % TABS.length]
+            : e.key === 'Home' ? TABS[0]
+              : e.key === 'End' ? TABS[TABS.length - 1]
+                : null;
+        if (!next) return;
         e.preventDefault?.();
-        const next = TABS[(i + delta + TABS.length) % TABS.length];
         show(next.id);
         tab(next.id).focus?.();
       });

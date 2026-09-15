@@ -104,7 +104,8 @@ export function createHeal(ctx) {
   // what fired last and how long ago, or why nothing did.
   function render(state) {
     const heal = state.heal;
-    ctx.tabs.setBadge('leczenie', heal?.enabled ? {kind: 'on', text: '●'} : null);
+    ctx.tabs.setBadge('leczenie',
+      heal?.enabled ? {kind: 'on', text: '●', label: 'włączone'} : null);
     if (!heal?.enabled) { $('heal-status').textContent = 'Leczenie wyłączone.'; return; }
     const parts = [];
     if (heal.last_hotkey && heal.last_age_ms != null) {
@@ -119,7 +120,9 @@ export function createHeal(ctx) {
   return {
     mount, render,
     config: () => ({heal: {enabled: $('heal-on').checked, rules: rules.map(r => ({...r}))}}),
-    rules: () => rules,
+    // A copy, not the array: the list is this module's own state and the
+    // only writer of it is this module.
+    rules: () => rules.map(r => ({...r})),
     setRules: saved => {
       rules = saved.map(r => ({...HEAL_DEFAULT, ...r}));
       renderRules();

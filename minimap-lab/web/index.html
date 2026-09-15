@@ -20,12 +20,12 @@
   </header>
 
   <nav class="tabs" role="tablist" aria-label="Sekcje panelu">
-    <button type="button" role="tab" id="tab-pozycja" aria-controls="panel-pozycja" aria-selected="true">Pozycja<span class="badge" id="badge-pozycja" hidden></span></button>
-    <button type="button" role="tab" id="tab-trasa" aria-controls="panel-trasa" aria-selected="false">Trasa<span class="badge" id="badge-trasa" hidden></span></button>
-    <button type="button" role="tab" id="tab-walka" aria-controls="panel-walka" aria-selected="false">Walka<span class="badge" id="badge-walka" hidden></span></button>
-    <button type="button" role="tab" id="tab-leczenie" aria-controls="panel-leczenie" aria-selected="false">Leczenie<span class="badge" id="badge-leczenie" hidden></span></button>
-    <button type="button" role="tab" id="tab-sterowanie" aria-controls="panel-sterowanie" aria-selected="false">Sterowanie<span class="badge" id="badge-sterowanie" hidden></span></button>
-    <button type="button" role="tab" id="tab-diagnostyka" aria-controls="panel-diagnostyka" aria-selected="false">Diagnostyka<span class="badge" id="badge-diagnostyka" hidden></span></button>
+    <button type="button" role="tab" id="tab-pozycja" aria-controls="panel-pozycja" aria-selected="true">Pozycja<span class="badge" aria-hidden="true" id="badge-pozycja" hidden></span></button>
+    <button type="button" role="tab" id="tab-trasa" aria-controls="panel-trasa" aria-selected="false" tabindex="-1">Trasa<span class="badge" aria-hidden="true" id="badge-trasa" hidden></span></button>
+    <button type="button" role="tab" id="tab-walka" aria-controls="panel-walka" aria-selected="false" tabindex="-1">Walka<span class="badge" aria-hidden="true" id="badge-walka" hidden></span></button>
+    <button type="button" role="tab" id="tab-leczenie" aria-controls="panel-leczenie" aria-selected="false" tabindex="-1">Leczenie<span class="badge" aria-hidden="true" id="badge-leczenie" hidden></span></button>
+    <button type="button" role="tab" id="tab-sterowanie" aria-controls="panel-sterowanie" aria-selected="false" tabindex="-1">Sterowanie<span class="badge" aria-hidden="true" id="badge-sterowanie" hidden></span></button>
+    <button type="button" role="tab" id="tab-diagnostyka" aria-controls="panel-diagnostyka" aria-selected="false" tabindex="-1">Diagnostyka<span class="badge" aria-hidden="true" id="badge-diagnostyka" hidden></span></button>
   </nav>
   </div>
 
@@ -71,7 +71,7 @@
     </section>
 
     <div class="panes">
-      <section class="panel" role="tabpanel" id="panel-pozycja" aria-labelledby="tab-pozycja">
+      <section class="panel" role="tabpanel" id="panel-pozycja" aria-labelledby="tab-pozycja" tabindex="0">
         <h2>Pozycja</h2>
         <label>Piętro Z<select id="floor"></select></label>
         <label class="check"><input id="floor-auto" type="checkbox" checked>Rozpoznawaj przejścia Z ±1</label>
@@ -104,7 +104,7 @@
         <p id="metrics"></p>
       </section>
 
-      <section class="panel" role="tabpanel" id="panel-trasa" aria-labelledby="tab-trasa" hidden>
+      <section class="panel" role="tabpanel" id="panel-trasa" aria-labelledby="tab-trasa" tabindex="0" hidden>
         <h2>Trasa</h2>
         <div class="toolbar">
           <label class="button">Wczytaj JSON<input id="route-file" type="file" accept="application/json,.json" hidden></label>
@@ -147,7 +147,7 @@
         </details>
       </section>
 
-      <section class="panel" role="tabpanel" id="panel-walka" aria-labelledby="tab-walka" hidden>
+      <section class="panel" role="tabpanel" id="panel-walka" aria-labelledby="tab-walka" tabindex="0" hidden>
         <h2>Walka: potwory, battle lista, paski</h2>
         <div id="vision-rects">Nic jeszcze nie zaznaczone.</div>
         <p class="hint">Prostokąty zaznacza się na podglądzie po lewej — wybierz je w polu „Zaznaczam”.</p>
@@ -198,7 +198,7 @@
         <div id="vision-info" role="status" aria-live="polite">—</div>
       </section>
 
-      <section class="panel" role="tabpanel" id="panel-leczenie" aria-labelledby="tab-leczenie" hidden>
+      <section class="panel" role="tabpanel" id="panel-leczenie" aria-labelledby="tab-leczenie" tabindex="0" hidden>
         <h2>Leczenie</h2>
         <label class="check"><input id="heal-on" type="checkbox">Lecz automatycznie</label>
         <p class="hint">Wymaga zaznaczonych prostokątów paska HP i paska many w zakładce Walka oraz uzbrojonego wykonawcy.</p>
@@ -211,7 +211,7 @@
         <div id="heal-status" role="status" aria-live="polite">—</div>
       </section>
 
-      <section class="panel" role="tabpanel" id="panel-sterowanie" aria-labelledby="tab-sterowanie" hidden>
+      <section class="panel" role="tabpanel" id="panel-sterowanie" aria-labelledby="tab-sterowanie" tabindex="0" hidden>
         <h2>Sterowanie</h2>
         <div class="toolbar">
           <button id="input-arm" disabled>Uzbrój</button>
@@ -254,7 +254,7 @@
         <div id="input-status" role="status" aria-live="polite">Sterowanie wyłączone. Uruchom panel z <code>-input dry</code> albo <code>-input system</code>.</div>
       </section>
 
-      <section class="panel" role="tabpanel" id="panel-diagnostyka" aria-labelledby="tab-diagnostyka" hidden>
+      <section class="panel" role="tabpanel" id="panel-diagnostyka" aria-labelledby="tab-diagnostyka" tabindex="0" hidden>
         <h2>Diagnostyka</h2>
         <p id="maps"></p>
         <p class="hint">Wynik dopasowania nie jest prawdopodobieństwem. Wybierz piętro startowe; dalsze przejścia Z ±1 mogą być rozpoznawane z obrazu. Pierwszy test na grze wymaga kalibracji i sprawdzenia znanego miejsca.</p>

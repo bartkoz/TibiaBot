@@ -32,7 +32,7 @@ export function createBlocks(ctx) {
   const {api} = ctx;
   const {ImageData} = ctx.env;
 
-  let window = null, pending = false;
+  let gridWindow = null, pending = false;
 
   async function refresh(p) {
     if (pending) return;
@@ -42,7 +42,7 @@ export function createBlocks(ctx) {
       if (!res.ok) return;
       const origin = (res.headers.get('X-Grid-Origin') ?? '0,0').split(',').map(Number);
       const cells = new Uint8Array(await res.arrayBuffer());
-      window = {origin, z: p.z, cells};
+      gridWindow = {origin, z: p.z, cells};
       const side = 2 * GRID_RADIUS + 1;
       const canvas = $('grid-canvas');
       canvas.width = canvas.height = side;
@@ -53,11 +53,11 @@ export function createBlocks(ctx) {
 
   function mount() {
     $('grid-canvas').addEventListener('click', async event => {
-      if (!window) return;
+      if (!gridWindow) return;
       const side = 2 * GRID_RADIUS + 1;
       const p = point(event, $('grid-canvas'), side, side);
-      const x = window.origin[0] + p.x, y = window.origin[1] + p.y;
-      const r = await api.deleteBlock({x, y, z: window.z});
+      const x = gridWindow.origin[0] + p.x, y = gridWindow.origin[1] + p.y;
+      const r = await api.deleteBlock({x, y, z: gridWindow.z});
       const answer = await r.json().catch(() => ({}));
       $('blocks-status').textContent = answer.cleared
         ? `Usunięto nauczoną blokadę na ${x}, ${y}.`
@@ -65,13 +65,17 @@ export function createBlocks(ctx) {
     });
   }
 
-  function render(state) {
-    const log = state.log ?? [];
-    $('blocks-status').textContent = log.length ? log[log.length - 1].text : '—';
+  function reveal(state) {
     if ($('grid-preview-on').checked && state.position && ctx.tabs.visible('trasa')) {
       refresh(state.position);
     }
   }
 
-  return {mount, render};
+  function render(state) {
+    const log = state.log ?? [];
+    $('blocks-status').textContent = log.length ? log[log.length - 1].text : '—';
+    reveal(state);
+  }
+
+  return {mount, render, reveal};
 }

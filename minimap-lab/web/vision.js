@@ -163,23 +163,39 @@ export function createVision(ctx) {
     });
   }
 
-  function render(state) {
-    renderState(state.combat);
-    // The warning wins over the count: healing switched on without calibrated
-    // bars is a switch that silently cannot work, and that is worth a mark on
-    // a tab the user is not looking at. A monster count is merely useful.
-    const c = state.combat;
-    if (state.heal?.enabled && !c?.calibrated) ctx.tabs.setBadge('walka', {kind: 'warn', text: '!'});
-    else if (c?.calibrated && c.monsters_in_range > 0) {
-      ctx.tabs.setBadge('walka', {kind: 'count', text: String(c.monsters_in_range)});
-    } else ctx.tabs.setBadge('walka', null);
+  // reveal is the gated fetch on its own, so opening the tab pulls a preview
+  // without waiting for the next snapshot.
+  function reveal(state) {
     if ($('vision-preview').checked && state.combat?.calibrated && ctx.tabs.visible('walka')) {
       fetchVision();
     }
   }
 
+  function render(state) {
+    renderState(state.combat);
+    // The warning wins over the count: healing switched on without calibrated
+    // bars is a switch that silently cannot work, and that is worth a mark on
+    // a tab the user is not looking at. A monster count is merely useful.
+    //
+    // `calibrated` only promises the game window and the crop, so it is not
+    // enough on its own: with the bars unmarked it stays true while hp_ok and
+    // mana_ok go false, and healing refuses on every frame with nothing on
+    // screen to say why.
+    const c = state.combat;
+    const blind = !c?.calibrated || !c.hp_ok || !c.mana_ok;
+    if (state.heal?.enabled && blind) {
+      ctx.tabs.setBadge('walka', {kind: 'warn', text: '!', label: 'leczenie bez odczytu pasków'});
+    } else if (c?.calibrated && c.monsters_in_range > 0) {
+      ctx.tabs.setBadge('walka', {
+        kind: 'count', text: String(c.monsters_in_range),
+        label: `${c.monsters_in_range} potworów w promieniu`,
+      });
+    } else ctx.tabs.setBadge('walka', null);
+    reveal(state);
+  }
+
   return {
-    mount, render, applyRegions, cropRect,
+    mount, render, reveal, applyRegions, cropRect,
     config: () => ({combat: combatConfig()}),
     setRect: (key, box) => { rects[key] = box; },
     clearRects: () => {

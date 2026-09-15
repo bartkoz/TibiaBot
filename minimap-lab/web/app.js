@@ -29,7 +29,7 @@ export function createPanel(env) {
   const api = createApi(env);
 
   let controlAvailable = false, brainAvailable = false;
-  let worker = null, statePending = false, lastStateVersion = -1;
+  let worker = null, statePending = false, lastStateVersion = -1, lastState = null;
 
   const ctx = {env, dom, api};
   ctx.status = (text, kind = '') => { $('status').textContent = text; $('status').className = kind; };
@@ -37,6 +37,7 @@ export function createPanel(env) {
   ctx.brainConfig = brainConfig;
   ctx.pushConfig = pushConfig;
   ctx.loop = {start: startLoop, stop: stopLoop};
+  ctx.reveal = reveal;
 
   ctx.camera = new Camera({
     fetch: (...a) => env.fetch(...a),
@@ -63,6 +64,11 @@ export function createPanel(env) {
   // Order is the render order, and it is load-bearing in one place: position
   // reports a match reason into the status line, and the executor's "stopped"
   // has to be able to overwrite it, so control comes after position.
+  //
+  // `modules` is read by brainConfig below, so no module may call
+  // ctx.brainConfig or ctx.pushConfig from inside its own factory - it would
+  // reach this binding before it exists. Doing it from mount() or a listener,
+  // which is what they all do, is always safe.
   const modules = [ctx.tabs, ctx.source, ctx.selection, ctx.position, ctx.route,
     ctx.vision, ctx.heal, ctx.control, ctx.blocks, ctx.form];
 
@@ -126,8 +132,19 @@ export function createPanel(env) {
       if (state.state_version <= lastStateVersion) return;
       lastStateVersion = state.state_version;
     }
+    lastState = state;
     $('json').textContent = JSON.stringify(state, null, 2);
     for (const m of modules) m.render?.(state);
+  }
+
+  // reveal runs when a tab comes on screen. The two gated previews only fetch
+  // while their own tab is visible, so without this a panel opened between
+  // snapshots would sit empty - forever in single-shot mode, where no further
+  // snapshot is coming. It is deliberately not a full re-render: position
+  // stamps the age clock in render(), and restarting that on every tab switch
+  // would make a stale reading look fresh.
+  function reveal() {
+    if (lastState) for (const m of modules) m.reveal?.(lastState);
   }
 
   async function start() {
@@ -145,7 +162,9 @@ export function createPanel(env) {
       $('maps').textContent = info.message || `Mapy: ${info.maps}`;
       // The floor list arrives after the first restore, so the remembered floor
       // is applied a second time, once the options it names actually exist.
-      ctx.form.restore();
+      // The tab is left alone: /api/info is a round trip, and a user who
+      // picked a tab during it must not have it yanked back underneath them.
+      ctx.form.restore({tab: false});
     } catch { /* panel działa też bez /api/info */ }
     // A state poll costs one request and tells the panel whether control is even
     // available, which is what every disabled button below depends on.
@@ -158,7 +177,13 @@ export function createPanel(env) {
 
   // stop puts the panel down: the browser entry never calls it, but a test that
   // builds one has to be able to release the shared screen and the loop.
-  function stop() { ctx.source.stopShare(); }
+  function stop() {
+    // The arming countdown lives in a timer, not in the stream: putting the
+    // panel down without cancelling it would still POST /api/arm five seconds
+    // later, into a panel that is no longer running.
+    ctx.control.cancelArm();
+    ctx.source.stopShare();
+  }
 
   for (const m of modules) m.mount?.();
 

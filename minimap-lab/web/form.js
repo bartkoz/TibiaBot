@@ -47,7 +47,7 @@ export function createForm(ctx) {
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch { /* tryb prywatny */ }
   }
 
-  function restore() {
+  function restore({tab = true} = {}) {
     let state;
     try { state = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? 'null'); } catch { return; }
     if (!state) return;
@@ -61,7 +61,7 @@ export function createForm(ctx) {
     // Restored without remembering: writing the tab back out here would be
     // a save triggered by a load, and the first one of those to run before
     // the rules are in would blank them.
-    if (state.tab) ctx.tabs.show(state.tab, {remember: false});
+    if (tab && state.tab) ctx.tabs.show(state.tab, {remember: false});
   }
 
   function mount() {

@@ -99,7 +99,9 @@ export function createRoute(ctx) {
         (state.recorder?.waiting ? ' · czekam na dane przechodniości' : '')
       : 'Brak trasy.');
     $('route-next').textContent = r.next || '—';
-    ctx.tabs.setBadge('trasa', r.count ? {kind: 'count', text: String(r.count)} : null);
+    ctx.tabs.setBadge('trasa', r.count
+      ? {kind: 'count', text: String(r.count), label: `${r.count} waypointów`}
+      : null);
     // Refetched only when the count moves: the list is a thousand rows at worst
     // and has no business being rebuilt at frame rate.
     if (r.count !== lastCount) { lastCount = r.count; refreshList(); }
