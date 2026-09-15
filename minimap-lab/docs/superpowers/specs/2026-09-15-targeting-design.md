@@ -25,7 +25,7 @@ nich bez wyraźnej prośby.
    odwrót, a ten jest w fazie 5. W `Fighting` bot nie wysyła klawiszy chodzenia.
 2. **Gatunków potworów nie rozróżniamy.**
 3. **Cel wskazujemy hotkeyem „Attack next target"**, który klient oficjalny
-   udostępnia i który użytkownik ma przypisany. To zmiana względem specu
+   udostępnia i który użytkownik ma przypisany — u niego jest to **spacja**. To zmiana względem specu
    walki, który zakładał klik w battle listę: klik jest zbędny, skoro jest
    klawisz, a klawisz nie ma skutków ubocznych chybionego kliknięcia.
    `ClickPoint`, strefy kliknięć i `Emitter.ClickButton` przesuwają się do
