@@ -25,6 +25,30 @@ go build -o minimap-lab .
 
 Na Windows: `go build -o minimap-lab.exe .`, a następnie `minimap-lab.exe -maps "C:\sciezka\do\minimap"`. Ten sam kod działa bez natywnych bibliotek; przechwytywanie obrazu obsługuje przeglądarka.
 
+## Układ panelu
+
+Panel dzieli się na **stałą kolumnę z podglądem** i **sześć zakładek**: Pozycja,
+Trasa, Walka, Leczenie, Sterowanie i Diagnostyka. Aktywna zakładka jest
+pamiętana w `localStorage`, a strzałki lewo-prawo przechodzą po pasku.
+
+Poza zakładkami — zawsze widoczne — zostają: pasek narzędzi (demo, screenshot,
+udostępnianie ekranu), selektor **Zaznaczam**, podgląd ekranu, wycinek minimapy,
+mapa referencyjna i linia stanu. To nie jest kwestia gustu: minimapę, okno gry,
+battle listę i oba paski kalibruje się przeciąganiem po **tym samym** płótnie,
+więc schowanie go w zakładce zabrałoby ze sobą kalibrację. Z tego samego powodu
+selektor **Zaznaczam** stoi tuż nad płótnem, którym steruje.
+
+Odznaka przy nazwie zakładki mówi, co się dzieje tam, gdzie akurat nie
+patrzysz: liczba waypointów przy **Trasie**, liczba potworów w promieniu przy
+**Walce**, kropka przy **Leczeniu** i **Sterowaniu**, gdy są włączone. Wyjątek:
+leczenie włączone bez skalibrowanych pasków HP i many daje przy **Walce**
+wykrzyknik zamiast licznika — to przełącznik, który nie ma jak zadziałać.
+
+Podgląd widzenia i podgląd przechodności pobierają dane tylko wtedy, gdy ich
+zakładka jest na ekranie. Zaznaczony checkbox kosztuje żądanie na każdej
+klatce, dziesięć razy na sekundę, a płacenie tego za niewidoczne płótno nie ma
+sensu.
+
 ## Test z grą
 
 1. Ustaw stały zoom minimapy i wycentruj ją na postaci.
@@ -34,7 +58,7 @@ Na Windows: `go build -o minimap-lab.exe .`, a następnie `minimap-lab.exe -maps
 5. Zostaw **piksele na kratkę → Auto**. Program sprawdza kolejno skale `1–4`, a pierwszą dającą jednoznaczne dopasowanie zachowuje w panelu. To kalibracja heurystyczna, nie porównanie wszystkich skal jednocześnie. Po zmianie zoomu gry wybierz Auto ponownie. Ręcznie dostępne są skale całkowite `1–8`; skala ułamkowa lub oddalenie poniżej 1 px/kratkę wymaga zmiany źródła.
 6. Wybierz właściwe piętro Z, kliknij **Znajdź pozycję**. Obok współrzędnych zobaczysz fragment atlasu z zaznaczonym kandydatem. Przy wyniku niejednoznacznym współrzędne pozostają nieznane, a JSON pokazuje kandydatów diagnostycznych.
 7. Po kliknięciu **Znajdź pozycję** śledzenie udostępnionego ekranu działa automatycznie, z docelową częstotliwością 10 klatek/s. Checkbox **Śledź XYZ na bieżąco** pozwala je zatrzymać i wznowić. Podczas pierwszego wyszukiwania pozostań w miejscu; po potwierdzeniu lokalnej pozycji przejdź ręcznie kilka kratek. Zmiana rozdzielczości zatrzymuje odczyt i wymaga ponownego zaznaczenia.
-8. Gdy pozycja jest stabilna, przejdź do sekcji **4. Trasa**: zaznacz **Nagrywaj trasę** i przejdź planowaną drogę, potem **Pobierz JSON**. Do prowadzenia po zapisanej trasie wczytaj plik i zaznacz **Podążaj za trasą**.
+8. Gdy pozycja jest stabilna, przejdź do zakładki **Trasa**: zaznacz **Nagrywaj trasę** i przejdź planowaną drogę, potem **Pobierz JSON**. Do prowadzenia po zapisanej trasie wczytaj plik i zaznacz **Podążaj za trasą**.
 
 ## Tester 5–10 Hz
 
@@ -63,7 +87,7 @@ Benchmarki na zapisanym prawdziwym wycinku:
 
 ```sh
 go test ./... -run '^$' -bench 'Benchmark(HTTP)?TrackActualCapture' -benchtime=2s -benchmem
-node --test webtests/*.cjs
+npm test
 ```
 
 Benchmark HTTP obejmuje dekodowanie PNG, obsługę żądania i odpowiedź JSON wewnątrz procesu. Nie obejmuje przeglądarki ani sieci; rzeczywisty czas całego odczytu pokazuje panel.
@@ -72,7 +96,7 @@ Najpierw sprawdź znane miejsce, pojedyncze kroki w czterech kierunkach i granic
 
 ## Trasy waypointów
 
-Sekcja **4. Trasa** nagrywa waypointy i prowadzi po nich w trybie podglądu. Panel liczy trasę i pokazuje kierunek następnego kroku; postać prowadzisz sam.
+Zakładka **Trasa** nagrywa waypointy i prowadzi po nich w trybie podglądu. Panel liczy trasę i pokazuje kierunek następnego kroku; postać prowadzisz sam.
 
 Waypointy żyją w przeglądarce i w pliku JSON, który sam wczytujesz i pobierasz. Serwer nie zapisuje tras na dysku i nie pamięta sesji. Robocza trasa jest przechowywana w `localStorage`, żeby odświeżenie karty nie skasowało nagrywania; na dysk trafia dopiero po kliknięciu **Pobierz JSON**.
 
@@ -164,7 +188,7 @@ a komunikat nazywa konkretną przyczynę: brak danych mapy, nauczoną blokadę
 
 ### Podgląd przechodności
 
-Sekcja **6. Podgląd przechodności** rysuje okno 65×65 kratek wokół postaci. Ciemna zieleń to teren przejezdny, czerwień — nieprzechodni w danych mapy, grafit — brak danych (nie ma kafla PNG; to nie to samo co ściana), żółć — blokada nauczona tymczasowa, fiolet — trwała. Kliknięcie kratki z nauczoną blokadą usuwa ją i mówi, co dokładnie zniknęło — rodzaj, liczbę epizodów i czas pozostały do wygaśnięcia. Kratki opisanej przez dane mapy nie da się w ten sposób ruszyć.
+**Podgląd przechodności**, na dole zakładki **Trasa**, rysuje okno 65×65 kratek wokół postaci. Ciemna zieleń to teren przejezdny, czerwień — nieprzechodni w danych mapy, grafit — brak danych (nie ma kafla PNG; to nie to samo co ściana), żółć — blokada nauczona tymczasowa, fiolet — trwała. Kliknięcie kratki z nauczoną blokadą usuwa ją i mówi, co dokładnie zniknęło — rodzaj, liczbę epizodów i czas pozostały do wygaśnięcia. Kratki opisanej przez dane mapy nie da się w ten sposób ruszyć.
 
 Okno odświeża się po zmianie kratki postaci albo co pół sekundy i nigdy nie ma dwóch żądań naraz. Endpoint ma własny cache kafli, niezależny od planera trasy — planer trasy pyta o prostokąt rozpięty na całej trasie, podgląd o małe okno wokół postaci, a jeden wspólny cache kazałby im wypierać się nawzajem przy każdym odczycie. Podgląd działa niezależnie od podążania za trasą; przydaje się właśnie wtedy, gdy żadna trasa nie jest uruchomiona.
 
@@ -172,7 +196,7 @@ To także narzędzie diagnostyczne: lada, przez którą postać nie przejdzie, a
 
 ## Widzenie: potwory i paski
 
-Bot liczy potwory z pasków życia, które klient rysuje nad każdym stworem, czyta battle listę i własne paski HP/many — wszystko pikselami, w Go, tak samo jak lokalizacja z minimapy. Trzy nowe pakiety robią to: `internal/vision` szuka pasków w wycinku okna gry i przelicza je na frakcyjne kratki od postaci, `internal/battle` czyta liczbę wierszy battle listy i wskazuje, który ma ramkę celu, `internal/vitals` czyta własny pasek HP albo many jako procent. Kalibracja i podgląd żyją w panelu, w sekcji **7. Widzenie: potwory, battle lista, paski**.
+Bot liczy potwory z pasków życia, które klient rysuje nad każdym stworem, czyta battle listę i własne paski HP/many — wszystko pikselami, w Go, tak samo jak lokalizacja z minimapy. Trzy nowe pakiety robią to: `internal/vision` szuka pasków w wycinku okna gry i przelicza je na frakcyjne kratki od postaci, `internal/battle` czyta liczbę wierszy battle listy i wskazuje, który ma ramkę celu, `internal/vitals` czyta własny pasek HP albo many jako procent. Kalibracja i podgląd żyją w panelu, w zakładce **Walka**.
 
 ### Wycinek, nie całe okno gry
 
@@ -184,7 +208,7 @@ Przy dużym oknie gry ta oszczędność może nie wystarczyć — `frame.MaxBody
 
 ### Kolejność kalibracji
 
-1. **Okno gry** — zaznacz je w sekcji 7 (`Kalibruję` → „okno gry") bez ramki klienta; z tego prostokąta liczy się rozmiar kratki i wycinek.
+1. **Okno gry** — wybierz **Zaznaczam → okno gry** nad podglądem i przeciągnij po nim, bez ramki klienta; z tego prostokąta liczy się rozmiar kratki i wycinek.
 2. **Własny pasek na podglądzie** — zaznacz „Klient rysuje własny pasek postaci", włącz „Pokazuj podgląd widzenia" i kliknij pasek postaci na obrazie. Bez skalibrowanego okna gry podgląd nie ma czego pokazać, stąd ta kolejność.
 3. **Battle lista.**
 4. **Paski HP i many.**
@@ -207,7 +231,7 @@ Battle lista z filtrami klienta („ukryj graczy", „ukryj NPC") daje sufit na 
 
 ### Wskaźnik stanu
 
-Sekcja 7 ma teraz swój telemetryczny pasek, tej samej postaci co licznik śledzenia w sekcji 3: **Potwory w promieniu**, **Widziane paski**, **Odrzucone przez mapę**, **Wiersze battle listy**, **Cel**, **HP**, **Mana**. Czyta go wprost ze snapshotu (`state.combat`), więc — inaczej niż obrysy na podglądzie — nie potrzebuje osobnego żądania i aktualizuje się na każdej klatce.
+Zakładka **Walka** ma swój telemetryczny pasek, tej samej postaci co liczniki śledzenia w zakładce **Pozycja**: **Potwory w promieniu**, **Widziane paski**, **Odrzucone przez mapę**, **Wiersze battle listy**, **Cel**, **HP**, **Mana**. Czyta go wprost ze snapshotu (`state.combat`), więc — inaczej niż obrysy na podglądzie — nie potrzebuje osobnego żądania i aktualizuje się na każdej klatce.
 
 Kilka zasad czytania tych liczb:
 
@@ -232,7 +256,7 @@ Tolerancja barwy paska, próg czerni i tolerancja ramki celu w battle liście s�
 
 ```sh
 go test ./... -race
-node --test webtests/*.cjs
+npm test
 ```
 
 Pięć testów pomija się, dopóki `testdata/combat-capture.png` nie trafi do repo — patrz sekcja **Testy** niżej i `docs/superpowers/plans/2026-09-07-vision-layer-measurements.md`. Jeden z nich, `TestRealCaptureOffsets`, przy okazji zapisuje `.debug/vision-fixture.png` — rysunek diagnostyczny: wycinek z purpurową linią na górnej i dolnej krawędzi każdego wykrytego paska, do sprawdzenia na oko, czy detektor trafia w prawdziwe stwory.
@@ -277,7 +301,7 @@ Flaga `-input` wybiera tryb: `off` (domyślny — odczyt XYZ i trasy działają,
 
 ### Uzbrajanie i rozbrajanie
 
-Kliknięcie **Uzbrój** w panelu (sekcja **5. Sterowanie**) nie uzbraja od razu — uruchamia **5-sekundowe odliczanie**, widoczne w `#input-status`. Dopiero po jego upływie panel wysyła `POST /api/arm`, a Go zapamiętuje aktywne w tej właśnie chwili okno (PID i identyfikator procesu — bundle ID na macOS, ścieżka pliku na Windows) jako jedyny cel, do którego wolno coś wysłać. **W tym oknie przełącz się na klienta gry** — panel nie rozpoznaje, które okno to Tibia, tylko zapamiętuje to, co ma focus w chwili wysłania żądania, a bez odliczenia tym oknem byłaby zawsze przeglądarka, bo to jej przycisk został właśnie kliknięty. Drugie kliknięcie **Uzbrój** w trakcie odliczania je anuluje, bez wysyłania czegokolwiek.
+Kliknięcie **Uzbrój** w panelu (zakładka **Sterowanie**) nie uzbraja od razu — uruchamia **5-sekundowe odliczanie**, widoczne w `#input-status`. Dopiero po jego upływie panel wysyła `POST /api/arm`, a Go zapamiętuje aktywne w tej właśnie chwili okno (PID i identyfikator procesu — bundle ID na macOS, ścieżka pliku na Windows) jako jedyny cel, do którego wolno coś wysłać. **W tym oknie przełącz się na klienta gry** — panel nie rozpoznaje, które okno to Tibia, tylko zapamiętuje to, co ma focus w chwili wysłania żądania, a bez odliczenia tym oknem byłaby zawsze przeglądarka, bo to jej przycisk został właśnie kliknięty. Drugie kliknięcie **Uzbrój** w trakcie odliczania je anuluje, bez wysyłania czegokolwiek.
 
 Każde zdarzenie sprawdza focus tuż przed wysłaniem, więc utrata focusu przez zapamiętany proces (np. alt-tab) rozbraja wykonawcę — to podstawowy, ręczny kill-switch. Wykonawca rozbraja się też sam, gdy przez ponad 750 ms nie przyjdzie żadna klatka (zamknięta karta, zatrzymane udostępnianie, zawieszona przeglądarka). Osobnego heartbeatu już nie ma: strumień klatek **jest** oznaką życia, a watchdog po stronie Go działa także wtedy, gdy żądania ustają zupełnie.
 
@@ -327,13 +351,13 @@ Oba checkboxy można zaznaczyć **przed uzbrojeniem**, także w trakcie odliczan
 
 ### Klawisze akcji pięter
 
-Wykonawca nie zna żadnego hotkeya, dopóki nie zostanie skonfigurowany z panelu — bez tego każda akcja piętra (lina, drabina, dziura, łopata) kończy się odmową „brak hotkeya dla akcji …”, a **Wykonuj akcje pięter** wygląda na włączony, ale nic nie robi. Cztery pola tekstowe w sekcji **5. Sterowanie** przyjmują nazwę klawisza dla każdego typu (np. `f7`); zaakceptowane nazwy to `f1`–`f12`, `up`/`down`/`left`/`right`, `numpad1`–`numpad9` (bez `numpad5`) oraz litery `a`–`z` i cyfry `0`–`9` — te same, których używają emitery macOS i Windows. Pusty klawisz zostawia daną akcję odrzucaną. Checkbox **Klawisz działa na własnej kratce (bez klikania po nim)** odpowiada temu, czy hotkey sam kończy akcję (np. lina użyta na sobie) czy wymaga kliknięcia we wskazaną wcześniej kratkę postaci (**Wskaż kratkę postaci**) — to drugie dodaje krótkie kliknięcie ~120 ms po tapnięciu klawisza.
+Wykonawca nie zna żadnego hotkeya, dopóki nie zostanie skonfigurowany z panelu — bez tego każda akcja piętra (lina, drabina, dziura, łopata) kończy się odmową „brak hotkeya dla akcji …”, a **Wykonuj akcje pięter** wygląda na włączony, ale nic nie robi. Cztery pola tekstowe w zakładce **Sterowanie** przyjmują nazwę klawisza dla każdego typu (np. `f7`); zaakceptowane nazwy to `f1`–`f12`, `up`/`down`/`left`/`right`, `numpad1`–`numpad9` (bez `numpad5`) oraz litery `a`–`z` i cyfry `0`–`9` — te same, których używają emitery macOS i Windows. Pusty klawisz zostawia daną akcję odrzucaną. Checkbox **Klawisz działa na własnej kratce (bez klikania po nim)** odpowiada temu, czy hotkey sam kończy akcję (np. lina użyta na sobie) czy wymaga kliknięcia we wskazaną wcześniej kratkę postaci (**Wskaż kratkę postaci**) — to drugie dodaje krótkie kliknięcie ~120 ms po tapnięciu klawisza.
 
 Konfiguracja jedzie do Go przy każdej zmianie pola i ponownie przy uzbrajaniu, jednym żądaniem `PUT /api/config` obejmującym całą powierzchnię ustawień naraz — walidacja jest wszystko-albo-nic, więc jedno złe pole nie wyczyści po cichu niezwiązanego z nim. Same pola formularza są dodatkowo zapisywane w `localStorage`, żeby przeżyły odświeżenie karty; źródłem prawdy pozostaje serwer. Schody (`stairs`) nie mają tu żadnego pola: pokonuje się je krokiem, nie hotkeyem.
 
 ### Klawisze kierunków
 
-Chodzenie **nie jest** przywiązane do numpada na sztywno — mapowanie ośmiu kierunków (`N`, `NE`, `E`, `SE`, `S`, `SW`, `W`, `NW`) na klawisze jest konfigurowalne z panelu, bo nie każdy ma ruch przypisany do numpada. Osiem pól w sekcji **5. Sterowanie**, ułożonych w siatkę 3×3 z pustym środkiem (jak róża wiatrów), domyślnie zawiera układ numpada (`N`→`numpad8`, `NE`→`numpad9` itd.) — bez żadnej konfiguracji chodzenie działa dokładnie tak jak wcześniej. Przyjmowane nazwy klawiszy są te same, co dla akcji pięter, plus litery i cyfry.
+Chodzenie **nie jest** przywiązane do numpada na sztywno — mapowanie ośmiu kierunków (`N`, `NE`, `E`, `SE`, `S`, `SW`, `W`, `NW`) na klawisze jest konfigurowalne z panelu, bo nie każdy ma ruch przypisany do numpada. Osiem pól w zakładce **Sterowanie**, ułożonych w siatkę 3×3 z pustym środkiem (jak róża wiatrów), domyślnie zawiera układ numpada (`N`→`numpad8`, `NE`→`numpad9` itd.) — bez żadnej konfiguracji chodzenie działa dokładnie tak jak wcześniej. Przyjmowane nazwy klawiszy są te same, co dla akcji pięter, plus litery i cyfry.
 
 Dwa przyciski wypełniają wszystkie osiem pól naraz: **Numpad** (wbudowany domyślny układ) i **WSAD** (`w`/`s`/`a`/`d` na głównych kierunkach, `q`/`e`/`z`/`c` na skosach dookoła nich). To tylko punkt startowy — każde pole można potem dowolnie zmienić, a to, co w nim zostanie, jest zapisywane i wysyłane; przyciski przechodzą przez dokładnie tę samą ścieżkę zapisu i wysyłki co ręczna edycja pojedynczego pola, żadnych specjalnych przypadków po stronie Go.
 
@@ -373,7 +397,7 @@ Zapisz wynik każdego punktu w opisie commita — to jedyna weryfikacja emiteró
 
 ```sh
 go test ./...
-node --test webtests/*.cjs
+npm test
 ```
 
 Warto uruchamiać Go z `-race`: mózg działa we własnej goroutine, a atrapy w testach czytają to, co ona zapisuje. Cztery wyścigi wyszły dopiero pod tą flagą.
@@ -389,11 +413,16 @@ main.go          flagi i start; server.go — struktura serwera i tablica tras
 frameapi.go      /api/frame, /api/state, /api/config, /api/route, /api/preview
 locateapi.go     /api/info oraz wycinanie podglądu okolicy
 pathapi.go  gridapi.go  blocksapi.go
-web/             kamera i widok, wkompilowane przez //go:embed web/*
-  worker.js        zegar pętli, odporny na dławienie karty w tle
+web/             panel: moduły ES bez kroku builda, //go:embed web/*
+  panel.js         wejście przeglądarki: createPanel(globalThis).start()
+  app.js           korzeń: składa moduły, pętla klatek, strażnik state_version
+  dom.js  api.js  form.js  tabs.js      wspólne: lookupy, URL-e, pamięć, zakładki
+  source.js  selection.js               obraz i zaznaczanie prostokątów
+  position.js  route.js  vision.js  heal.js  control.js  blocks.js
   camera.js        wycinanie regionów i binarny format klatki
-  panel.js         DOM, formularz ustawień, rysowanie snapshotu
-webtests/        testy panelu: node --test webtests/*.cjs
+  worker.js        zegar pętli, odporny na dławienie karty w tle
+  tokens.css  base.css  layout.css  components.css
+webtests/        testy panelu per moduł: npm test
 testdata/        wycinki referencyjne dzielone przez wszystkie pakiety
 internal/
   brain/         mózg bota: tracker, recorder, executor, follower, pętla, stan
@@ -488,7 +517,7 @@ Testy obejmują znane współrzędne, przesunięcie, skalę i maskę, brak dopas
 
 Dodatkowy test na mapach obecnych w repozytorium: `MINIMAP_REAL_MAP_TEST=1 go test ./internal/locate/ -run TestLocalMapIntegration -v`. Porównuje wycinek atlasu ze znaną pozycją `(32369,32241,7)`; nadal nie jest to test zrzutu z klienta gry.
 
-Test prawdziwego wycinka z przechwytywania: `MINIMAP_REAL_MAP_TEST=1 go test ./internal/locate/ -run TestActualCaptureAgainstWholeFloor -v`. Dla zapisanej minimapy z Venore znajduje wskazany punkt `(32958,32077,7)` przy skali 1 i wyniku około 86,5%. Zwykłe `go test ./...` sprawdza też ten obraz na mniejszym atlasie oraz jego wariant powiększony 2×. `node --test webtests/*.cjs` sprawdza to, co panelowi zostało, i nie wymaga zainstalowanej przeglądarki: `camera_test.cjs` obejmuje binarny format klatki, jeden POST w locie, pomijanie zamrożonej klatki i przeniesienie tokenu sesji bez utraty precyzji, a `panel_test.cjs` — zaznaczanie minimapy, wysyłkę całej konfiguracji jednym dokumentem, pięciosekundowe odliczanie przed uzbrojeniem, malowanie snapshotu i to, że przełączniki każące botowi działać nie przeżywają odświeżenia karty. Logika, która kiedyś była testowana po stronie panelu — format trasy, nagrywanie, podążanie, wykonawca kroków — mieszka teraz w `internal/route` i `internal/brain` i ma tam własne testy.
+Test prawdziwego wycinka z przechwytywania: `MINIMAP_REAL_MAP_TEST=1 go test ./internal/locate/ -run TestActualCaptureAgainstWholeFloor -v`. Dla zapisanej minimapy z Venore znajduje wskazany punkt `(32958,32077,7)` przy skali 1 i wyniku około 86,5%. Zwykłe `go test ./...` sprawdza też ten obraz na mniejszym atlasie oraz jego wariant powiększony 2×. `npm test` sprawdza to, co panelowi zostało, i nie wymaga zainstalowanej przeglądarki. Testy idą per moduł, na wspólnej atrapie przeglądarki z `harness.mjs`: `camera_test.mjs` obejmuje binarny format klatki, jeden POST w locie, pomijanie zamrożonej klatki i przeniesienie tokenu sesji bez utraty precyzji; `app_test.mjs` — składanie panelu, pętlę klatek i wysyłkę całej konfiguracji jednym dokumentem; dalej `source_test.mjs`, `position_test.mjs`, `route_test.mjs`, `vision_test.mjs`, `heal_test.mjs`, `control_test.mjs`, `form_test.mjs` i `tabs_test.mjs` — każdy nad swoim modułem. Logika, która kiedyś była testowana po stronie panelu — format trasy, nagrywanie, podążanie, wykonawca kroków — mieszka teraz w `internal/route` i `internal/brain` i ma tam własne testy.
 
 Testy trasy na mapach z repozytorium: `MINIMAP_REAL_MAP_TEST=1 go test ./internal/nav/ -run TestRealMap -v`. Prowadzą 63-kratkową trasę przez największy spójny obszar powierzchni Venore i sprawdzają, że każdy krok stoi na terenie przechodnim, sąsiaduje z poprzednim i nie przecina zamkniętego rogu. Sprawdzają też, że ściana jako waypoint zwraca `blocked_goal`, a teren odgrodzony murem — `no_route`.
 
