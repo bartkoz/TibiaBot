@@ -18,13 +18,10 @@ main {
   padding: 0 var(--s5) var(--s6);
 }
 
-h1 { font-size: var(--fs-h1); letter-spacing: -1.2px; margin: var(--s1) 0 0; }
 h2 { font-size: var(--fs-h2); margin: 0 0 var(--s3); }
 h3 { font-size: var(--fs-h3); margin: var(--s5) 0 var(--s2); }
 
 p { color: var(--muted); font-size: var(--fs-hint); margin: var(--s2) 0; }
-
-.tag { color: var(--accent-bright); font-size: var(--fs-small); letter-spacing: 2px; }
 
 .hint { color: var(--muted); font-size: var(--fs-hint); }
 
