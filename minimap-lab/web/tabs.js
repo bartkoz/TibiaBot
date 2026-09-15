@@ -12,7 +12,7 @@ const TABS = [
   {id: 'diagnostyka', label: 'Diagnostyka'},
 ];
 
-export const TAB_IDS = TABS.map(t => t.id);
+const TAB_IDS = TABS.map(t => t.id);
 
 export function createTabs(ctx) {
   const {$} = ctx.dom;

@@ -4,7 +4,7 @@
 
 import {DIRECTIONS, HOTKEYS} from './control.js';
 
-export const STORAGE_KEY = 'minimap-lab.panel';
+const STORAGE_KEY = 'minimap-lab.panel';
 
 const REMEMBERED = ['floor', 'zoom', 'mask', 'threshold', 'gap', 'floor-auto', 'floor-radius',
   'speed', 'route-every', 'route-tolerance', 'route-loop', 'input-own-tile',
