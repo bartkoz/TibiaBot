@@ -1,6 +1,7 @@
-const {test} = require('node:test');
-const assert = require('node:assert/strict');
-const {Camera, HEADER_SIZE, REGION_HEADER, MAGIC, REGION} = require('../web/camera.js');
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+
+import {Camera, HEADER_SIZE, REGION_HEADER, MAGIC, REGION} from '../web/camera.js';
 
 // The camera only ever reads these three properties off its source.
 const fakeVideo = (currentTime = 1.5) => ({currentTime, videoWidth: 800, videoHeight: 600});

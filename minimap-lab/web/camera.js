@@ -2,28 +2,33 @@
 // the shared screen and post them. It holds no opinion about what the pixels
 // mean - that moved to Go with the rest of the brain.
 
-const MAGIC = 'MLF1';
+export const MAGIC = 'MLF1';
 const FORMAT_VERSION = 1;
-const HEADER_SIZE = 36;
-const REGION_HEADER = 12;
+export const HEADER_SIZE = 36;
+export const REGION_HEADER = 12;
 
-const REGION = {minimap: 1, hp: 2, mana: 3, viewport: 4, battle: 5};
+export const REGION = {minimap: 1, hp: 2, mana: 3, viewport: 4, battle: 5};
 
-// defaultCut copies one rectangle out of a video frame as RGBA. It is replaced
-// in tests, which have no canvas.
-function defaultCut(video, rect) {
-  const canvas = defaultCut.canvas ??= document.createElement('canvas');
-  canvas.width = rect.w;
-  canvas.height = rect.h;
-  const c = canvas.getContext('2d', {willReadFrequently: true});
-  c.drawImage(video, rect.x, rect.y, rect.w, rect.h, 0, 0, rect.w, rect.h);
-  return c.getImageData(0, 0, rect.w, rect.h).data;
+// makeCut builds the RGBA copier for one document. As an ES module in Node,
+// `document` would resolve to the real global rather than a test's stub, so
+// the document is handed in instead of reached for. Tests pass their own cut
+// and never touch this.
+export function makeCut(doc) {
+  let canvas = null;
+  return (video, rect) => {
+    canvas ??= doc.createElement('canvas');
+    canvas.width = rect.w;
+    canvas.height = rect.h;
+    const c = canvas.getContext('2d', {willReadFrequently: true});
+    c.drawImage(video, rect.x, rect.y, rect.w, rect.h, 0, 0, rect.w, rect.h);
+    return c.getImageData(0, 0, rect.w, rect.h).data;
+  };
 }
 
-class Camera {
+export class Camera {
   constructor(options = {}) {
     this.fetch = options.fetch ?? ((...a) => globalThis.fetch(...a));
-    this.cut = options.cut ?? defaultCut;
+    this.cut = options.cut ?? makeCut(globalThis.document);
     this.onSnapshot = options.onSnapshot ?? (() => {});
     this.onError = options.onError ?? (() => {});
     this.regions = new Map();
@@ -108,7 +113,3 @@ class Camera {
     }
   }
 }
-
-globalThis.Camera = Camera;
-globalThis.FRAME_REGION = REGION;
-if (typeof module !== 'undefined') module.exports = {Camera, REGION, HEADER_SIZE, REGION_HEADER, MAGIC};
