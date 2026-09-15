@@ -1,0 +1,83 @@
+/* The frame: a sticky chrome of title, readout and tab strip, then a stage
+   that never moves beside the panel of whichever tab is open. */
+
+.chrome {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: var(--bg);
+  padding-top: var(--s4);
+}
+
+.topbar {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--s4);
+  padding-bottom: var(--s3);
+}
+
+.brand h1 { margin: 0; }
+
+.readout {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s5);
+}
+
+.readout .rate { color: var(--muted); font-size: var(--fs-small); }
+.readout .rate strong { color: var(--accent-bright); font: 600 var(--fs-h2) var(--mono); }
+
+.tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s1);
+  border-bottom: 1px solid var(--line);
+}
+
+.layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 440px;
+  gap: var(--s5);
+  align-items: start;
+  margin-top: var(--s5);
+}
+
+.panel {
+  border: 1px solid var(--line);
+  background: var(--surface);
+  padding: var(--s5);
+  border-radius: var(--r3);
+  min-width: 0;
+}
+
+/* The stage stays put while the tabs change beside it: three different tabs
+   calibrate rectangles by dragging on this one canvas, so hiding it with a tab
+   would take the calibration with it. */
+.stage-previews {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s4);
+  margin-top: var(--s4);
+}
+
+.stage-previews figure { margin: 0; min-width: 0; }
+.stage-previews figcaption {
+  color: var(--muted);
+  font-size: var(--fs-hint);
+  margin-bottom: var(--s2);
+}
+
+.stage-target { max-width: 260px; }
+
+@media (max-width: 1100px) {
+  .layout { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 850px) {
+  main { padding: 0 var(--s4) var(--s5); }
+  h1 { font-size: 28px; }
+  .toolbar > * { flex: 1; text-align: center; }
+  .chrome { position: static; }
+}

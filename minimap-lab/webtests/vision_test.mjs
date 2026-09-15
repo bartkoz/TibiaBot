@@ -3,7 +3,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 
-import {panel, armNow, shareOnly, calibrate, lastConfig} from './harness.mjs';
+import {panel, armNow, shareOnly, calibrate, openTab, lastConfig} from './harness.mjs';
 
 test('zaznaczenie okna gry wysyła wycinek jedenastu kratek', async () => {
   const p = panel();
@@ -67,6 +67,7 @@ test('podgląd widzenia nie jest pobierany, dopóki nie jest włączony', async 
   const visionCalls = () => p.requests.filter(r => r.url === '/api/vision').length;
   assert.equal(visionCalls(), 0, 'podgląd pobrany, choć wyłączony');
 
+  openTab(p, 'walka');
   p.el('vision-preview').checked = true;
   p.el('video').currentTime = 1.5;
   p.el('live').checked = true;
@@ -74,6 +75,33 @@ test('podgląd widzenia nie jest pobierany, dopóki nie jest włączony', async 
   p.tick();
   await p.settled();
   assert.ok(visionCalls() >= 1, 'włączony podgląd nie pobrał widzenia');
+});
+
+// The preview costs a request on every frame, ten times a second. Paying that
+// for a canvas nobody can see is the whole reason the tab strip is asked.
+test('podgląd widzenia nie jedzie, gdy jego zakładka jest schowana', async () => {
+  const seen = {combat: {calibrated: true}};
+  const p = panel({
+    state: seen,
+    onRequest: url => url === '/api/frame'
+      ? {ok: true, async json() { return seen; }}
+      : null,
+  });
+  await p.settled();
+  await shareOnly(p);
+  await calibrate(p, 'minimap', [0, 0], [105, 108]);
+  await armNow(p);
+
+  openTab(p, 'pozycja');
+  p.el('vision-preview').checked = true;
+  p.el('video').currentTime = 1.5;
+  p.el('live').checked = true;
+  p.el('live').fire('change');
+  p.tick();
+  await p.settled();
+
+  assert.equal(p.requests.filter(r => r.url === '/api/vision').length, 0,
+    'podgląd pobrany mimo schowanej zakładki');
 });
 
 test('kliknięcie własnego paska na podglądzie wypełnia jego pozycję', async () => {
@@ -110,6 +138,7 @@ test('podgląd widzenia nie wywraca się na pustym ekranie (bars: null)', async 
   await p.settled();
   await shareOnly(p);
   await calibrate(p, 'viewport', [100, 50], [339, 225]);
+  openTab(p, 'walka');
   p.el('vision-preview').checked = true;
   await armNow(p);
 

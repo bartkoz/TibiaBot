@@ -1,0 +1,53 @@
+/* Every colour, step and size the panel uses. Nothing below this file invents
+   one: a value that appears twice belongs here, and a value that appears once
+   still belongs here if it has a name worth reading. */
+
+:root {
+  color-scheme: dark;
+
+  /* powierzchnie */
+  --bg: #10151b;
+  --surface: #17212a;
+  --sunken: #0e171e;
+  --deep: #0c1218;
+  --line: #2b3945;
+  --line-strong: #3a4d5c;
+
+  /* tekst */
+  --text: #e3edf2;
+  --muted: #a0b2bf;
+  --label: #c4d4de;
+
+  /* akcenty */
+  --accent: #69d3b7;
+  --accent-bright: #73d6bd;
+  --accent-ink: #102c25;
+  --warn: #f6a65d;
+  --warn-ink: #241503;
+  --focus: #e5c17a;
+  --marker: #ff6e94;
+
+  /* rytm: jedna skala, żeby odstępy przestały być losowe */
+  --s1: 4px;
+  --s2: 8px;
+  --s3: 12px;
+  --s4: 16px;
+  --s5: 24px;
+  --s6: 32px;
+
+  /* pismo */
+  --ui: system-ui, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  --fs-small: 12px;
+  --fs-hint: 13px;
+  --fs-body: 14px;
+  --fs-base: 15px;
+  --fs-h3: 15px;
+  --fs-h2: 18px;
+  --fs-h1: 34px;
+
+  /* kształt */
+  --r1: 6px;
+  --r2: 8px;
+  --r3: 12px;
+}

@@ -164,5 +164,10 @@ async function calibrate(p, target, from, to) {
   await p.settled();
 }
 
+// openTab switches the panel to one tab, the way clicking it does. The two
+// previews only fetch while their own tab is on screen, so a test that wants
+// one has to be looking at it.
+const openTab = (p, id) => p.el(`tab-${id}`).click();
+
 const lastConfig = p => JSON.parse(p.requests.filter(r => r.url === '/api/config').at(-1).body);
-export {panel, shareAndSelect, armNow, drag, pixelPerfect, shareOnly, calibrate, lastConfig};
+export {panel, shareAndSelect, armNow, drag, pixelPerfect, shareOnly, calibrate, openTab, lastConfig};

@@ -1,0 +1,260 @@
+/* Controls, readouts and the two pixel-exact canvases. */
+
+/* --- przyciski --- */
+
+button, .button {
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: var(--accent-ink);
+  font: 600 var(--fs-body) var(--ui);
+  padding: var(--s3) var(--s4);
+  border-radius: var(--r1);
+  cursor: pointer;
+  display: inline-block;
+}
+
+button.secondary {
+  background: #1e2b35;
+  border-color: #344552;
+  color: #dde9ee;
+}
+
+button:disabled { opacity: .4; cursor: default; }
+
+.toolbar {
+  display: flex;
+  gap: var(--s2);
+  flex-wrap: wrap;
+  margin-top: var(--s4);
+}
+
+#locate { width: 100%; margin-top: var(--s4); }
+
+/* --- zakładki --- */
+
+.tabs [role="tab"] {
+  background: transparent;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: var(--r1) var(--r1) 0 0;
+  color: var(--muted);
+  padding: var(--s3) var(--s4);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s2);
+}
+
+.tabs [role="tab"]:hover { color: var(--text); }
+
+.tabs [role="tab"][aria-selected="true"] {
+  color: var(--text);
+  background: var(--surface);
+  border-bottom-color: var(--accent);
+}
+
+/* A badge is how a tab you are not looking at says something changed. */
+.badge {
+  min-width: 18px;
+  padding: 0 var(--s1);
+  border-radius: 9px;
+  font: 600 11px var(--mono);
+  line-height: 18px;
+  text-align: center;
+}
+
+.badge-count { background: var(--line-strong); color: var(--text); }
+.badge-on { color: var(--accent); font-size: 10px; }
+.badge-warn { background: var(--warn); color: var(--warn-ink); }
+
+/* --- pola --- */
+
+label:not(.button) {
+  display: block;
+  margin-top: var(--s4);
+  color: var(--label);
+  font-size: var(--fs-hint);
+}
+
+label.check {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+}
+
+input[type="number"], input[type="text"], select {
+  display: block;
+  background: var(--sunken);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r1);
+  width: 100%;
+  padding: var(--s2) var(--s3);
+  color: var(--text);
+  margin-top: var(--s2);
+  font-size: var(--fs-base);
+}
+
+.route-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: var(--s3);
+  margin-top: var(--s3);
+}
+
+.route-switches {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s4);
+  margin-top: var(--s3);
+}
+
+.compass-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 72px);
+  gap: var(--s2);
+  margin-top: var(--s2);
+}
+
+.compass-grid input { margin-top: 0; text-align: center; }
+
+/* --- płótna --- */
+
+canvas {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  touch-action: none;
+  cursor: crosshair;
+}
+
+.canvas-wrap {
+  background: var(--deep);
+  border-radius: var(--r1);
+  overflow: auto;
+  margin-top: var(--s3);
+}
+
+#screen { width: 100%; }
+
+#crop {
+  width: 340px;
+  max-width: 100%;
+  image-rendering: pixelated;
+  border: 1px solid #455563;
+  background: #080c10;
+}
+
+#reference {
+  width: 258px;
+  max-width: 100%;
+  image-rendering: pixelated;
+  border: 1px solid #344552;
+}
+
+/* The window is 65 tiles wide; scaling it up must not blur the tiles, or a
+   single learned block becomes impossible to point at. */
+.grid-canvas {
+  width: 320px;
+  max-width: 100%;
+  height: auto;
+  aspect-ratio: 1;
+  image-rendering: pixelated;
+  border: 1px solid var(--line-strong);
+  margin: var(--s2) 0;
+}
+
+/* --- odczyty --- */
+
+.telemetry {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: var(--s2);
+  margin-top: var(--s4);
+}
+
+.telemetry > div {
+  background: var(--sunken);
+  border: 1px solid var(--line);
+  border-radius: var(--r1);
+  padding: var(--s3);
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.telemetry strong {
+  display: block;
+  color: var(--accent-bright);
+  font: 600 var(--fs-h2) var(--mono);
+  margin-top: var(--s1);
+}
+
+#coordinates {
+  font: 700 26px var(--mono);
+  letter-spacing: -1px;
+}
+
+#status {
+  margin-top: var(--s5);
+  padding: var(--s3);
+  border-left: 3px solid #7d93a2;
+  background: #101920;
+  font-size: var(--fs-body);
+  border-radius: 0 var(--r1) var(--r1) 0;
+}
+
+#status.ok { border-color: var(--accent); }
+#status.error { border-color: var(--warn); }
+
+#route-status, #input-status, #blocks-status, #heal-status, #vision-info, #vision-rects {
+  margin-top: var(--s4);
+  color: var(--muted);
+  font-size: var(--fs-hint);
+}
+
+#route-next {
+  margin-top: var(--s1);
+  font: 600 20px var(--mono);
+  color: var(--accent-bright);
+}
+
+#route-list {
+  margin: var(--s3) 0 0;
+  padding-left: var(--s5);
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+#route-list li { margin-bottom: var(--s1); }
+#route-list li > * { vertical-align: middle; margin-right: var(--s1); }
+
+#route-list .where {
+  display: inline-block;
+  min-width: 150px;
+  font: var(--fs-hint) var(--mono);
+  color: var(--text);
+}
+
+#route-list select, #route-list input {
+  width: auto;
+  display: inline-block;
+  padding: var(--s1) var(--s2);
+  font-size: var(--fs-small);
+  margin-top: 0;
+}
+
+.legend { font-size: var(--fs-hint); }
+
+.swatch {
+  display: inline-block;
+  width: .8em;
+  height: .8em;
+  margin: 0 var(--s1) 0 var(--s3);
+  vertical-align: middle;
+  border: 1px solid #0003;
+}
+
+.swatch-free { background: rgb(40, 70, 40); }
+.swatch-wall { background: rgb(150, 40, 40); }
+.swatch-missing { background: rgb(40, 40, 45); }
+.swatch-temp { background: rgb(220, 170, 40); }
+.swatch-perm { background: rgb(230, 80, 230); }

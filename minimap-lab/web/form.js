@@ -43,6 +43,7 @@ export function createForm(ctx) {
     // inputs rather than in them. The master switch deliberately stays out: it
     // is a switch that makes the bot act, and those never survive a reload.
     state.heal_rules = ctx.heal.rules();
+    state.tab = ctx.tabs.active();
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch { /* tryb prywatny */ }
   }
 
@@ -57,6 +58,10 @@ export function createForm(ctx) {
       else el.value = state[id];
     }
     if (Array.isArray(state.heal_rules)) ctx.heal.setRules(state.heal_rules);
+    // Restored without remembering: writing the tab back out here would be
+    // a save triggered by a load, and the first one of those to run before
+    // the rules are in would blank them.
+    if (state.tab) ctx.tabs.show(state.tab, {remember: false});
   }
 
   function mount() {

@@ -104,6 +104,7 @@ export function createHeal(ctx) {
   // what fired last and how long ago, or why nothing did.
   function render(state) {
     const heal = state.heal;
+    ctx.tabs.setBadge('leczenie', heal?.enabled ? {kind: 'on', text: '●'} : null);
     if (!heal?.enabled) { $('heal-status').textContent = 'Leczenie wyłączone.'; return; }
     const parts = [];
     if (heal.last_hotkey && heal.last_age_ms != null) {

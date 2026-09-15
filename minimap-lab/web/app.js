@@ -19,6 +19,7 @@ import {createVision} from './vision.js';
 import {createHeal} from './heal.js';
 import {createControl} from './control.js';
 import {createBlocks} from './blocks.js';
+import {createTabs} from './tabs.js';
 
 const LOOP_INTERVAL_MS = 100;
 
@@ -36,9 +37,6 @@ export function createPanel(env) {
   ctx.brainConfig = brainConfig;
   ctx.pushConfig = pushConfig;
   ctx.loop = {start: startLoop, stop: stopLoop};
-  // Replaced by the real tab strip in tabs.js; until then every panel counts
-  // as on screen, which is what a single long page always was.
-  ctx.tabs = {visible: () => true};
 
   ctx.camera = new Camera({
     fetch: (...a) => env.fetch(...a),
@@ -51,6 +49,7 @@ export function createPanel(env) {
   // is what keeps the genuine cycle - the preview is drawn by source.js but the
   // rectangles on it belong to selection.js and vision.js - from ever becoming
   // an import cycle.
+  ctx.tabs = createTabs(ctx);
   ctx.source = createSource(ctx);
   ctx.selection = createSelection(ctx);
   ctx.position = createPosition(ctx);
@@ -64,7 +63,7 @@ export function createPanel(env) {
   // Order is the render order, and it is load-bearing in one place: position
   // reports a match reason into the status line, and the executor's "stopped"
   // has to be able to overwrite it, so control comes after position.
-  const modules = [ctx.source, ctx.selection, ctx.position, ctx.route,
+  const modules = [ctx.tabs, ctx.source, ctx.selection, ctx.position, ctx.route,
     ctx.vision, ctx.heal, ctx.control, ctx.blocks, ctx.form];
 
   // brainConfig is assembled from the modules but still travels as one

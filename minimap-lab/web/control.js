@@ -91,6 +91,7 @@ export function createControl(ctx) {
       : state.armed
         ? 'Uzbrojony. Alt-tab albo cisza kamery rozbraja.'
         : 'Rozbrojony.';
+    ctx.tabs.setBadge('sterowanie', state.armed ? {kind: 'on', text: '●'} : null);
     $('input-arm').disabled = !ctx.controlAvailable() || (state.armed && !armTimer);
     $('input-disarm').disabled = !state.armed;
     $('input-calibrate').disabled = !ctx.source.isReady();

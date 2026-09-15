@@ -26,6 +26,7 @@ export function createRoute(ctx) {
     $('route-list').replaceChildren(...points.map((wp, index) => {
       const row = document.createElement('li');
       const label = document.createElement('span');
+      label.className = 'where';
       label.textContent = `${wp.x}, ${wp.y}, ${wp.z}`;
       const select = document.createElement('select');
       for (const kind of ['walk', 'rope', 'ladder', 'stairs', 'hole', 'shovel']) {
@@ -98,6 +99,7 @@ export function createRoute(ctx) {
         (state.recorder?.waiting ? ' · czekam na dane przechodniości' : '')
       : 'Brak trasy.');
     $('route-next').textContent = r.next || '—';
+    ctx.tabs.setBadge('trasa', r.count ? {kind: 'count', text: String(r.count)} : null);
     // Refetched only when the count moves: the list is a thousand rows at worst
     // and has no business being rebuilt at frame rate.
     if (r.count !== lastCount) { lastCount = r.count; refreshList(); }

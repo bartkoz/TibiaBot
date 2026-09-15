@@ -165,6 +165,14 @@ export function createVision(ctx) {
 
   function render(state) {
     renderState(state.combat);
+    // The warning wins over the count: healing switched on without calibrated
+    // bars is a switch that silently cannot work, and that is worth a mark on
+    // a tab the user is not looking at. A monster count is merely useful.
+    const c = state.combat;
+    if (state.heal?.enabled && !c?.calibrated) ctx.tabs.setBadge('walka', {kind: 'warn', text: '!'});
+    else if (c?.calibrated && c.monsters_in_range > 0) {
+      ctx.tabs.setBadge('walka', {kind: 'count', text: String(c.monsters_in_range)});
+    } else ctx.tabs.setBadge('walka', null);
     if ($('vision-preview').checked && state.combat?.calibrated && ctx.tabs.visible('walka')) {
       fetchVision();
     }

@@ -1,0 +1,57 @@
+/* Reset, typography and the page itself. */
+
+* { box-sizing: border-box; }
+
+[hidden] { display: none !important; }
+
+html {
+  font: var(--fs-base) / 1.5 var(--ui);
+  background: var(--bg);
+  color: var(--text);
+}
+
+body { margin: 0; }
+
+main {
+  max-width: 1500px;
+  margin: auto;
+  padding: 0 var(--s5) var(--s6);
+}
+
+h1 { font-size: var(--fs-h1); letter-spacing: -1.2px; margin: var(--s1) 0 0; }
+h2 { font-size: var(--fs-h2); margin: 0 0 var(--s3); }
+h3 { font-size: var(--fs-h3); margin: var(--s5) 0 var(--s2); }
+
+p { color: var(--muted); font-size: var(--fs-hint); margin: var(--s2) 0; }
+
+.tag { color: var(--accent-bright); font-size: var(--fs-small); letter-spacing: 2px; }
+
+.hint { color: var(--muted); font-size: var(--fs-hint); }
+
+code { color: var(--text); font-family: var(--mono); }
+
+pre {
+  font: var(--fs-small) / 1.45 var(--mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: var(--sunken);
+  border: 1px solid var(--line);
+  border-radius: var(--r1);
+  padding: var(--s3);
+  max-height: 60vh;
+  overflow: auto;
+}
+
+summary { cursor: pointer; color: var(--muted); font-size: var(--fs-hint); }
+
+/* The long explanations are worth keeping word for word, but not worth the
+   screen they used to take: folded away they stop competing with the controls
+   they describe. */
+details.why {
+  border-left: 2px solid var(--line-strong);
+  padding-left: var(--s3);
+  margin: var(--s4) 0;
+}
+details.why[open] > summary { margin-bottom: var(--s2); }
+
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
