@@ -72,6 +72,7 @@ export function createVision(ctx) {
       bar_border: num('bar-border'),
       bar_tolerance: num('bar-tolerance'),
       black_max: num('black-max'),
+      bar_edge_tolerance: num('bar-edge'),
       bar_colors: $('bar-colors').value.split(/[\s,]+/).filter(Boolean),
       has_self_bar: $('self-bar-on').checked,
       self_bar_x: num('self-bar-x'),
@@ -82,12 +83,18 @@ export function createVision(ctx) {
       battle_bar_border: num('battle-bar-border'),
       battle_row_pitch: num('battle-pitch'),
       battle_frame: $('battle-frame').value.trim(),
-      // The target frame shares its tolerance field with the bar colours: two
-      // different thresholds in Go, one dial in the panel, because tuning them
-      // separately has no practical benefit and every extra field is one more
-      // thing to get wrong.
-      battle_frame_tolerance: num('bar-tolerance'),
       battle_frame_coverage: num('battle-frame-coverage'),
+      battle_bar_tolerance: num('battle-tolerance'),
+      battle_black_max: num('battle-black-max'),
+      battle_edge_tolerance: num('battle-edge'),
+      // The target frame shares its tolerance field with the battle-list bar
+      // colours: two different thresholds in Go, one dial in the panel,
+      // because tuning them separately has no practical benefit and every
+      // extra field is one more thing to get wrong.
+      battle_frame_tolerance: num('battle-tolerance'),
+      battle_icon_offset_x: num('battle-icon-x'),
+      battle_icon_offset_y: num('battle-icon-y'),
+      battle_icon_size: num('battle-icon-size'),
     };
   }
 

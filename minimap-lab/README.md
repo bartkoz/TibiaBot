@@ -252,6 +252,14 @@ Stwór wchodzi do licznika `monsters_in_range`, gdy jego dystans Chebysheva od p
 
 Tolerancja barwy paska, próg czerni i tolerancja ramki celu w battle liście są walidowane w zakresie **1–128**. Próg czerni ma dodatkowe ograniczenie: nie wolno mu, razem z tolerancją, pochłonąć żadnej barwy wypełnienia. Gdyby tak się stało, detektor przestawałby widzieć koniec wypełnienia po jednym pikselu i **każdy ciemnoczerwony pasek czytałby się jako mniej więcej 4% zdrowia**, niezależnie od tego, ile go naprawdę zostało — a to najgorsza możliwa pomyłka, bo wygląda jak spokojnie niski, a nie zepsuty odczyt. Walidacja odmawia takiej kombinacji przy starcie i nazywa w komunikacie błędu, która barwa jest zagrożona.
 
+Okno gry i battle lista mają **osobne** tolerancje barw i progi czerni, bo klient rysuje jedno i drugie inaczej: pasek nad stworem ma grubą obwódkę, która wchłania rozmyte brzegi, a mini-pasek na liście — cienką, więc jego rozmyty brzeg trzeba tolerować wprost. Stąd `bar_edge_tolerance` i `battle_edge_tolerance` (0–4 piksele): o tyle skrajny wiersz wypełnienia może być węższy od rdzenia, nigdy szerszy. Wiersze środkowe muszą się zgadzać co do piksela — to one odrzucają pocisk albo cyfrę obrażeń przecinającą pasek.
+
+Domyślne `battle_bar_tolerance` (80) i `battle_black_max` (48) to punkt startowy do kalibracji, tej samej rangi co domyślne barwy paska w akapicie wyżej — zdjęty z jednego klienta odniesienia, nie prawda objawiona dla każdego ustawienia. W praktyce battle lista zwykle potrzebuje wyraźnie luźniejszej tolerancji i wyższego progu czerni niż okno gry, bo niewypełniona część jej paska jest szara, nie czarna jak tło świata gry — ale konkretne liczby, które sprawdzają się na danym kliencie, i tak trzeba wykalibrować na miejscu.
+
+### Ramka celu siedzi na ikonce, nie na wierszu
+
+Ramkę celu klient rysuje jako kwadrat wokół **ikonki** stwora w battle liście, nie wokół jego paska. Panel opisuje ten kwadrat trzema polami: przesunięciem ikonki względem paska (`Ikonka: przesunięcie X/Y`) i jej bokiem (`Ikonka: bok`). Pokrycie ramki liczy się jako ułamek boku ikonki, nie szerokości wycinka.
+
 ### Jak uruchomić testy
 
 ```sh
@@ -259,7 +267,7 @@ go test ./... -race
 npm test
 ```
 
-Pięć testów pomija się, dopóki `testdata/combat-capture.png` nie trafi do repo — patrz sekcja **Testy** niżej i `docs/superpowers/plans/2026-09-07-vision-layer-measurements.md`. Jeden z nich, `TestRealCaptureOffsets`, przy okazji zapisuje `.debug/vision-fixture.png` — rysunek diagnostyczny: wycinek z purpurową linią na górnej i dolnej krawędzi każdego wykrytego paska, do sprawdzenia na oko, czy detektor trafia w prawdziwe stwory.
+Pięć testów regresji korzysta z prawdziwej klatki z gry, `testdata/combat-capture.png` — patrz sekcja **Testy** niżej i `docs/superpowers/plans/2026-09-07-vision-layer-measurements.md`. Jeden z nich, `TestRealCaptureOffsets`, przy okazji zapisuje `.debug/vision-fixture.png` — rysunek diagnostyczny: wycinek z purpurową linią na górnej i dolnej krawędzi każdego wykrytego paska, do sprawdzenia na oko, czy detektor trafia w prawdziwe stwory.
 
 ## Leczenie
 
@@ -404,7 +412,7 @@ Warto uruchamiać Go z `-race`: mózg działa we własnej goroutine, a atrapy w 
 
 Najbardziej dowodzący jest `go test . -run EndToEnd` — prawdziwy zrzut minimapy z Venore wchodzi binarną klatką po HTTP, przez prawdziwy matcher i prawdziwą pętlę, a test sprawdza, że mózg ustala z niego pozycję `(32958, 32077, 7)`. Wszystko pod spodem ma testy jednostkowe; dopiero ten mówi, że kawałki są ze sobą połączone.
 
-Trzy pakiety warstwy widzenia — `internal/vision`, `internal/battle`, `internal/vitals` — mają własne testy tabelkowe na syntetycznych obrazkach: pasek na krawędzi wycinka, dwa nachodzące paski, przeskalowana geometria, barwa poza tolerancją, wykluczenie własnego paska, pusta i przewinięta battle lista, ciągły prefiks wypełnienia paska HP/many. Fixture `testdata/combat-capture.png` — prawdziwa klatka z gry — dokłada do nich próg regresji: liczbę wykrytych pasków, ich offsety względem postaci i liczbę wierszy battle listy. Dopóki ten plik nie trafi do repo, pięć testów, które go potrzebują (`TestFindOnRealCapture` i `TestRealCaptureOffsets` w `internal/vision`, `TestReadOnRealCapture` w `internal/battle` i osobno w `internal/vitals`, `TestCombatFixtureGeometry` w `internal/testenv`), pomija się samo — zobacz `docs/superpowers/plans/2026-09-07-vision-layer-measurements.md`.
+Trzy pakiety warstwy widzenia — `internal/vision`, `internal/battle`, `internal/vitals` — mają własne testy tabelkowe na syntetycznych obrazkach: pasek na krawędzi wycinka, dwa nachodzące paski, przeskalowana geometria, barwa poza tolerancją, wykluczenie własnego paska, pusta i przewinięta battle lista, ciągły prefiks wypełnienia paska HP/many. Fixture `testdata/combat-capture.png` — prawdziwa klatka z gry, wpięta do repo — dokłada do nich próg regresji: liczbę wykrytych pasków, ich offsety względem postaci i liczbę wierszy battle listy. Pięć testów, które jej potrzebują (`TestFindOnRealCapture` i `TestRealCaptureOffsets` w `internal/vision`, `TestReadOnRealCapture` w `internal/battle` i osobno w `internal/vitals`, `TestCombatFixtureGeometry` w `internal/testenv`), przechodzi na niej naprawdę, bez pominięć — zobacz `docs/superpowers/plans/2026-09-07-vision-layer-measurements.md`.
 
 ## Układ katalogów
 

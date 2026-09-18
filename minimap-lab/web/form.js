@@ -9,10 +9,12 @@ const STORAGE_KEY = 'minimap-lab.panel';
 const REMEMBERED = ['floor', 'zoom', 'mask', 'threshold', 'gap', 'floor-auto', 'floor-radius',
   'speed', 'route-every', 'route-tolerance', 'route-loop', 'input-own-tile',
   'calib-target', 'grid-cols', 'grid-rows', 'decision-radius',
-  'bar-width', 'bar-height', 'bar-border', 'bar-tolerance', 'black-max',
+  'bar-width', 'bar-height', 'bar-border', 'bar-tolerance', 'black-max', 'bar-edge',
   'bar-colors', 'self-bar-on', 'self-bar-x', 'self-bar-y',
   'battle-bar-width', 'battle-bar-height', 'battle-bar-border', 'battle-pitch',
   'battle-frame', 'battle-frame-coverage',
+  'battle-tolerance', 'battle-black-max', 'battle-edge',
+  'battle-icon-x', 'battle-icon-y', 'battle-icon-size',
   ...Object.values(HOTKEYS), ...Object.values(DIRECTIONS)];
 
 // Everything remembered is also watched, plus the four switches that actually
@@ -66,8 +68,16 @@ export function createForm(ctx) {
   }
 
   function mount() {
+    // Both events are wired to the same handler: 'change' is what a browser
+    // fires for most of these fields (typed value committed on blur, or a
+    // select/checkbox toggled), but a calibration dial nudged with the
+    // spinner arrows or typed and read live - the battle tolerance fields in
+    // particular - needs the config pushed on 'input' too, or the preview
+    // lags a full field-blur behind what is on screen.
+    const handler = () => { save(); ctx.pushConfig(); };
     for (const id of WATCHED) {
-      $(id).addEventListener('change', () => { save(); ctx.pushConfig(); });
+      $(id).addEventListener('change', handler);
+      $(id).addEventListener('input', handler);
     }
   }
 

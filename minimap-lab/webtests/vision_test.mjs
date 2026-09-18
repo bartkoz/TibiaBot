@@ -19,6 +19,31 @@ test('zaznaczenie okna gry wysyła wycinek jedenastu kratek', async () => {
   assert.deepEqual(combat.crop, {x: 132, y: 50, w: 176, h: 176});
 });
 
+test('nowe pola tolerancji i ikonki jadą w konfiguracji', async () => {
+  const p = panel();
+  await p.settled();
+  await shareOnly(p);
+  await calibrate(p, 'viewport', [100, 50], [339, 225]);
+  p.el('battle-tolerance').value = '80';
+  p.el('battle-black-max').value = '48';
+  p.el('battle-edge').value = '1';
+  p.el('bar-edge').value = '0';
+  p.el('battle-icon-x').value = '-45';
+  p.el('battle-icon-y').value = '-31';
+  p.el('battle-icon-size').value = '40';
+  p.el('battle-tolerance').fire('input');
+  await p.settled();
+
+  const combat = lastConfig(p).brain.combat;
+  assert.equal(combat.battle_bar_tolerance, 80);
+  assert.equal(combat.battle_black_max, 48);
+  assert.equal(combat.battle_edge_tolerance, 1);
+  assert.equal(combat.bar_edge_tolerance, 0);
+  assert.equal(combat.battle_icon_offset_x, -45);
+  assert.equal(combat.battle_icon_offset_y, -31);
+  assert.equal(combat.battle_icon_size, 40);
+});
+
 test('cztery nowe regiony trafiają do klatki', async () => {
   const p = panel();
   await p.settled();

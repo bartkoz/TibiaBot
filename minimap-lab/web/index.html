@@ -158,6 +158,7 @@
           <label>Pasek: obwódka<input id="bar-border" type="number" min="1" max="8" value="1"></label>
           <label>Tolerancja barw<input id="bar-tolerance" type="number" min="1" max="128" value="12"></label>
           <label>Próg czerni<input id="black-max" type="number" min="1" max="128" value="48"></label>
+          <label>Tolerancja brzegu<input id="bar-edge" type="number" min="0" max="4" value="0"></label>
         </div>
         <label>Barwy wypełnienia paska<input id="bar-colors" type="text" value="#00bc00,#50a150,#a1a100,#bf0a0a,#910f0f,#850c0c"></label>
         <details class="why"><summary>Skąd te barwy</summary>
@@ -173,7 +174,13 @@
           <label>Battle: obwódka<input id="battle-bar-border" type="number" min="1" max="8" value="1"></label>
           <label>Battle: odstęp wierszy<input id="battle-pitch" type="number" min="3" max="256" value="22"></label>
           <label>Battle: barwa ramki celu<input id="battle-frame" type="text" value="#ff5050"></label>
-          <label>Battle: pokrycie ramki<input id="battle-frame-coverage" type="number" min="0.05" max="1" step="0.05" value="0.8"></label>
+          <label>Battle: pokrycie ramki (ułamek boku ikonki)<input id="battle-frame-coverage" type="number" min="0.05" max="1" step="0.05" value="0.8"></label>
+          <label>Battle: tolerancja barw<input id="battle-tolerance" type="number" min="1" max="128" value="80"></label>
+          <label>Battle: próg czerni<input id="battle-black-max" type="number" min="1" max="128" value="48"></label>
+          <label>Battle: tolerancja brzegu<input id="battle-edge" type="number" min="0" max="4" value="1"></label>
+          <label>Ikonka: przesunięcie X<input id="battle-icon-x" type="number" min="-512" max="512" value="-45"></label>
+          <label>Ikonka: przesunięcie Y<input id="battle-icon-y" type="number" min="-512" max="512" value="-31"></label>
+          <label>Ikonka: bok<input id="battle-icon-size" type="number" min="4" max="256" value="40"></label>
         </div>
         <label class="check"><input id="vision-preview" type="checkbox">Pokazuj podgląd widzenia</label>
         <canvas id="vision-canvas" class="grid-canvas" width="176" height="176"></canvas>
