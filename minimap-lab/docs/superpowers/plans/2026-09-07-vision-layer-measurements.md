@@ -25,7 +25,7 @@ Klatka odniesienia: `testdata/combat-capture.png`
 | geometria paska w battle liście | 262×8 px, obwódka 1 (rdzeń 260×6) | profil `48 → 144 → 192 ×4 → 144 → 48`; wiersz 144 nie może być ciemny (próg tnie się na 128), więc jest wypełnieniem przy tolerancji 80 |
 | odstęp wierszy battle listy | 44 px | paski wierszy 1 i 2 na y 1011 i 1055 |
 | barwa i pokrycie ramki celu | `(201,10,10)` = `#c90a0a`; kwadrat 40×40 o krawędzi 2 px **wokół ikonki**, nie wokół wiersza; ikonka na `(−45, −31)` od rogu paska; pokrycie 0,8 boku ikonki = 32 px z 40 | bbox czerwieni w oknie battle listy; biegi 40 px w wierszach 936–937 i 974–975 |
-| pasek HP / many | HP `Rect(24, 154, 2202, 157)`, mana `Rect(2217, 154, 4392, 157)` — 2178 × 3 i 2175 × 3 px | prawa krawędź kontenera HP z profilu `y=155` (zieleń do 2025 = 91,9 % = 147/160 ✓, szare do 2202); cyfry zajmują wiersze 140–153, stąd wąski pas 154–157 |
+| pasek HP / many | HP `Rect(24, 134, 2202, 136)`, mana `Rect(2217, 134, 4392, 136)` — 2178 × 2 i 2175 × 2 px | z profilu `y=135` (zieleń do 2025 = 91,9 % = 147/160 ✓, kontener do 2202); cyfry „147/160” przecinają wypełnienie w wierszach 136–157, więc jedyny czysty pas to 134–135 nad nimi |
 | okno gry / wycinek / battle lista | `Rect(637,245,3778,2548)` / `Rect(1056,245,3359,2548)` / `Rect(4770,900,5100,1150)` | j.w.; wycinek to `RecommendedCrop()` dla promienia 4 |
 | stwory / wiersz celu | 3 stwory w wycinku, `TargetRow = 0` | policzone na oczy i potwierdzone detekcją |
 

@@ -78,7 +78,7 @@ liście, ramka celu na wierszu 0.
 | wycinek | `Rect(1056, 245, 3359, 2548)` — `RecommendedCrop()` dla promienia 4 |
 | battle lista | `Rect(4770, 900, 5100, 1150)` |
 | pasek HP | `Rect(24, 154, 2202, 157)` — 3 wiersze, bo cyfry „147/160" zajmują 140–153 |
-| pasek many | `Rect(2217, 154, 4392, 157)` |
+| pasek many | `Rect(2217, 134, 4392, 136)` |
 | pasek stwora | wypełnienie 56×2 px rdzenia, profil pionowy `18 → 40 → 121 → 161 → 161 → 121 → 40 → 18` |
 | pasek battle | wypełnienie 260×4 px rdzenia, profil `48 → 144 → 192 ×4 → 144 → 48` |
 | odstęp wierszy battle | 44 px |
@@ -289,7 +289,7 @@ reszta; nic w panelu nie decyduje.
   zakresów; pochłanianie barwy sprawdzane osobno dla obu par; `battleOptions()`
   przenosi pola battle, `barOptions()` okna gry.
 - `internal/testenv`: `TestCombatFixtureGeometry` z liczbami z tabeli.
-- `internal/vitals`: `TestReadOnRealCapture` — HP ≈ 91,9 % (147/160), mana 100 %.
+- `internal/vitals`: `TestReadOnRealCapture` — HP ≈ 91,9 % (147/160), mana 100 %; prostokąt to 2 wiersze nad cyframi (134–135), bo od 136 w dół tekst przecina wypełnienie i każdy taki wiersz odpada.
 - `webtests/vision_test.mjs`: nowe pola w `config()`, etykiety.
 
 ## Ryzyka
