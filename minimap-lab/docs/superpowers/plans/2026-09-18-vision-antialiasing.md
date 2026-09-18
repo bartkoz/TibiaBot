@@ -16,7 +16,7 @@
 - Cały nowy kod i komentarze po angielsku (jak reszta `internal/`); teksty panelu, README i komunikaty walidacji po polsku z pełnymi znakami diakrytycznymi.
 - `EdgeTolerance` domyślnie **0** — to oznacza dzisiejsze zachowanie bit-do-bitu; każdy istniejący test syntetyczny musi przejść bez zmian.
 - Zero pól konfiguracji dubluje się między oknem gry a battle listą poza tymi, które spec wymienia (`BarColors` zostaje jedną wspólną listą).
-- Zmierzona kalibracja (z `docs/superpowers/plans/2026-09-07-vision-layer-measurements.md`), wpisywana do fixture: okno gry `Rect(637,245,3778,2548)`, wycinek `Rect(1056,245,3359,2548)`, battle `Rect(4770,900,5100,1150)`, HP `Rect(24,134,2202,136)`, mana `Rect(2217,134,4392,136)`, pasek `62×8` obwódka `3` tolerancja `20` czerń `125`, battle pasek `262×8` obwódka `1` tolerancja `80` czerń `60` brzeg `1` odstęp `44`, ramka `#c90a0a` ikonka offset `(-45,-31)` bok `40`, 3 stwory, `TargetRow=0`, `SelfBar=(1070,985)`.
+- Zmierzona kalibracja (z `docs/superpowers/plans/2026-09-07-vision-layer-measurements.md`), wpisywana do fixture: okno gry `Rect(637,245,3778,2548)`, wycinek `Rect(1056,245,3359,2548)`, battle `Rect(4770,900,5100,1150)`, HP `Rect(24,134,2202,136)`, mana `Rect(2217,134,4392,136)`, pasek `62×8` obwódka `3` tolerancja `20` czerń `125`, battle pasek `262×8` obwódka `1` tolerancja `80` czerń `48` brzeg `1` odstęp `44`, ramka `#c90a0a` ikonka offset `(-45,-31)` bok `40`, 3 stwory, `TargetRow=0`, `SelfBar=(1070,985)`.
 
 ---
 
@@ -262,8 +262,8 @@ func TestCombatConfigBattleToleranceDefaults(t *testing.T) {
 	if c.BattleBarTolerance != 80 {
 		t.Errorf("domyślna tolerancja battle %d, oczekiwano 80", c.BattleBarTolerance)
 	}
-	if c.BattleBlackMax != 60 {
-		t.Errorf("domyślny próg czerni battle %d, oczekiwano 60", c.BattleBlackMax)
+	if c.BattleBlackMax != 48 {
+		t.Errorf("domyślny próg czerni battle %d, oczekiwano 48", c.BattleBlackMax)
 	}
 	if c.BattleEdgeTolerance != 1 {
 		t.Errorf("domyślna tolerancja brzegu battle %d, oczekiwano 1", c.BattleEdgeTolerance)
@@ -329,7 +329,7 @@ W `internal/brain/combatconfig.go`, w `withDefaults()`, przed `return c` dołó�
 		c.BattleBarTolerance = 80
 	}
 	if c.BattleBlackMax == 0 {
-		c.BattleBlackMax = 60
+		c.BattleBlackMax = 48
 	}
 	if c.BattleEdgeTolerance == 0 {
 		c.BattleEdgeTolerance = 1
@@ -709,7 +709,7 @@ func CombatCalibration() CombatFixture {
 
 		BattleGeometry:  vision.Geometry{Width: 262, Height: 8, Border: 1},
 		BattleTolerance: 80,
-		BattleBlackMax:  60,
+		BattleBlackMax:  48,
 		BattleEdge:      1,
 		RowPitch:        44,
 		Frame:           vision.Color{R: 0xc9, G: 0x0a, B: 0x0a},
@@ -830,7 +830,7 @@ test('nowe pola tolerancji i ikonki jadą w konfiguracji', async () => {
   await shareOnly(p);
   await calibrate(p, 'viewport', [100, 50], [339, 225]);
   p.el('battle-tolerance').value = '80';
-  p.el('battle-black-max').value = '60';
+  p.el('battle-black-max').value = '48';
   p.el('battle-edge').value = '1';
   p.el('bar-edge').value = '0';
   p.el('battle-icon-x').value = '-45';
@@ -841,7 +841,7 @@ test('nowe pola tolerancji i ikonki jadą w konfiguracji', async () => {
 
   const combat = lastConfig(p).brain.combat;
   assert.equal(combat.battle_bar_tolerance, 80);
-  assert.equal(combat.battle_black_max, 60);
+  assert.equal(combat.battle_black_max, 48);
   assert.equal(combat.battle_edge_tolerance, 1);
   assert.equal(combat.bar_edge_tolerance, 0);
   assert.equal(combat.battle_icon_offset_x, -45);
@@ -867,7 +867,7 @@ W siatce battle (po `battle-frame-coverage`) dołóż:
 
 ```html
           <label>Battle: tolerancja barw<input id="battle-tolerance" type="number" min="1" max="128" value="80"></label>
-          <label>Battle: próg czerni<input id="battle-black-max" type="number" min="1" max="128" value="60"></label>
+          <label>Battle: próg czerni<input id="battle-black-max" type="number" min="1" max="128" value="48"></label>
           <label>Battle: tolerancja brzegu<input id="battle-edge" type="number" min="0" max="4" value="1"></label>
           <label>Ikonka: przesunięcie X<input id="battle-icon-x" type="number" min="-512" max="512" value="-45"></label>
           <label>Ikonka: przesunięcie Y<input id="battle-icon-y" type="number" min="-512" max="512" value="-31"></label>

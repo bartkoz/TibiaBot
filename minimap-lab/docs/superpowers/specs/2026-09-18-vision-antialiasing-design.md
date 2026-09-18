@@ -77,7 +77,7 @@ liście, ramka celu na wierszu 0.
 | okno gry | `Rect(637, 245, 3778, 2548)` — 3141×2303, proporcja 1,3639 (15/11 = 1,3636), kratka 209,4 px |
 | wycinek | `Rect(1056, 245, 3359, 2548)` — `RecommendedCrop()` dla promienia 4 |
 | battle lista | `Rect(4770, 900, 5100, 1150)` |
-| pasek HP | `Rect(24, 154, 2202, 157)` — 3 wiersze, bo cyfry „147/160" zajmują 140–153 |
+| pasek HP | `Rect(24, 134, 2202, 136)` — 2 wiersze nad cyframi „147/160", które zajmują 136–157 |
 | pasek many | `Rect(2217, 134, 4392, 136)` |
 | pasek stwora | wypełnienie 56×2 px rdzenia, profil pionowy `18 → 40 → 121 → 161 → 161 → 121 → 40 → 18` |
 | pasek battle | wypełnienie 260×4 px rdzenia, profil `48 → 144 → 192 ×4 → 144 → 48` |
@@ -179,7 +179,7 @@ BarEdgeTolerance int `json:"bar_edge_tolerance"` // NOWE, dom. 0
 
 // Battle lista - NOWE:
 BattleBarTolerance  int `json:"battle_bar_tolerance"`  // dom. 80
-BattleBlackMax      int `json:"battle_black_max"`      // dom. 60
+BattleBlackMax      int `json:"battle_black_max"`      // dom. 48
 BattleEdgeTolerance int `json:"battle_edge_tolerance"` // dom. 1
 ```
 
@@ -191,7 +191,13 @@ tolerancje brzegowe 0–4; sprawdzenie „barwa nie zostanie pochłonięta"
 dla pary battle listy, ta druga tylko gdy `Battle` niepuste. `battleOptions()` czyta
 pola battle, `barOptions()` pola okna gry.
 
-Domyślne 80/60/1 to wartości zmierzone. Domyślne okna gry (12/48) zostają jak były —
+Domyślne 80/48/1 to wartości zmierzone: `48` (nie zmierzone `60`) to najniższa wartość,
+która dalej poprawnie klasyfikuje tło battle listy jako ciemne, a jednocześnie nie pochłania
+najciemniejszego wpisu `vision.DefaultColors()` (`#850c0c`, maxChannel 133) przy tolerancji
+80 — sprawdzenie pochłaniania barwy biegnie po **całej** wspólnej liście barw, nie tylko po
+barwach zmierzonych na tym kliencie, i `133 − 80 = 53 ≤ 60` odrzuciłoby każdą nieskalibrowaną
+konfigurację battle listy. Odkryte w przedwykonawczym skanie planu 2026-09-18, nie na etapie
+projektowania. Domyślne okna gry (12/48) zostają jak były —
 zmiana domyślnych to nie jest cel tego projektu; kalibracja idzie przez panel.
 
 `BarColors` **zostaje jedną, wspólną listą.** Battle lista rysuje te same barwy
@@ -247,7 +253,7 @@ BarTolerance    int               // 20
 BlackMax        int               // 125
 BattleGeometry  vision.Geometry   // 262×8/1
 BattleTolerance int               // 80
-BattleBlackMax  int               // 60
+BattleBlackMax  int               // 48
 BattleEdge      int               // 1
 RowPitch        int               // 44
 Frame           vision.Color      // 201,10,10
