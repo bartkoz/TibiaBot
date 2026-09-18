@@ -60,6 +60,12 @@ nich bez wyraźnej prośby.
 
 ## Stan wyjściowy
 
+**Warunek wstępny (dopisany 2026-09-18):** pierwsze prawdziwe klatki pokazały, że
+faza 1 nie czyta battle listy tego klienta — rozmyte brzegi pasków, wspólna
+tolerancja dla okna gry i battle listy, ramka celu wokół ikonki zamiast wiersza.
+Poprawki opisuje `2026-09-18-vision-antialiasing-design.md`; ten spec czeka na
+ich wdrożenie. Zmierzone liczby są w `plans/2026-09-07-vision-layer-measurements.md`.
+
 Faza 1 walki scalona (`6939adc`): `internal/vision` znajduje paski nad
 stworami i przelicza je na kratki od postaci, `internal/battle` czyta wiersze
 battle listy i ramkę celu, `internal/vitals` czyta HP i manę. Pętla publikuje

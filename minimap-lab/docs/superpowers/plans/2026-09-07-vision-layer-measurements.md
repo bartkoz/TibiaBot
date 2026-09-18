@@ -1,44 +1,49 @@
 # Pomiary z fazy 1
 
-**Status: pomiary nie zostały jeszcze wykonane.** Wymagają zdjęcia z gry —
-kliknięcia **Zapisz klatkę PNG** w panelu podczas walki z co najmniej trzema
-stworami na ekranie, zapisania wyniku jako `testdata/combat-capture.png` i
-wypełnienia zmierzonymi prostokątami `internal/testenv.CombatCalibration()`.
-Dopóki ten plik i te liczby nie istnieją, pięć testów, na które ten dokument
-się powołuje, pomija się same (`t.Skip`), a każda wartość w tabeli poniżej
-jest pusta — nikt jeszcze nie zmierzył gry na żywo, więc żadna liczba tutaj
-nie powinna wyglądać na policzoną.
+**Status: pomiary wykonane 2026-09-18** na `testdata/combat-capture.png` (5120×2880,
+rozdzielczość natywna, bez skalowania systemowego). Pierwszy zrzut z 2026-09-15
+(3600×2338) był powiększeniem 2× z wygładzaniem przez macOS i został odrzucony —
+patrz spec `2026-09-18-vision-antialiasing-design.md`, który opisuje, co te pomiary
+zmieniły w kodzie.
 
-Ten dokument jest **formularzem**: każdy wiersz mówi dokładnie, jaką komendą
-albo jaką czynnością w panelu wypełnić brakującą komórkę. Osoba z dostępem do
-gry powinna umieć przejść tabelę od góry do dołu bez ponownego wymyślania
-metody.
+Metoda: skrypt w Pythonie (PIL + numpy) do profili pikseli, a każdy wynik detekcji
+potwierdzony prawdziwym `vision.Find` i `battle.Read` uruchomionym na wycinkach
+zrzutu. Liczby w tabeli to te, które trafiają do `internal/testenv.CombatCalibration()`.
 
-Data pomiaru: *(brak — jeszcze nie wykonano)*
-Klatka odniesienia: `testdata/combat-capture.png` *(jeszcze nie istnieje w repo)*
+Data pomiaru: 2026-09-18
+Klatka odniesienia: `testdata/combat-capture.png`
 
 | Co | Wartość | Jak zmierzone |
 |---|---|---|
-| siatka okna gry | *(brak pomiaru)* | Proporcje zmierzonego prostokąta `viewport` w `internal/testenv.CombatCalibration()`. Sprawdza to automatycznie `go test ./internal/testenv/ -run TestCombatFixtureGeometry -v` — porównuje `Viewport.Dx()/Dy()` z `GridCols/GridRows` (domyślnie 15×11), z tolerancją 3% na skalowanie klienta. |
-| piksele na kratkę | *(brak pomiaru)* | `Viewport.W / GridCols`, `Viewport.H / GridRows`, policzone z prostokąta `okno gry`, zaznaczonego w panelu w sekcji **7. Widzenie: potwory, battle lista, paski** (selektor „Kalibruję" → „okno gry"). |
-| geometria paska życia nad stworem | *(brak pomiaru)* szerokość × wysokość px, obwódka *(brak pomiaru)* px | Powiększenie `testdata/combat-capture.png` (albo `.debug/vision-fixture.png`, które zapisuje `go test ./internal/vision/ -run TestRealCaptureOffsets -v` po zgraniu klatki): policz w poziomie i w pionie piksele koloru wypełnienia oraz grubość czarnej obwódki wokół nich. Wpisz do pól „Pasek: szerokość/wysokość/obwódka" w panelu (`bar_width`, `bar_height`, `bar_border`). |
-| barwy wypełnienia | *(brak pomiaru)* | Odczyt koloru pikseli wypełnienia na kilku różnych poziomach HP na tej samej klatce. Porównaj z sześcioma wartościami `vision.DefaultColors()` (`internal/vision/bars.go`) i popraw pole „Barwy wypełnienia paska" (`bar_colors`) oraz „Tolerancja barw" (`bar_tolerance`) w panelu, jeśli klient je zmienił. |
-| próg czerni (`black_max`) | *(brak pomiaru)* | Najciemniejsza wartość kanału RGB zmierzona w środku wypełnienia paska, zestawiona z najjaśniejszą wartością kanału zmierzoną w jego czarnej obwódce lub tle. `black_max` musi leżeć bezpiecznie między nimi — `CombatConfig.validate()` odmawia progu, który razem z tolerancją barw pochłonąłby którąkolwiek barwę wypełnienia, i nazywa tę barwę w komunikacie błędu. |
-| zakotwiczenie paska (własny pasek / mały stwór) | dx = *(brak pomiaru)*, dy = *(brak pomiaru)* px | Zaznacz w panelu (sekcja 7) „Klient rysuje własny pasek postaci", włącz „Pokazuj podgląd widzenia" i kliknij pasek postaci na podglądzie — panel wylicza `AnchorDX`/`AnchorDY` sam (`Grid.AnchorFrom`), z pikseli, które właśnie kliknięto. Ta sama wartość trafia do logu `go test ./internal/vision/ -run TestRealCaptureOffsets -v`, w linii „zakotwiczenie wyliczone z własnego paska: dx=… dy=…". |
-| zakotwiczenie dużego stwora — rozjazd względem małego | *(brak pomiaru)* kratki | W tym samym logu `TestRealCaptureOffsets` znajdź wpis stwora ze sprite'em wyraźnie większym niż jedna kratka i porównaj wypisany offset z kratką, na której ten stwór faktycznie stoi na obrazie — pomaga `.debug/vision-fixture.png`, ten sam test zapisuje tam obrysy pasków narysowane na wycinku. Wynik i jego konsekwencja dla fazy 3 idą do sekcji „Ryzyka" specyfikacji (`docs/superpowers/specs/2026-09-07-combat-and-loot-design.md`), punkt 1. |
-| geometria paska w battle liście | *(brak pomiaru)* szerokość × wysokość px, obwódka *(brak pomiaru)* px | Powiększenie zrzutu w miejscu battle listy: policz piksele wypełnienia i grubość obwódki jednego mini-paska. Wpisz do „Battle: szerokość/wysokość/obwódka paska" (`battle_bar_width`, `battle_bar_height`, `battle_bar_border`). |
-| odstęp wierszy battle listy | *(brak pomiaru)* px | Odległość w pikselach między środkami dwóch sąsiednich mini-pasków w battle liście, zmierzona na tym samym powiększeniu. Wpisz do „Battle: odstęp wierszy" (`battle_row_pitch`). |
-| barwa i pokrycie ramki celu | *(brak pomiaru)*, *(brak pomiaru)* | Odczyt koloru pikseli obwódki wokół wiersza z aktywnym atakiem (`battle_frame`) i to, jaki ułamek szerokości wiersza ta obwódka pokrywa w jednej linii (`battle_frame_coverage`) — potrzebny wpis w battle liście z aktywnym atakiem na zrzucie. |
-| pasek HP / many | *(brak pomiaru)* szerokość × wysokość px | Prostokąty zaznaczone w krokach „pasek HP" i „pasek many" kalibracji panelu (sekcja 7), zaznaczone bez obwódki i bez cyfr. |
+| siatka okna gry | 15×11, potwierdzona: okno 3141×2303 ma proporcję 1,3639 przy oczekiwanej 1,3636 | rzut kolorowości na kolumny i wiersze, potem profil pikseli krawędzi w `y=1400` i `x=2000`; UI klienta jest szare, świat kolorowy |
+| piksele na kratkę | 209,4 × 209,4 | `3141/15`, `2303/11` |
+| geometria paska życia nad stworem | 62×8 px, obwódka 3 (rdzeń 56×2) | profil pionowy `18 → 40 → 121 → 161 → 161 → 121 → 40 → 18`; oba wiersze przejścia (40, 121) wciągnięte do obwódki, bo 121 ≤ próg czerni 125 |
+| barwy wypełnienia | zieleń `(0,161,0)` i `(0,149,0)`, żółć `(161,161,0)` — rdzeń zależy od fazy subpikselowej; kalibracja `#009b00`, `#9b9b00`, `#aa0a0a` z tolerancją 20 | odczyt środka rdzenia trzech pasków; przeszukanie tolerancji 15–25 × progu 120–128 dało zawsze te same 3 paski |
+| próg czerni (`black_max`) | **125** | między 121 (najjaśniejszy wiersz przejścia) a 141 (najciemniejszy rdzeń minus tolerancja); `validate()` przyjmuje, bo `161 − 20 = 141 > 125` |
+| zakotwiczenie paska (własny pasek) | dx = −50, dy = −163 px → `(−0,24, −0,78)` kratki | środek paska własnego względem środka okna gry; pasek własny był **niebieski** `(0,0,255)` na x 2129–2184, y 1233–1234 — pozycja z pikseli, nie z detektora. Na zrzucie z 2026-09-15: `(−0,23, −0,86)` — stabilne między klatkami |
+| zakotwiczenie dużego stwora — rozjazd | brak dużego stwora na zrzucie; Assassin 1 wypada na `(0, −1)`, Footman na `(−1, +1)` — całe kratki; Assassin 2 na `(3,78, 3,0)` — w pół kroku | `Grid.Offset` z zakotwiczeniem wyżej |
+| geometria paska w battle liście | 262×8 px, obwódka 1 (rdzeń 260×6) | profil `48 → 144 → 192 ×4 → 144 → 48`; wiersz 144 nie może być ciemny (próg tnie się na 128), więc jest wypełnieniem przy tolerancji 80 |
+| odstęp wierszy battle listy | 44 px | paski wierszy 1 i 2 na y 1011 i 1055 |
+| barwa i pokrycie ramki celu | `(201,10,10)` = `#c90a0a`; kwadrat 40×40 o krawędzi 2 px **wokół ikonki**, nie wokół wiersza; ikonka na `(−45, −31)` od rogu paska; pokrycie 0,8 boku ikonki = 32 px z 40 | bbox czerwieni w oknie battle listy; biegi 40 px w wierszach 936–937 i 974–975 |
+| pasek HP / many | HP `Rect(24, 154, 2202, 157)`, mana `Rect(2217, 154, 4392, 157)` — 2178 × 3 i 2175 × 3 px | prawa krawędź kontenera HP z profilu `y=155` (zieleń do 2025 = 91,9 % = 147/160 ✓, szare do 2202); cyfry zajmują wiersze 140–153, stąd wąski pas 154–157 |
+| okno gry / wycinek / battle lista | `Rect(637,245,3778,2548)` / `Rect(1056,245,3359,2548)` / `Rect(4770,900,5100,1150)` | j.w.; wycinek to `RecommendedCrop()` dla promienia 4 |
+| stwory / wiersz celu | 3 stwory w wycinku, `TargetRow = 0` | policzone na oczy i potwierdzone detekcją |
 
 ## Co z tego wynika dla dalszych faz
 
-Nie można tego jeszcze wypełnić: wnioski zależą od liczb powyżej, a żadna z
-nich nie jest jeszcze zmierzona. Jedyny wniosek, który da się wyciągnąć bez
-pomiaru, jest w specyfikacji (`docs/superpowers/specs/2026-09-07-combat-and-loot-design.md`,
-sekcja „Ryzyka", punkt 1): procedura pomiaru zakotwiczenia dużego stwora i to,
-co każdy z dwóch możliwych wyników znaczy dla fazy 3. Po wykonaniu pomiarów
-ta sekcja powinna dostać krótką listę: czy geometria `27×4` z klasycznego
-kalibracji nadal pasuje, czy siatka 15×11 się potwierdziła, i czy któraś z
-domyślnych barw (`vision.DefaultColors()`) wymaga korekty na tym konkretnym
-kliencie.
+1. **Geometria 27×4 z klasycznej kalibracji nie pasuje** i nigdy nie pasowała do
+   tego klienta — pasek nad stworem ma 62×8 przy natywnym 5K, a w battle liście
+   262×8. Domyślne w `CombatConfig` zostają jako hipoteza startowa, kalibracja idzie
+   przez panel; testy realnej klatki czytają geometrię z fixture.
+2. **Siatka 15×11 potwierdzona** z dokładnością 0,02 %.
+3. **Barwy `vision.DefaultColors()`** (`#00bc00` itd.) są jaśniejsze niż zmierzone
+   rdzenie (161, 149) — to skutek wygładzania brzegów, które zaniża szczyt. Tolerancja
+   20 wokół zmierzonych barw działa; wokół domyślnych trzeba by 30–40 i ryzykować
+   fałszywe trafienia. Kalibracja barw idzie z pomiaru, nie z tabeli.
+4. **Klient wygładza brzegi pasków** — to nie skalowanie systemu, tylko sam klient.
+   Pełny pasek przechodzi przez `confirm()` przypadkiem, ranny stwór nie. Stąd
+   tolerancja brzegowa, osobne pola battle listy i ramka szukana wokół ikonki —
+   wszystko w specu z 2026-09-18.
+5. **Pasek własny był niebieski** na obu zrzutach — palety HP nie dotyka, więc
+   wykluczenie po pozycji nie ma dziś nic do roboty. Pozycja zanotowana, mechanika
+   klienta niezgadywana.
