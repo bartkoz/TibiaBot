@@ -44,6 +44,30 @@ test('nowe pola tolerancji i ikonki jadą w konfiguracji', async () => {
   assert.equal(combat.battle_icon_size, 40);
 });
 
+test('input na polu tekstowym nie wypycha configu, change nadal tak', async () => {
+  const p = panel();
+  await p.settled();
+  await shareOnly(p);
+  await calibrate(p, 'viewport', [100, 50], [339, 225]);
+  const configPosts = () => p.requests.filter(r => r.url === '/api/config').length;
+  const before = configPosts();
+
+  // bar-colors is free text (a comma-separated list of #rrggbb values), not
+  // a number dial - every keystroke fires 'input' but the value is invalid
+  // until the last character, so it must not push on 'input' at all.
+  p.el('bar-colors').value = '#0';
+  p.el('bar-colors').fire('input');
+  await p.settled();
+  assert.equal(configPosts(), before,
+    'input na polu tekstowym wypchnął config przed dokończeniem wpisywania');
+
+  p.el('bar-colors').value = '#00bc00';
+  p.el('bar-colors').fire('change');
+  await p.settled();
+  assert.equal(configPosts(), before + 1,
+    'change na polu tekstowym powinien nadal wypychać config jak dotychczas');
+});
+
 test('cztery nowe regiony trafiają do klatki', async () => {
   const p = panel();
   await p.settled();

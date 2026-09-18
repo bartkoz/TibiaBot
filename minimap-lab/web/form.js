@@ -68,16 +68,23 @@ export function createForm(ctx) {
   }
 
   function mount() {
-    // Both events are wired to the same handler: 'change' is what a browser
-    // fires for most of these fields (typed value committed on blur, or a
-    // select/checkbox toggled), but a calibration dial nudged with the
-    // spinner arrows or typed and read live - the battle tolerance fields in
-    // particular - needs the config pushed on 'input' too, or the preview
-    // lags a full field-blur behind what is on screen.
+    // Every watched field gets the handler on 'change' - a browser fires that
+    // for all of them (typed value committed on blur, a select changed, a
+    // checkbox toggled). Number inputs - the calibration dials, spinner
+    // arrows and all - additionally get it on 'input', so a nudge or a typed
+    // digit updates the preview live instead of lagging a full field-blur
+    // behind what is on screen. Free-text fields (hex-colour lists like
+    // bar-colors, a single #rrggbb like battle-frame) deliberately do NOT get
+    // 'input': the value is invalid on every keystroke but the last, and the
+    // server would reject and flash an error on each one. Checking the
+    // element's own `type` here - rather than hand-listing which ids count as
+    // dials - means any future number field added to WATCHED gets this for
+    // free and can never drift out of sync with a maintained list.
     const handler = () => { save(); ctx.pushConfig(); };
     for (const id of WATCHED) {
-      $(id).addEventListener('change', handler);
-      $(id).addEventListener('input', handler);
+      const el = $(id);
+      el.addEventListener('change', handler);
+      if (el.type === 'number') el.addEventListener('input', handler);
     }
   }
 

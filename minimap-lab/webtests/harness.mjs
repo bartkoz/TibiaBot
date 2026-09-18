@@ -67,6 +67,21 @@ function panel({state = {}, onRequest = () => null, storage = {}} = {}) {
   document.getElementById('bar-colors').value = '#00bc00,#50a150,#a1a100,#bf0a0a,#910f0f,#850c0c';
   document.getElementById('battle-frame').value = '#ff5050';
 
+  // The fake elements above have no HTML behind them, so nothing gives them
+  // a `type` the way a browser derives one from the tag's `type` attribute.
+  // form.js's mount() reads `.type === 'number'` to decide which fields get
+  // a live 'input' listener alongside 'change' - without this, every field
+  // here would look untyped and that split couldn't be exercised at all.
+  for (const id of [
+    'mask', 'threshold', 'gap', 'floor-radius', 'speed', 'route-every', 'route-tolerance',
+    'grid-cols', 'grid-rows', 'decision-radius',
+    'bar-width', 'bar-height', 'bar-border', 'bar-tolerance', 'black-max', 'bar-edge',
+    'self-bar-x', 'self-bar-y',
+    'battle-bar-width', 'battle-bar-height', 'battle-bar-border', 'battle-pitch',
+    'battle-frame-coverage', 'battle-tolerance', 'battle-black-max', 'battle-edge',
+    'battle-icon-x', 'battle-icon-y', 'battle-icon-size',
+  ]) document.getElementById(id).type = 'number';
+
   class Worker {
     constructor(url) { this.url = url; workerTick = () => this.onmessage?.({data: 'tick'}); }
     postMessage(m) { workerMessages.push(m); }
