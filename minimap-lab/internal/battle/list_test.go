@@ -45,10 +45,19 @@ func paint(im *image.NRGBA, at image.Point, fill int) {
 	}
 }
 
-// frame draws the attack border as one horizontal line across the entry.
-func frame(im *image.NRGBA, y int) {
-	for x := 0; x < im.Bounds().Dx(); x++ {
-		im.SetNRGBA(x, y, color.NRGBA{R: frameColor.R, G: frameColor.G, B: frameColor.B, A: 255})
+// iconFrame draws the attack border as a square around the creature icon,
+// offset from the bar the way the client draws it: to the left of the bar,
+// centred on the same rows.
+func iconFrame(im *image.NRGBA, barAt image.Point, offX, offY, size int) {
+	x0, y0 := barAt.X+offX, barAt.Y+offY
+	for i := 0; i < size; i++ {
+		set := func(x, y int) {
+			im.SetNRGBA(x, y, color.NRGBA{R: frameColor.R, G: frameColor.G, B: frameColor.B, A: 255})
+		}
+		set(x0+i, y0)        // top edge
+		set(x0+i, y0+size-1) // bottom edge
+		set(x0, y0+i)        // left edge
+		set(x0+size-1, y0+i) // right edge
 	}
 }
 
@@ -57,6 +66,13 @@ func opts() battle.Options {
 		Geometry: mini, Colors: vision.DefaultColors(), Tolerance: 12, BlackMax: 48,
 		RowPitch: pitch, Frame: frameColor, FrameTolerance: 12, FrameCoverage: 0.8,
 	}
+}
+
+func iconOpts() battle.Options {
+	o := opts()
+	o.IconOffsetX, o.IconOffsetY, o.IconSize = -14, -6, 12
+	o.FrameCoverage = 0.8
+	return o
 }
 
 func TestReadCountsRowsTopDown(t *testing.T) {
@@ -84,12 +100,14 @@ func TestReadCountsRowsTopDown(t *testing.T) {
 	}
 }
 
-func TestReadFindsTargetFrame(t *testing.T) {
+func TestReadFindsTargetFrameAroundIcon(t *testing.T) {
 	im := canvas(60, 100)
 	paint(im, image.Pt(30, 10), 18)
 	paint(im, image.Pt(30, 10+pitch), 9)
-	frame(im, 10+pitch-6) // attack frame line above the second row
-	list := battle.Read(im, opts())
+	// Frame around the icon of the SECOND row's bar (top-left corner at
+	// (30, 10+pitch) minus the icon offset).
+	iconFrame(im, image.Pt(30, 10+pitch), -14, -6, 12)
+	list := battle.Read(im, iconOpts())
 	if len(list.Rows) != 2 {
 		t.Fatalf("odczytano %d wierszy, oczekiwano 2", len(list.Rows))
 	}
@@ -97,32 +115,24 @@ func TestReadFindsTargetFrame(t *testing.T) {
 		t.Error("pierwszy wiersz nie powinien mieć ramki")
 	}
 	if !list.Rows[1].Targeted {
-		t.Error("drugi wiersz powinien mieć ramkę celu")
+		t.Error("drugi wiersz powinien mieć ramkę wokół ikonki")
 	}
 }
 
-func TestReadFrameOnRowBoundary(t *testing.T) {
-	t.Run("ramka na granicy wierszy trafia dokładnie w jeden wiersz", func(t *testing.T) {
-		// This pins the tiling boundary between two entries' search bands.
-		// With Bar.Y 10 and 32, Geometry.Height 3 and RowPitch 22, the first
-		// row's band is [0,22) and the second row's is [22,44) - a line at
-		// y=22 belongs to the second row only. The old overlapping band
-		// arithmetic marked both rows here at once.
-		im := canvas(60, 100)
-		paint(im, image.Pt(30, 10), 18)
-		paint(im, image.Pt(30, 10+pitch), 9)
-		frame(im, 22)
-		list := battle.Read(im, opts())
-		if len(list.Rows) != 2 {
-			t.Fatalf("odczytano %d wierszy, oczekiwano 2", len(list.Rows))
-		}
-		if list.Rows[0].Targeted {
-			t.Error("pierwszy wiersz nie powinien mieć ramki")
-		}
-		if !list.Rows[1].Targeted {
-			t.Error("drugi wiersz powinien mieć ramkę celu")
-		}
-	})
+func TestReadFrameDoesNotLeakToNeighbour(t *testing.T) {
+	im := canvas(60, 100)
+	paint(im, image.Pt(30, 10), 18)
+	paint(im, image.Pt(30, 10+pitch), 9)
+	// Frame around the FIRST row's icon must not mark the second row: icon
+	// squares of adjacent rows do not overlap (size 12 < pitch 22).
+	iconFrame(im, image.Pt(30, 10), -14, -6, 12)
+	list := battle.Read(im, iconOpts())
+	if !list.Rows[0].Targeted {
+		t.Error("pierwszy wiersz powinien mieć ramkę")
+	}
+	if list.Rows[1].Targeted {
+		t.Error("drugi wiersz nie powinien złapać ramki sąsiada")
+	}
 }
 
 func TestReadGuardsInvalidInput(t *testing.T) {

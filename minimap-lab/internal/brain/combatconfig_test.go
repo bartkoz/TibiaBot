@@ -24,6 +24,7 @@ func calibrated() CombatConfig {
 		DecisionRadius: 4,
 		BattleBarWidth: 13, BattleBarHeight: 4, BattleBarBorder: 1,
 		BattleRowPitch: 22, BattleFrame: "#ff5050",
+		BattleIconOffsetX: -14, BattleIconOffsetY: -6, BattleIconSize: 12,
 	}
 }
 

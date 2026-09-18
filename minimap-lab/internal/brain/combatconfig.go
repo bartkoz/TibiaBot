@@ -83,6 +83,10 @@ type CombatConfig struct {
 	BattleBarTolerance  int `json:"battle_bar_tolerance"`
 	BattleBlackMax      int `json:"battle_black_max"`
 	BattleEdgeTolerance int `json:"battle_edge_tolerance"`
+
+	BattleIconOffsetX int `json:"battle_icon_offset_x"`
+	BattleIconOffsetY int `json:"battle_icon_offset_y"`
+	BattleIconSize    int `json:"battle_icon_size"`
 }
 
 // Enabled reports whether there is enough calibration to look at anything.
@@ -239,6 +243,13 @@ func (c CombatConfig) validate() error {
 		if c.BattleEdgeTolerance < 0 || c.BattleEdgeTolerance > 4 {
 			return fmt.Errorf("tolerancja brzegu battle listy musi mieścić się w zakresie 0–4")
 		}
+		if c.BattleIconSize < 4 || c.BattleIconSize > 256 {
+			return fmt.Errorf("bok ikonki celu musi mieścić się w zakresie 4–256 px")
+		}
+		if c.BattleIconOffsetX < -512 || c.BattleIconOffsetX > 512 ||
+			c.BattleIconOffsetY < -512 || c.BattleIconOffsetY > 512 {
+			return fmt.Errorf("przesunięcie ikonki celu musi mieścić się w zakresie -512–512 px")
+		}
 		for _, s := range c.BarColors {
 			col, err := parseColor(s)
 			if err != nil {
@@ -350,6 +361,9 @@ func (c CombatConfig) battleOptions() (battle.Options, error) {
 		RowPitch: c.BattleRowPitch,
 		Frame:    frame, FrameTolerance: c.BattleFrameTolerance,
 		FrameCoverage: c.BattleFrameCoverage,
+		EdgeTolerance: c.BattleEdgeTolerance,
+		IconOffsetX:   c.BattleIconOffsetX, IconOffsetY: c.BattleIconOffsetY,
+		IconSize: c.BattleIconSize,
 	}
 	for _, s := range c.BarColors {
 		col, err := parseColor(s)

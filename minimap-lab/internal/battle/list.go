@@ -35,6 +35,14 @@ type Options struct {
 	// cover on a single line to count as the frame rather than as some
 	// coloured pixel that happens to match.
 	FrameCoverage float64
+	// EdgeTolerance is forwarded to vision.Find: the client antialiases the
+	// battle-list bar edges too.
+	EdgeTolerance int
+	// IconOffsetX/Y place the creature icon's top-left corner relative to the
+	// bar's, and IconSize is the icon's side. The client draws the attack
+	// frame round the icon, not round the row, so that square is where the
+	// frame is looked for.
+	IconOffsetX, IconOffsetY, IconSize int
 }
 
 // Row is one entry. Bar's centre is where a click on this entry goes - the
@@ -62,7 +70,7 @@ func Read(im *image.NRGBA, o Options) List {
 	}
 	bars := vision.Find(im, vision.Options{
 		Geometry: o.Geometry, Colors: o.Colors,
-		Tolerance: o.Tolerance, BlackMax: o.BlackMax,
+		Tolerance: o.Tolerance, BlackMax: o.BlackMax, EdgeTolerance: o.EdgeTolerance,
 	})
 	var out List
 	for _, b := range bars {
@@ -76,36 +84,44 @@ func Read(im *image.NRGBA, o Options) List {
 	return out
 }
 
-// framed looks for the attack border in the band one entry tall around the
-// bar - the band, not the bar's own rows, because the client draws the frame
-// round the whole entry and the entry is taller than its health bar. The band
-// is centred on the bar and half-open at the top, so consecutive entries tile
-// exactly instead of sharing a strip. An overlapping band would mark two
-// entries as the target at once - and since clicking the entry already under
-// attack cancels the attack, a target the bot only thinks it has is as costly
-// as one it fails to see.
+// framed looks for the attack border in the square around this bar's creature
+// icon. The client draws the frame round the icon, which sits at a fixed
+// offset from the bar, so a run of the frame colour covering FrameCoverage of
+// the icon's width on any one of its rows means this entry is the target.
+// Icon squares of adjacent rows do not overlap, so at most one row is framed.
 func (o Options) framed(im *image.NRGBA, b vision.Bar) bool {
-	want := int(o.FrameCoverage * float64(im.Bounds().Dx()))
+	if o.IconSize < 1 {
+		return false
+	}
+	want := int(o.FrameCoverage * float64(o.IconSize))
 	if want < 1 {
 		want = 1
 	}
-	top := b.Y + o.Geometry.Height/2 - o.RowPitch/2
-	for y := top; y < top+o.RowPitch; y++ {
-		if o.frameRun(im, y) >= want {
+	x0 := b.X + o.IconOffsetX
+	y0 := b.Y + o.IconOffsetY
+	for y := y0; y < y0+o.IconSize; y++ {
+		if o.frameRun(im, y, x0, x0+o.IconSize) >= want {
 			return true
 		}
 	}
 	return false
 }
 
-// frameRun is the longest unbroken run of the frame colour on one line.
-func (o Options) frameRun(im *image.NRGBA, y int) int {
+// frameRun is the longest unbroken run of the frame colour on one line, within
+// the given x range.
+func (o Options) frameRun(im *image.NRGBA, y, x0, x1 int) int {
 	b := im.Bounds()
 	if y < b.Min.Y || y >= b.Max.Y {
 		return 0
 	}
+	if x0 < b.Min.X {
+		x0 = b.Min.X
+	}
+	if x1 > b.Max.X {
+		x1 = b.Max.X
+	}
 	best, run := 0, 0
-	for x := b.Min.X; x < b.Max.X; x++ {
+	for x := x0; x < x1; x++ {
 		c := im.NRGBAAt(x, y)
 		if near(c.R, o.Frame.R, o.FrameTolerance) &&
 			near(c.G, o.Frame.G, o.FrameTolerance) &&
