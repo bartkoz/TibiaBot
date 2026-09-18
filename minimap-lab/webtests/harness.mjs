@@ -61,7 +61,7 @@ function panel({state = {}, onRequest = () => null, storage = {}} = {}) {
     'bar-width': '27', 'bar-height': '4', 'bar-border': '1',
     'bar-tolerance': '12', 'black-max': '48',
     'battle-bar-width': '27', 'battle-bar-height': '4', 'battle-bar-border': '1',
-    'battle-pitch': '22', 'battle-frame-coverage': '0.8',
+    'battle-pitch': '22', 'battle-frame-coverage': '0.8', 'battle-frame-tolerance': '40',
   })) document.getElementById(id).value = value;
   document.getElementById('floor-auto').checked = true;
   document.getElementById('bar-colors').value = '#00bc00,#50a150,#a1a100,#bf0a0a,#910f0f,#850c0c';
@@ -78,7 +78,7 @@ function panel({state = {}, onRequest = () => null, storage = {}} = {}) {
     'bar-width', 'bar-height', 'bar-border', 'bar-tolerance', 'black-max', 'bar-edge',
     'self-bar-x', 'self-bar-y',
     'battle-bar-width', 'battle-bar-height', 'battle-bar-border', 'battle-pitch',
-    'battle-frame-coverage', 'battle-tolerance', 'battle-black-max', 'battle-edge',
+    'battle-frame-coverage', 'battle-tolerance', 'battle-frame-tolerance', 'battle-black-max', 'battle-edge',
     'battle-icon-x', 'battle-icon-y', 'battle-icon-size',
   ]) document.getElementById(id).type = 'number';
 

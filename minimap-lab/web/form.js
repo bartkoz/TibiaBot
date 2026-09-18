@@ -13,7 +13,7 @@ const REMEMBERED = ['floor', 'zoom', 'mask', 'threshold', 'gap', 'floor-auto', '
   'bar-colors', 'self-bar-on', 'self-bar-x', 'self-bar-y',
   'battle-bar-width', 'battle-bar-height', 'battle-bar-border', 'battle-pitch',
   'battle-frame', 'battle-frame-coverage',
-  'battle-tolerance', 'battle-black-max', 'battle-edge',
+  'battle-tolerance', 'battle-frame-tolerance', 'battle-black-max', 'battle-edge',
   'battle-icon-x', 'battle-icon-y', 'battle-icon-size',
   ...Object.values(HOTKEYS), ...Object.values(DIRECTIONS)];
 

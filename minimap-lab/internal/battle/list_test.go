@@ -80,7 +80,12 @@ func TestReadCountsRowsTopDown(t *testing.T) {
 	paint(im, image.Pt(30, 10), 18)
 	paint(im, image.Pt(30, 10+pitch), 9)
 	paint(im, image.Pt(30, 10+2*pitch), 2)
-	list := battle.Read(im, opts())
+	// iconOpts() rather than the bare opts(): opts() leaves IconSize at its
+	// zero value, and framed() short-circuits to false whenever IconSize < 1
+	// - so the "no row is targeted" check below would pass even if framed()
+	// were badly broken, since it would never evaluate the icon-frame logic
+	// at all. iconOpts() gives it real icon geometry to run that logic on.
+	list := battle.Read(im, iconOpts())
 	if len(list.Rows) != 3 {
 		t.Fatalf("odczytano %d wierszy, oczekiwano 3: %+v", len(list.Rows), list.Rows)
 	}

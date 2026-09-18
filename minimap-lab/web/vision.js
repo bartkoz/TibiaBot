@@ -87,11 +87,14 @@ export function createVision(ctx) {
       battle_bar_tolerance: num('battle-tolerance'),
       battle_black_max: num('battle-black-max'),
       battle_edge_tolerance: num('battle-edge'),
-      // The target frame shares its tolerance field with the battle-list bar
-      // colours: two different thresholds in Go, one dial in the panel,
-      // because tuning them separately has no practical benefit and every
-      // extra field is one more thing to get wrong.
-      battle_frame_tolerance: num('battle-tolerance'),
+      // Its own dial, independent from battle_bar_tolerance: that one is a
+      // loose colour-match tolerance sized for matching a health-bar FILL
+      // colour across antialiasing, and reusing it here would accept a very
+      // wide band of reds/oranges/browns around the target-frame colour - a
+      // real risk of a creature's own sprite tripping a false "targeted"
+      // reading, which is the costly direction (clicking an already-targeted
+      // entry cancels the attack).
+      battle_frame_tolerance: num('battle-frame-tolerance'),
       battle_icon_offset_x: num('battle-icon-x'),
       battle_icon_offset_y: num('battle-icon-y'),
       battle_icon_size: num('battle-icon-size'),

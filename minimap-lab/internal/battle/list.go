@@ -22,18 +22,20 @@ type Options struct {
 	Colors    []vision.Color
 	Tolerance int
 	BlackMax  int
-	// RowPitch is the vertical distance between two entries. It bounds where
-	// the attack frame is looked for, and how close to the bottom edge the
-	// last entry has to be for the list to count as scrolled.
+	// RowPitch is the vertical distance between two entries. It is used only
+	// to decide how close to the bottom edge the last entry has to be for the
+	// list to count as scrolled (see Truncated on List); framed() no longer
+	// uses it to bound where the attack frame is looked for - that square is
+	// now placed directly from IconOffsetX/Y and IconSize below.
 	RowPitch int
 	// Frame is the colour of the border the client draws round the entry being
 	// attacked, with its own tolerance because it is not one of the health
 	// colours.
 	Frame          vision.Color
 	FrameTolerance int
-	// FrameCoverage is the fraction of the crop's width the frame colour must
-	// cover on a single line to count as the frame rather than as some
-	// coloured pixel that happens to match.
+	// FrameCoverage is the fraction of the creature icon's side (IconSize)
+	// the frame colour must cover on a single line to count as the frame
+	// rather than as some coloured pixel that happens to match.
 	FrameCoverage float64
 	// EdgeTolerance is forwarded to vision.Find: the client antialiases the
 	// battle-list bar edges too.

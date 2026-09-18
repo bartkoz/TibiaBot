@@ -92,12 +92,25 @@ type CombatConfig struct {
 // Enabled reports whether there is enough calibration to look at anything.
 func (c CombatConfig) Enabled() bool { return !c.Viewport.Empty() && !c.Crop.Empty() }
 
-// withDefaults fills the fields the panel may leave out. Zero is treated as
-// "unset" for each of them, which is safe because zero is not a legal value
-// for any of them either: GridCols/GridRows/DecisionRadius/BattleFrameCoverage
-// all have a validated minimum above zero, BarTolerance/BlackMax/
-// BattleFrameTolerance are now validated as 1-128 rather than 0-128 for
-// exactly this reason, and an empty colour list would mean "find nothing".
+// withDefaults fills the fields the panel may leave out, including the two
+// battle-list fields that got their own independent tolerances rather than
+// sharing the game window's (BattleBarTolerance, BattleBlackMax), the battle
+// frame's own tolerance (BattleFrameTolerance), and the battle edge tolerance
+// (BattleEdgeTolerance). Zero is treated as "unset" for each of them, but that
+// promotion carries two different guarantees depending on the field.
+// GridCols/GridRows/DecisionRadius/BarTolerance/BlackMax/BattleFrameTolerance/
+// BattleFrameCoverage/BattleBarTolerance/BattleBlackMax all have a validated
+// minimum strictly above zero, so an explicit zero could never have been a
+// legal setting for them anyway and promoting it away is unambiguous; an
+// empty colour list gets the same treatment because it would mean "find
+// nothing". BattleEdgeTolerance is different: validate() accepts it over the
+// range 0-4, so an explicit zero IS a legal setting there - but this function
+// cannot tell an explicit zero apart from "the panel left it unset" and always
+// promotes it to 1 regardless. That is an existing, accepted limitation of
+// this zero-as-unset promotion pattern (BarEdgeTolerance, which is not
+// defaulted here at all, sidesteps it only because 0 already happens to be
+// its natural Go zero value), not something new introduced by the battle
+// fields.
 func (c CombatConfig) withDefaults() CombatConfig {
 	if c.GridCols == 0 {
 		c.GridCols = 15
@@ -120,7 +133,7 @@ func (c CombatConfig) withDefaults() CombatConfig {
 		}
 	}
 	if c.BattleFrameTolerance == 0 {
-		c.BattleFrameTolerance = 12
+		c.BattleFrameTolerance = 40
 	}
 	if c.BattleFrameCoverage == 0 {
 		c.BattleFrameCoverage = 0.8
@@ -250,6 +263,17 @@ func (c CombatConfig) validate() error {
 			c.BattleIconOffsetY < -512 || c.BattleIconOffsetY > 512 {
 			return fmt.Errorf("przesunięcie ikonki celu musi mieścić się w zakresie -512–512 px")
 		}
+		// This runs over the SAME shared c.BarColors list the game-window pair
+		// above uses - there is no separate battle-only colour list. If
+		// BarColors still carries vision.DefaultColors()'s darkest entries
+		// (meant for a "classic" client hypothesis) while BattleBlackMax is
+		// raised to match a real client's grey battle-list background (which
+		// can be quite high - the measured reference capture in
+		// internal/testenv.CombatCalibration() uses 85), this check can
+		// reject the whole config even though the colours the client
+		// actually draws are fine. The fix in that situation is to trim
+		// BarColors down to the client's own measured shades, not to lower
+		// BattleBlackMax to work around the rejection.
 		for _, s := range c.BarColors {
 			col, err := parseColor(s)
 			if err != nil {
