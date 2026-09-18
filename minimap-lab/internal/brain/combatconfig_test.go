@@ -44,6 +44,44 @@ func TestCombatConfigAcceptsBlackMaxAtTheBoundary(t *testing.T) {
 	}
 }
 
+func TestCombatConfigBattleToleranceDefaults(t *testing.T) {
+	c := calibrated().withDefaults()
+	if c.BattleBarTolerance != 80 {
+		t.Errorf("domyślna tolerancja battle %d, oczekiwano 80", c.BattleBarTolerance)
+	}
+	if c.BattleBlackMax != 48 {
+		t.Errorf("domyślny próg czerni battle %d, oczekiwano 48", c.BattleBlackMax)
+	}
+	if c.BattleEdgeTolerance != 1 {
+		t.Errorf("domyślna tolerancja brzegu battle %d, oczekiwano 1", c.BattleEdgeTolerance)
+	}
+	// The game-window edge tolerance stays zero: zero is a legal, meaningful
+	// value there, so withDefaults must not promote it.
+	if c.BarEdgeTolerance != 0 {
+		t.Errorf("tolerancja brzegu okna gry %d, oczekiwano 0", c.BarEdgeTolerance)
+	}
+}
+
+func TestCombatConfigWideBattleBarAccepted(t *testing.T) {
+	c := calibrated()
+	c.BattleBarWidth = 262 // real 5K battle bar, wider than the old 256 cap
+	if err := c.withDefaults().validate(); err != nil {
+		t.Fatalf("pasek battle 262 px odrzucony: %v", err)
+	}
+}
+
+func TestCombatConfigBattleBlackMaxAbsorbsColour(t *testing.T) {
+	c := calibrated()
+	// Battle pair must run the same "colour not swallowed" check as the game
+	// window: darkest default channel 133 minus battle tolerance must stay
+	// above battle black max.
+	c.BattleBarTolerance = 80
+	c.BattleBlackMax = 120
+	if err := c.withDefaults().validate(); err == nil {
+		t.Fatal("próg czerni battle pochłaniający barwę musi być odrzucony")
+	}
+}
+
 func TestCombatConfigUncalibratedIsLegal(t *testing.T) {
 	if err := (CombatConfig{}).withDefaults().validate(); err != nil {
 		t.Fatalf("brak kalibracji musi być dozwolony: %v", err)
@@ -113,6 +151,8 @@ func TestCombatConfigRejections(t *testing.T) {
 		// makes that colour simultaneously count as fill and as dark, so this
 		// must be refused rather than silently misreading every dark-red bar.
 		{"próg czerni pochłania barwę paska", func(c *CombatConfig) { c.BlackMax = 121 }, "próg czerni"},
+		{"tolerancja brzegu poza zakresem", func(c *CombatConfig) { c.BattleEdgeTolerance = 9 }, "tolerancja brzegu"},
+		{"tolerancja battle poza zakresem", func(c *CombatConfig) { c.BattleBarTolerance = 200 }, "tolerancja"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

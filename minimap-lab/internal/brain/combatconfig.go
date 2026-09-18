@@ -45,12 +45,13 @@ type CombatConfig struct {
 	GridCols int `json:"grid_cols"`
 	GridRows int `json:"grid_rows"`
 
-	BarWidth     int      `json:"bar_width"`
-	BarHeight    int      `json:"bar_height"`
-	BarBorder    int      `json:"bar_border"`
-	BarTolerance int      `json:"bar_tolerance"`
-	BlackMax     int      `json:"black_max"`
-	BarColors    []string `json:"bar_colors"`
+	BarWidth         int      `json:"bar_width"`
+	BarHeight        int      `json:"bar_height"`
+	BarBorder        int      `json:"bar_border"`
+	BarTolerance     int      `json:"bar_tolerance"`
+	BlackMax         int      `json:"black_max"`
+	BarEdgeTolerance int      `json:"bar_edge_tolerance"`
+	BarColors        []string `json:"bar_colors"`
 
 	// HasSelfBar says the client draws the character's own bar. When it does,
 	// AnchorDX and AnchorDY are ignored and derived from SelfBarX/SelfBarY
@@ -78,6 +79,10 @@ type CombatConfig struct {
 	BattleFrame          string  `json:"battle_frame"`
 	BattleFrameTolerance int     `json:"battle_frame_tolerance"`
 	BattleFrameCoverage  float64 `json:"battle_frame_coverage"`
+
+	BattleBarTolerance  int `json:"battle_bar_tolerance"`
+	BattleBlackMax      int `json:"battle_black_max"`
+	BattleEdgeTolerance int `json:"battle_edge_tolerance"`
 }
 
 // Enabled reports whether there is enough calibration to look at anything.
@@ -115,6 +120,15 @@ func (c CombatConfig) withDefaults() CombatConfig {
 	}
 	if c.BattleFrameCoverage == 0 {
 		c.BattleFrameCoverage = 0.8
+	}
+	if c.BattleBarTolerance == 0 {
+		c.BattleBarTolerance = 80
+	}
+	if c.BattleBlackMax == 0 {
+		c.BattleBlackMax = 48
+	}
+	if c.BattleEdgeTolerance == 0 {
+		c.BattleEdgeTolerance = 1
 	}
 	return c
 }
@@ -200,6 +214,9 @@ func (c CombatConfig) validate() error {
 				s, c.BlackMax, c.BarTolerance, mc)
 		}
 	}
+	if c.BarEdgeTolerance < 0 || c.BarEdgeTolerance > 4 {
+		return fmt.Errorf("tolerancja brzegu paska musi mieścić się w zakresie 0–4")
+	}
 	if !c.Battle.Empty() {
 		if err := checkBar("paska w battle liście", c.BattleBarWidth, c.BattleBarHeight, c.BattleBarBorder); err != nil {
 			return err
@@ -216,6 +233,23 @@ func (c CombatConfig) validate() error {
 		if c.BattleFrameCoverage < 0.05 || c.BattleFrameCoverage > 1 {
 			return fmt.Errorf("pokrycie ramki celu musi mieścić się w zakresie 0,05–1")
 		}
+		if c.BattleBarTolerance < 1 || c.BattleBarTolerance > 128 || c.BattleBlackMax < 1 || c.BattleBlackMax > 128 {
+			return fmt.Errorf("tolerancja i próg czerni battle listy muszą mieścić się w zakresie 1–128")
+		}
+		if c.BattleEdgeTolerance < 0 || c.BattleEdgeTolerance > 4 {
+			return fmt.Errorf("tolerancja brzegu battle listy musi mieścić się w zakresie 0–4")
+		}
+		for _, s := range c.BarColors {
+			col, err := parseColor(s)
+			if err != nil {
+				return fmt.Errorf("barwa paska %q: %w", s, err)
+			}
+			if mc := maxChannel(col); mc-c.BattleBarTolerance <= c.BattleBlackMax {
+				return fmt.Errorf(
+					"barwa paska %q na battle liście: próg czerni %d razem z tolerancją %d pochłania jej wypełnienie (największy kanał %d)",
+					s, c.BattleBlackMax, c.BattleBarTolerance, mc)
+			}
+		}
 	}
 	if !c.HP.Empty() && (c.HP.W < 8 || c.HP.H < 1) {
 		return fmt.Errorf("prostokąt paska HP musi mieć co najmniej 8 px szerokości")
@@ -227,8 +261,8 @@ func (c CombatConfig) validate() error {
 }
 
 func checkBar(what string, w, h, border int) error {
-	if w < 3 || w > 256 || h < 3 || h > 64 {
-		return fmt.Errorf("wymiary %s muszą mieścić się w zakresie 3–256 na 3–64 px", what)
+	if w < 3 || w > 1024 || h < 3 || h > 64 {
+		return fmt.Errorf("wymiary %s muszą mieścić się w zakresie 3–1024 na 3–64 px", what)
 	}
 	if border < 1 || border > 8 || 2*border >= w || 2*border >= h {
 		return fmt.Errorf("obwódka %s musi mieć 1–8 px i zostawić miejsce na wypełnienie", what)
@@ -274,6 +308,7 @@ func (c CombatConfig) barOptions() (vision.Options, error) {
 	o := vision.Options{
 		Geometry: c.geometry(), Tolerance: c.BarTolerance,
 		BlackMax: c.BlackMax, ExcludeTolerance: 2,
+		EdgeTolerance: c.BarEdgeTolerance,
 	}
 	for _, s := range c.BarColors {
 		col, err := parseColor(s)
@@ -311,8 +346,9 @@ func (c CombatConfig) battleOptions() (battle.Options, error) {
 	o := battle.Options{
 		Geometry: vision.Geometry{Width: c.BattleBarWidth, Height: c.BattleBarHeight,
 			Border: c.BattleBarBorder},
-		Tolerance: c.BarTolerance, BlackMax: c.BlackMax, RowPitch: c.BattleRowPitch,
-		Frame: frame, FrameTolerance: c.BattleFrameTolerance,
+		Tolerance: c.BattleBarTolerance, BlackMax: c.BattleBlackMax,
+		RowPitch: c.BattleRowPitch,
+		Frame:    frame, FrameTolerance: c.BattleFrameTolerance,
 		FrameCoverage: c.BattleFrameCoverage,
 	}
 	for _, s := range c.BarColors {
