@@ -57,6 +57,23 @@ func paint(im *image.NRGBA, g vision.Geometry, at image.Point, fill int, c visio
 	}
 }
 
+// paintRows draws a bar whose inner rows have the exact widths given, top to
+// bottom, so a test can reproduce the client's antialiased edge (narrower
+// first and last row) precisely.
+func paintRows(im *image.NRGBA, g vision.Geometry, at image.Point, widths []int, c vision.Color) {
+	for y := 0; y < g.Height; y++ {
+		for x := 0; x < g.Width; x++ {
+			im.SetNRGBA(at.X+x, at.Y+y, color.NRGBA{A: 255})
+		}
+	}
+	for dy, w := range widths {
+		for x := 0; x < w; x++ {
+			im.SetNRGBA(at.X+g.Border+x, at.Y+g.Border+dy,
+				color.NRGBA{R: c.R, G: c.G, B: c.B, A: 255})
+		}
+	}
+}
+
 func opts(g vision.Geometry) vision.Options {
 	return vision.Options{
 		Geometry: g, Colors: vision.DefaultColors(),
@@ -260,6 +277,77 @@ func TestBarHP(t *testing.T) {
 	}
 	if hp := (vision.Bar{Fill: 5}).HP(classic); hp < 0.19 || hp > 0.21 {
 		t.Errorf("pasek 5/25 dał %.3f, oczekiwano około 0,2", hp)
+	}
+}
+
+func TestConfirmEdgeTolerance(t *testing.T) {
+	green := vision.DefaultColors()[0]
+	// Height 6, border 1 -> 4 inner rows. Core (middle two) is 20; the first
+	// and last inner rows are one pixel narrower, exactly like the client's
+	// antialiased edge.
+	geo := vision.Geometry{Width: 24, Height: 6, Border: 1}
+	build := func() (*image.NRGBA, vision.Options) {
+		im := darkCanvas(60, 40)
+		paintRows(im, geo, image.Pt(10, 10), []int{19, 20, 20, 19}, green)
+		o := opts(geo)
+		return im, o
+	}
+
+	im, o := build()
+	o.EdgeTolerance = 0
+	if bars := vision.Find(im, o); len(bars) != 0 {
+		t.Errorf("przy EdgeTolerance=0 rozmyty brzeg musi odrzucić pasek, dostałem %v", bars)
+	}
+
+	im, o = build()
+	o.EdgeTolerance = 1
+	bars := vision.Find(im, o)
+	if len(bars) != 1 {
+		t.Fatalf("przy EdgeTolerance=1 pasek z brzegiem o 1 px węższym musi przejść, dostałem %v", bars)
+	}
+	if bars[0].Fill != 20 {
+		t.Errorf("Fill musi być rdzeniem (20), nie brzegiem — dostałem %d", bars[0].Fill)
+	}
+}
+
+func TestConfirmRejectsWiderEdge(t *testing.T) {
+	green := vision.DefaultColors()[0]
+	geo := vision.Geometry{Width: 24, Height: 6, Border: 1}
+	im := darkCanvas(60, 40)
+	// A row WIDER than the core is not antialiasing - it is a different shape.
+	paintRows(im, geo, image.Pt(10, 10), []int{21, 20, 20, 19}, green)
+	o := opts(geo)
+	o.EdgeTolerance = 4
+	if bars := vision.Find(im, o); len(bars) != 0 {
+		t.Errorf("brzeg szerszy od rdzenia musi odrzucić pasek przy każdej tolerancji, dostałem %v", bars)
+	}
+}
+
+func TestConfirmRejectsCrookedMiddle(t *testing.T) {
+	green := vision.DefaultColors()[0]
+	geo := vision.Geometry{Width: 24, Height: 7, Border: 1}
+	im := darkCanvas(60, 40)
+	// Height 7, border 1 -> 5 inner rows. A middle row differs: that is a
+	// projectile or a digit cutting the bar, never antialiasing, so it must be
+	// rejected even at the loosest tolerance.
+	paintRows(im, geo, image.Pt(10, 10), []int{19, 20, 18, 20, 19}, green)
+	o := opts(geo)
+	o.EdgeTolerance = 4
+	if bars := vision.Find(im, o); len(bars) != 0 {
+		t.Errorf("różny wiersz środkowy musi odrzucić pasek, dostałem %v", bars)
+	}
+}
+
+func TestConfirmRejectsEmptyRow(t *testing.T) {
+	green := vision.DefaultColors()[0]
+	geo := vision.Geometry{Width: 24, Height: 6, Border: 1}
+	im := darkCanvas(60, 40)
+	// A zero-width inner row is a failure, not a width eligible for tolerance.
+	paintRows(im, geo, image.Pt(10, 10), []int{20, 0, 20, 20}, green)
+	o := opts(geo)
+	o.EdgeTolerance = 4
+	if bars := vision.Find(im, o); len(bars) != 0 {
+		t.Errorf("pusty wiersz wnętrza musi odrzucić pasek, dostałem %v", bars)
 	}
 }
 

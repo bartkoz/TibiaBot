@@ -56,6 +56,12 @@ type Options struct {
 	// creature standing one tile away.
 	Exclude          []image.Point
 	ExcludeTolerance int
+	// EdgeTolerance is how many pixels narrower than the core the first and
+	// last inner rows may be. The client antialiases the edge of a bar, and
+	// the antialiased row blends toward the dark background, so it measures
+	// shorter - never longer. Zero, the default, demands the exact match the
+	// detector always demanded.
+	EdgeTolerance int
 }
 
 // Bar is one detected health bar, in the coordinates of the image it was found
@@ -100,10 +106,12 @@ func Find(im *image.NRGBA, o Options) []Bar {
 			if run == 0 {
 				continue
 			}
-			bar := Bar{X: x - g.Border, Y: y - g.Border, Fill: run}
-			if !o.confirm(im, bar, run) {
+			bar := Bar{X: x - g.Border, Y: y - g.Border}
+			fill, ok := o.confirm(im, bar)
+			if !ok {
 				continue
 			}
+			bar.Fill = fill
 			if o.excluded(bar) {
 				continue
 			}
@@ -156,30 +164,56 @@ func (o Options) fillRun(im *image.NRGBA, x, y int) int {
 	return n
 }
 
-// confirm checks the whole rectangle: every inner row carries the same run,
-// and the border is dark all the way round.
-func (o Options) confirm(im *image.NRGBA, bar Bar, run int) bool {
+// confirm re-measures the whole rectangle and returns the core fill width.
+// The core is the run shared by the middle rows; the first and last inner
+// rows may be up to EdgeTolerance pixels narrower (never wider), which is how
+// the client's antialiased edge looks. With fewer than three inner rows there
+// is no middle to trust, so every row must match exactly, EdgeTolerance or
+// not. The border stays dark all the way round, unchanged - it is what still
+// stops the same bar being found a second time one row down.
+func (o Options) confirm(im *image.NRGBA, bar Bar) (int, bool) {
 	g := o.Geometry
 	whole := image.Rect(bar.X, bar.Y, bar.X+g.Width, bar.Y+g.Height)
 	if !whole.In(im.Bounds()) {
-		return false
+		return 0, false
 	}
-	for dy := 0; dy < g.InnerHeight(); dy++ {
-		if o.fillRun(im, bar.X+g.Border, bar.Y+g.Border+dy) != run {
-			return false
+	inner := g.InnerHeight()
+	runs := make([]int, inner)
+	for dy := 0; dy < inner; dy++ {
+		r := o.fillRun(im, bar.X+g.Border, bar.Y+g.Border+dy)
+		if r == 0 {
+			return 0, false
+		}
+		runs[dy] = r
+	}
+	coreStart, coreEnd := 0, inner
+	if inner >= 3 {
+		coreStart, coreEnd = 1, inner-1
+	}
+	core := runs[coreStart]
+	for i := coreStart; i < coreEnd; i++ {
+		if runs[i] != core {
+			return 0, false
+		}
+	}
+	if inner >= 3 {
+		for _, edge := range []int{runs[0], runs[inner-1]} {
+			if d := core - edge; d < 0 || d > o.EdgeTolerance {
+				return 0, false
+			}
 		}
 	}
 	for dy := 0; dy < g.Border; dy++ {
 		for dx := 0; dx < g.Width; dx++ {
 			if !o.isDark(im, bar.X+dx, bar.Y+dy) {
-				return false
+				return 0, false
 			}
 			if !o.isDark(im, bar.X+dx, bar.Y+g.Height-1-dy) {
-				return false
+				return 0, false
 			}
 		}
 	}
-	return true
+	return core, true
 }
 
 func (o Options) excluded(bar Bar) bool {
