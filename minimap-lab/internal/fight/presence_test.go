@@ -17,7 +17,7 @@ func TestPresence(t *testing.T) {
 		name    string
 		observe []observation
 		confirm time.Duration
-		want    bool // wynik ostatniej obserwacji
+		want    bool // result of the final observation
 	}{
 		{
 			name:    "dwie klatki i wystarczający czas potwierdzają",
@@ -44,9 +44,9 @@ func TestPresence(t *testing.T) {
 				{true, 700 * time.Millisecond}, {true, 750 * time.Millisecond},
 			},
 			confirm: 150 * time.Millisecond,
-			// Trzecia obserwacja jest 540 ms po drugiej - dalej niż próg
-			// 500 ms - więc zaczyna nowy ciąg. Czwarta jest tylko 50 ms po
-			// tym restarcie, za mało samodzielnie.
+			// The third observation is 540 ms after the second - further than
+			// the 500 ms threshold - so it starts a new streak. The fourth is
+			// only 50 ms after that restart, not enough on its own.
 			want: false,
 		},
 		{
@@ -62,9 +62,9 @@ func TestPresence(t *testing.T) {
 			name:    "duplikat tej samej klatki nie liczy się jako druga obserwacja",
 			observe: []observation{{true, 0}, {true, 0}},
 			confirm: 0,
-			// Gdyby duplikat (identyczny capturedAt) liczył się jako nowa
-			// klatka, ConfirmMS=0 dałoby true już tutaj - druga obserwacja
-			// wciąż musi widzieć tylko jedną prawdziwą klatkę.
+			// If a duplicate (identical capturedAt) counted as a new frame,
+			// ConfirmMS=0 would already yield true here - the second
+			// observation must still see only one real frame.
 			want: false,
 		},
 	}
