@@ -351,13 +351,28 @@ func TestConfirmRejectsEmptyRow(t *testing.T) {
 	}
 }
 
+// fixtureOptions builds the detector options the real capture was measured
+// with. The real-capture tests read every number from the fixture rather than
+// reusing `classic` and DefaultColors above: no client ever drew a 27x4 bar
+// in those colours, so a real-capture test built on them could only ever
+// prove that the detector compiles. On this capture DefaultColors at
+// tolerance 20 misses both full green bars outright and turns the scene's
+// fire and blood into 148 phantom ones.
+func fixtureOptions(fx testenv.CombatFixture) vision.Options {
+	return vision.Options{
+		Geometry: fx.BarGeometry, Colors: fx.BarColors,
+		Tolerance: fx.BarTolerance, BlackMax: fx.BlackMax,
+		EdgeTolerance: fx.BarEdge, ExcludeTolerance: 2,
+	}
+}
+
 // TestFindOnRealCapture checks the detector against the real capture: once
 // the character's own bar can be excluded, it must find exactly as many
 // creature bars as a human counted.
 func TestFindOnRealCapture(t *testing.T) {
 	fx := testenv.CombatCalibration()
 	im := testenv.NRGBACrop(t, testenv.CombatCapture(t), fx.Crop)
-	o := opts(classic)
+	o := fixtureOptions(fx)
 	if fx.SelfBar != (image.Point{}) {
 		o.Exclude = []image.Point{fx.SelfBar}
 	}

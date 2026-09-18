@@ -5,6 +5,8 @@ import (
 	"image/draw"
 	"os"
 	"testing"
+
+	"minimap-lab/internal/vision"
 )
 
 // CombatFixture carries the panel settings testdata/combat-capture.png was
@@ -30,6 +32,42 @@ type CombatFixture struct {
 	// attack frame, counting from zero; -1 when none did.
 	Monsters  int
 	TargetRow int
+
+	// BarGeometry and the tolerances below are the game-window calibration
+	// this capture actually needs. They are here rather than hardcoded in the
+	// tests because the numbers are a property of the capture, and because
+	// three packages have to agree on them for the cross-check to mean
+	// anything.
+	BarGeometry  vision.Geometry
+	BarTolerance int
+	BlackMax     int
+	BarEdge      int
+
+	// BarColors are the measured fill colours, shared by both detectors the
+	// way CombatConfig.BarColors is. They are not vision.DefaultColors():
+	// those are brighter than anything this client draws, and calibrating to
+	// them would need a tolerance wide enough to swallow the scenery.
+	BarColors []vision.Color
+
+	// The battle list is drawn by the panel, not by the lit game world, so
+	// the same colours come out brighter there and the unfilled part of a bar
+	// is grey rather than black. That is why it has its own tolerance and
+	// black level rather than borrowing the game window's.
+	BattleGeometry  vision.Geometry
+	BattleTolerance int
+	BattleBlackMax  int
+	BattleEdge      int
+	RowPitch        int
+
+	// Frame is the attack border the client draws round the targeted entry's
+	// icon, and IconOffsetX/Y plus IconSize say where that icon sits relative
+	// to the entry's health bar.
+	Frame          vision.Color
+	FrameTolerance int
+	FrameCoverage  float64
+	IconOffsetX    int
+	IconOffsetY    int
+	IconSize       int
 }
 
 // Rects names every measured rectangle, for tests that check all of them.
@@ -47,19 +85,60 @@ func (f CombatFixture) Rects() map[string]image.Rectangle {
 // they have, every test that needs the real capture skips itself.
 func (f CombatFixture) Measured() bool { return !f.Viewport.Empty() }
 
-// CombatCalibration reads testdata/combat-capture.png correctly.
+// CombatCalibration reads testdata/combat-capture.png correctly. Every number
+// here was measured on that 5120x2880 native-resolution capture and confirmed
+// by running the real detectors over it - see
+// docs/superpowers/plans/2026-09-07-vision-layer-measurements.md.
 func CombatCalibration() CombatFixture {
 	return CombatFixture{
-		Viewport:  image.Rect(0, 0, 0, 0), // ZMIERZ
-		Crop:      image.Rect(0, 0, 0, 0), // ZMIERZ
-		Battle:    image.Rect(0, 0, 0, 0), // ZMIERZ
-		HP:        image.Rect(0, 0, 0, 0), // ZMIERZ
-		Mana:      image.Rect(0, 0, 0, 0), // ZMIERZ
-		GridCols:  15,
-		GridRows:  11,
-		SelfBar:   image.Point{}, // ZMIERZONE W ZADANIU 3
-		Monsters:  0,             // POLICZ
-		TargetRow: -1,            // ODCZYTAJ
+		Viewport: image.Rect(637, 245, 3778, 2548),
+		Crop:     image.Rect(1056, 245, 3359, 2548),
+		Battle:   image.Rect(4770, 900, 5100, 1150),
+		HP:       image.Rect(24, 134, 2202, 136),
+		Mana:     image.Rect(2217, 134, 4392, 136),
+		GridCols: 15,
+		GridRows: 11,
+		// SelfBar is the blue bar the client draws under the character's own
+		// health bar, measured from pixels rather than from a detected bar -
+		// blue is not a health colour, so no detector reports it. Exclude is
+		// therefore a no-op on this capture twice over: the character's green
+		// bar eight pixels above reads #52a452, the shade for roughly 90%
+		// health, which BarColors does not list either. Keep that in mind if
+		// BarColors ever grows that shade - the monster count would become
+		// four, and this point would have to move to the green bar's corner
+		// at (1070, 977) to bring it back to three. The anchor derived from
+		// it is off by those eight pixels, four hundredths of a tile, which
+		// the offset test's bounds check tolerates.
+		SelfBar:   image.Point{X: 1070, Y: 985},
+		Monsters:  3,
+		TargetRow: 0,
+
+		BarGeometry:  vision.Geometry{Width: 62, Height: 8, Border: 3},
+		BarTolerance: 20,
+		BlackMax:     125,
+		BarEdge:      0,
+
+		// Measured cores: green #00a100/#009500, yellow #a1a100 - the world's
+		// lighting darkens them, and the client's antialiasing flattens the
+		// peak further, so the calibration point sits a little below the
+		// brightest pixel of each.
+		BarColors: []vision.Color{
+			{R: 0x00, G: 0x9b, B: 0x00},
+			{R: 0x9b, G: 0x9b, B: 0x00},
+			{R: 0xaa, G: 0x0a, B: 0x0a},
+		},
+
+		BattleGeometry:  vision.Geometry{Width: 262, Height: 8, Border: 1},
+		BattleTolerance: 60,
+		BattleBlackMax:  85,
+		BattleEdge:      1,
+		RowPitch:        44,
+		Frame:           vision.Color{R: 0xc9, G: 0x0a, B: 0x0a},
+		FrameTolerance:  40,
+		FrameCoverage:   0.8,
+		IconOffsetX:     -45,
+		IconOffsetY:     -31,
+		IconSize:        40,
 	}
 }
 

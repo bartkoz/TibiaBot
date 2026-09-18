@@ -103,12 +103,12 @@ func TestRealCaptureOffsets(t *testing.T) {
 		TileH:    float64(fx.Viewport.Dy()) / float64(fx.GridRows),
 		CropX:    float64(fx.Crop.Min.X - fx.Viewport.Min.X),
 		CropY:    float64(fx.Crop.Min.Y - fx.Viewport.Min.Y),
-		Geometry: classic,
+		Geometry: fx.BarGeometry,
 	}
 	g.AnchorDX, g.AnchorDY = g.AnchorFrom(vision.Bar{X: fx.SelfBar.X, Y: fx.SelfBar.Y})
 	t.Logf("zakotwiczenie wyliczone z własnego paska: dx=%.2f dy=%.2f", g.AnchorDX, g.AnchorDY)
 
-	o := opts(classic)
+	o := fixtureOptions(fx)
 	o.Exclude = []image.Point{fx.SelfBar}
 	bars := vision.Find(im, o)
 	limitX := float64(fx.Crop.Dx()) / g.TileW / 2
@@ -116,7 +116,7 @@ func TestRealCaptureOffsets(t *testing.T) {
 	for _, b := range bars {
 		dx, dy := g.Offset(b)
 		t.Logf("stwór na %.2f,%.2f (dystans %.2f, HP %.0f%%)",
-			dx, dy, vision.Distance(dx, dy), 100*b.HP(classic))
+			dx, dy, vision.Distance(dx, dy), 100*b.HP(fx.BarGeometry))
 		if math.Abs(dx) > limitX+1 || math.Abs(dy) > limitY+1 {
 			t.Errorf("stwór na %.2f,%.2f wypada poza wycinek (%.2f x %.2f kratek) — "+
 				"zakotwiczenie albo prostokąt wycinka są złe", dx, dy, 2*limitX, 2*limitY)
@@ -131,9 +131,9 @@ func TestRealCaptureOffsets(t *testing.T) {
 	out := image.NewNRGBA(im.Bounds())
 	copy(out.Pix, im.Pix)
 	for _, b := range bars {
-		for x := b.X; x < b.X+classic.Width; x++ {
+		for x := b.X; x < b.X+fx.BarGeometry.Width; x++ {
 			out.SetNRGBA(x, b.Y, color.NRGBA{R: 255, B: 255, A: 255})
-			out.SetNRGBA(x, b.Y+classic.Height-1, color.NRGBA{R: 255, B: 255, A: 255})
+			out.SetNRGBA(x, b.Y+fx.BarGeometry.Height-1, color.NRGBA{R: 255, B: 255, A: 255})
 		}
 	}
 	testenv.SavePNG(t, filepath.Join(debugDir, "vision-fixture.png"), out)

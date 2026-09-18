@@ -163,10 +163,22 @@ func TestReadMarksTruncatedList(t *testing.T) {
 	}
 }
 
+// TestReadOnRealCapture is the regression the whole edge-tolerance change
+// exists for: the wounded, targeted entry's bar has an antialiased right edge
+// whose first and last inner rows measure one pixel short of the core, so at
+// fx.BattleEdge = 0 the detector sees two full bars and loses the only entry
+// it is actually fighting.
 func TestReadOnRealCapture(t *testing.T) {
 	fx := testenv.CombatCalibration()
 	im := testenv.NRGBACrop(t, testenv.CombatCapture(t), fx.Battle)
-	list := battle.Read(im, opts())
+	o := battle.Options{
+		Geometry: fx.BattleGeometry, Colors: fx.BarColors,
+		Tolerance: fx.BattleTolerance, BlackMax: fx.BattleBlackMax,
+		EdgeTolerance: fx.BattleEdge, RowPitch: fx.RowPitch,
+		Frame: fx.Frame, FrameTolerance: fx.FrameTolerance, FrameCoverage: fx.FrameCoverage,
+		IconOffsetX: fx.IconOffsetX, IconOffsetY: fx.IconOffsetY, IconSize: fx.IconSize,
+	}
+	list := battle.Read(im, o)
 	t.Logf("wiersze na prawdziwej klatce: %+v (przewinięta: %v)", list.Rows, list.Truncated)
 	if len(list.Rows) == 0 {
 		t.Fatal("na prawdziwej klatce nie znaleziono żadnego wiersza; sprawdź prostokąt " +
