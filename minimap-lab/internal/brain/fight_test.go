@@ -9,6 +9,7 @@ import (
 	"minimap-lab/internal/fight"
 	"minimap-lab/internal/frame"
 	"minimap-lab/internal/heal"
+	"minimap-lab/internal/nav"
 	"minimap-lab/internal/route"
 	"minimap-lab/internal/vision"
 )
@@ -285,16 +286,86 @@ func TestFightDisablingAttackWhileFightingSendsEscape(t *testing.T) {
 	}
 }
 
+// The empty frames go through leaveFight rather than one frame after a single
+// 700 ms jump: one frame can never confirm the leave (Presence wants two
+// observations), so the single-frame shape would pass identically whether or
+// not the driver was disarmed. Timed properly, this fails the moment the
+// disarmed gate is missing - the confirmed leave reaches CancelTarget.
 func TestFightDisarmingDoesNotSendEscape(t *testing.T) {
 	h := newHarness(t)
 	h.config(t, fightConfig)
 	h.at(1000, 1000)
 	enterFight(t, h)
 	h.ctrl.Disarm("test")
-	h.clock.advance(700 * time.Millisecond)
-	h.submit(t, h.visionFrame(t, region{frame.RegionBattle, emptyBattle(visionCalibration())}))
+	s := leaveFight(t, h)
 	if h.ctrl.cancelCount() != 0 {
 		t.Error("rozbrojony sterownik nie ma jak wysłać Escape - nie wolno nawet próbować liczyć tego jako escape_due")
+	}
+	if s.Fight.EscapeDue {
+		t.Errorf("rozbrojenie nie może zostawić zlecenia Escape, którego nikt nie odbierze: %+v", s.Fight)
+	}
+	if s.Fight.Activity != "travelling" {
+		t.Errorf("rozbrojenie musi od razu wrócić do travelling, dostałem %+v", s.Fight)
+	}
+}
+
+// main.go defaults -input to "off", which leaves Deps.Driver nil, and nothing
+// in validate() stops the panel switching "Atakuj" on in that configuration.
+// Every other key site in this package guards for it; without the same guard
+// here the first frame panics on the loop goroutine and takes the process
+// with it.
+func TestFightWithoutADriverDoesNotPanic(t *testing.T) {
+	h := newHarness(t)
+	// The harness always wires a driver, so this one runs its own loop with
+	// Deps.Driver left nil. The harness's own loop simply never gets a frame.
+	h.loop = NewLoop(Deps{
+		Locator: h.locator, Planner: h.planner,
+		Blocks: nav.NewBlockStore(h.clock.now),
+		Tile:   h.tileFor, Now: h.clock.now,
+	})
+	go h.loop.Run(h.ctx)
+	h.config(t, fightConfig)
+	h.at(1000, 1000)
+	s := enterFight(t, h)
+	if s.Fight.Activity != "travelling" {
+		t.Fatalf("bez sterownika walka nie ma czym stukać, dostałem %+v", s.Fight)
+	}
+	if s.Fight.Reason != "wykonawca jest rozbrojony" {
+		t.Errorf("powód = %q", s.Fight.Reason)
+	}
+}
+
+// Losing the battle-list calibration mid-fight must not wedge the machine in
+// Fighting. The battle list is the only thing that can show the fight ending,
+// so without this the route stays frozen at "Walka." for good and only
+// switching "Atakuj" off recovers it.
+func TestFightLosingBattleCalibrationLeavesFighting(t *testing.T) {
+	h := newHarness(t)
+	h.config(t, func(c *Config) {
+		fightConfig(c)
+		c.Follow, c.Walk = true, true
+	})
+	h.loop.SetRoute(h.ctx, route.Route{Waypoints: []route.Waypoint{
+		{X: 1000, Y: 1000, Z: 7, Type: "stairs"}, {X: 1001, Y: 1000, Z: 6, Type: "walk"}}})
+	h.at(1000, 1000)
+	if s := enterFight(t, h); s.Fight.Activity != "fighting" {
+		t.Fatalf("test wymaga trwającej walki, dostałem %+v", s.Fight)
+	}
+	h.config(t, func(c *Config) {
+		fightConfig(c)
+		c.Combat.Battle = Rect{}
+		c.Follow, c.Walk = true, true
+	})
+	h.clock.advance(200 * time.Millisecond)
+	s := h.submit(t, h.visionFrame(t, region{frame.RegionViewport, crop(image.Pt(1, 0))}))
+	if s.Fight.Activity != "travelling" {
+		t.Fatalf("utrata kalibracji battle listy zostawiła pętlę w walce: %+v", s.Fight)
+	}
+	if !s.Fight.EscapeDue {
+		t.Error("utrata kalibracji w walce musi zlecić Escape - klient może dalej gonić")
+	}
+	if s.Route.Next == "Walka." {
+		t.Errorf("trasa dalej stoi na walce mimo wyjścia z niej: %q", s.Route.Next)
 	}
 }
 

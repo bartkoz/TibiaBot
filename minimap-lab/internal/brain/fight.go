@@ -89,8 +89,36 @@ func (l *Loop) fightStep(capturedAt time.Time) {
 		return
 	}
 	if l.cfg.Combat.Battle.Empty() {
-		l.fightState.Activity = l.activity.State().String()
+		// Losing the battle list is losing the only evidence a fight is still
+		// going on, so the machine cannot be left sitting in Fighting: nothing
+		// would ever drive it out again, and follow() would hold the route at
+		// "Walka." until the user switched attacking off. It is treated like
+		// the switch going off for the same reason that branch orders an
+		// Escape - the client may well still be attacking something we can no
+		// longer see - and the order keeps until a calibrated frame can carry
+		// it out.
+		if l.activity.State() == fight.Fighting {
+			l.escapeDue = true
+		}
+		l.activity.Force(fight.Travelling)
+		l.targeter.Reset()
+		l.fightState.Activity = fight.Travelling.String()
+		l.fightState.EscapeDue = l.escapeDue
 		l.fightState.Reason = "brak kalibracji battle listy"
+		return
+	}
+	if l.deps.Driver == nil || !l.deps.Driver.Armed() {
+		// The same gate healStep and follow()'s walk step already carry, and
+		// for a stronger reason here: -input=off leaves Deps.Driver nil, so
+		// without the nil half every key this step presses would panic on the
+		// loop goroutine and take the process with it. Unlike the two
+		// branches above this one orders no Escape: a driver that cannot be
+		// handed a key cannot be handed that one either, and re-arming pays
+		// the full entry debounce again, which Force's own reset guarantees.
+		l.activity.Force(fight.Travelling)
+		l.targeter.Reset()
+		l.fightState.Activity = fight.Travelling.String()
+		l.fightState.Reason = "wykonawca jest rozbrojony"
 		return
 	}
 
