@@ -7,6 +7,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"minimap-lab/internal/fight"
 	"minimap-lab/internal/frame"
 	"minimap-lab/internal/heal"
 	"minimap-lab/internal/input"
@@ -42,6 +43,8 @@ type Controls interface {
 	Walk(direction string, observationAge time.Duration) input.Result
 	UseHotkey(kind string, observationAge time.Duration) input.Result
 	Heal(key string, observationAge time.Duration) input.Result
+	Cast(key string, observationAge time.Duration) input.Result
+	CancelTarget(observationAge time.Duration) input.Result
 	ActionDone()
 	Disarm(reason string)
 }
@@ -86,6 +89,10 @@ type Config struct {
 	// Heal is the rule list and its master switch. An empty list is legal and
 	// means "do not heal".
 	Heal HealConfig `json:"heal"`
+
+	// Fight is the targeting surface: the "Atakuj" switch, the attack key,
+	// the spell rules and the timings behind them.
+	Fight FightConfig `json:"fight"`
 }
 
 func (c Config) validate() error {
@@ -117,6 +124,9 @@ func (c Config) validate() error {
 		return err
 	}
 	if err := c.Heal.validate(); err != nil {
+		return err
+	}
+	if err := c.Fight.withDefaults().validate(c.Combat.withDefaults().DecisionRadius); err != nil {
 		return err
 	}
 	return nil
@@ -204,6 +214,19 @@ type Loop struct {
 	bars       []vision.Bar
 	visionGrid vision.Grid
 
+	activity   fight.Activity
+	targeter   fight.Targeter
+	engine     *fight.Engine
+	battleRead bool
+
+	fightState        FightState
+	fightKeyLastFrame bool
+	escapeDue         bool
+	pauseUntil        time.Time
+	hasPause          bool
+	lastSpellAt       time.Time
+	hasLastSpell      bool
+
 	previewRev  uint64
 	recSkipped  int
 	recWaiting  bool
@@ -234,6 +257,7 @@ func NewLoop(d Deps) *Loop {
 		executor:  NewExecutor(ExecutorOptions{}),
 		follower:  NewFollower(nil, FollowerOptions{}),
 		healer:    heal.NewEngine(),
+		engine:    fight.NewEngine(),
 		healState: HealState{LastIndex: -1},
 		cfg: Config{Zoom: 1, MinScore: .85, MinGap: .015, Speed: 20,
 			FloorRadius: 8, RecordEvery: 10, Tolerance: 1},
@@ -320,6 +344,21 @@ func (l *Loop) SetConfig(ctx context.Context, c Config) error {
 			// publish an age for a heal that LastIndex == -1 now denies ever
 			// happened.
 			l.healState, l.hasHealed = HealState{LastIndex: -1}, false
+		}
+		l.cfg.Fight = c.Fight.withDefaults()
+		l.engine.SetRules(l.cfg.Fight.Spells)
+		if !l.cfg.Fight.Enabled {
+			// Same reasoning as heal's own cleanup a few lines up: fightStep
+			// runs once per frame, so without this a disabled attack would
+			// leave "fighting" published until the next frame arrives - or
+			// forever, if the camera stopped. escapeDue survives on purpose:
+			// turning attack off mid-fight still has to cancel the target.
+			if l.activity.State() == fight.Fighting {
+				l.escapeDue = true
+			}
+			l.activity.Force(fight.Travelling)
+			l.targeter.Reset()
+			l.fightState = FightState{Enabled: false, Activity: fight.Travelling.String(), EscapeDue: l.escapeDue}
 		}
 		l.cfg.Combat = c.Combat.withDefaults()
 		if !l.cfg.Combat.Enabled() {
@@ -465,6 +504,11 @@ func (l *Loop) handleFrame(ctx context.Context, env frameEnvelope) {
 	// bars are in the same pixels whatever the character's world position is,
 	// so a lost position must never mean a dead character.
 	l.healStep(capturedAt)
+	// Combat comes straight after healing and before the same gate, for the
+	// same reason: the battle list and the creature bars sit in the client's
+	// own pixels, so a lost position must never mean a character that stands
+	// there and takes hits without answering.
+	l.fightStep(capturedAt)
 	if l.searchStopped {
 		return
 	}
@@ -647,6 +691,17 @@ func (l *Loop) follow(ctx context.Context, pos mapdata.Position, capturedAt, now
 		l.routeNext = ""
 		return
 	}
+	// Walking is frozen for the whole fight: the client chases the target on
+	// its own, so a step of ours would only fight it. The executor is still
+	// told where the character is, so its view of the world stays current
+	// while she is moved by someone else.
+	if l.activity.State() == fight.Fighting {
+		l.routeNext = "Walka."
+		if l.cfg.Walk && l.deps.Driver != nil && l.deps.Driver.Armed() {
+			l.executor.Observe(&pos, capturedAt, now)
+		}
+		return
+	}
 	out := l.follower.Step(pos, now)
 	l.routeNext = describe(out)
 	if out.Action == ActionPath && !l.planPending {
@@ -671,10 +726,13 @@ func (l *Loop) follow(ctx context.Context, pos mapdata.Position, capturedAt, now
 		l.follower.DropPath()
 	}
 	l.wasBlocked = blockedNow
-	// Healing preempts the step, for the same reason as the floor-action gate
-	// just below: asking the executor for an intent first would leave a
-	// pending step nobody confirms or resets.
-	if l.healedLastFrame {
+	// Healing and the combat step both preempt walking, for the same reason as
+	// the floor-action gate just below: asking the executor for an intent
+	// first would leave a pending step nobody confirms or resets. Between
+	// them they also enforce the one-key-per-frame rule - a frame that spent
+	// its key on a potion, an Escape, the attack key or a spell does not also
+	// spend one on a direction.
+	if l.healedLastFrame || l.fightKeyLastFrame {
 		return
 	}
 	// Decided from the follower's own output, before the executor is asked for
@@ -793,6 +851,7 @@ func (l *Loop) publish() {
 		Match:           l.match,
 		Combat:          l.combat,
 		Heal:            l.healSnapshot(),
+		Fight:           l.fightSnapshot(),
 		Executor:        l.executor.State(),
 		PreviewRevision: l.previewRev,
 		LastAction:      l.lastAction,

@@ -27,6 +27,8 @@ type fakeControls struct {
 	keys         []string
 	hotkeys      []string
 	heals        []string
+	casts        []string
+	cancels      int
 	actionsDone  int
 	disarmReason string
 	nextStatus   string
@@ -89,6 +91,32 @@ func (c *fakeControls) healKeys() []string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return append([]string(nil), c.heals...)
+}
+
+func (c *fakeControls) Cast(key string, _ time.Duration) input.Result {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.casts = append(c.casts, key)
+	return c.resultLocked(key)
+}
+
+func (c *fakeControls) castKeys() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]string(nil), c.casts...)
+}
+
+func (c *fakeControls) CancelTarget(_ time.Duration) input.Result {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.cancels++
+	return c.resultLocked("escape")
+}
+
+func (c *fakeControls) cancelCount() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.cancels
 }
 
 // setStatus makes every following call answer with the given status instead

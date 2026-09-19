@@ -38,6 +38,7 @@ type State struct {
 	Recorder RecorderState `json:"recorder"`
 	Combat   CombatState   `json:"combat"`
 	Heal     HealState     `json:"heal"`
+	Fight    FightState    `json:"fight"`
 
 	LastAction *ActionState `json:"last_action,omitempty"`
 	// PreviewRevision changes when the neighbourhood picture would look
@@ -212,6 +213,29 @@ type HealState struct {
 	LastHotkey string `json:"last_hotkey,omitempty"`
 	// LastAgeMS is how long ago that emission was; nil when nothing has fired.
 	LastAgeMS *int `json:"last_age_ms"`
+	// Reason is why nothing fired on this frame, for the panel to show.
+	Reason string `json:"reason,omitempty"`
+}
+
+// FightState is what the panel is told about combat. Scalars only, like every
+// other part of the snapshot: it rides on each frame.
+type FightState struct {
+	Enabled bool `json:"enabled"`
+	// Activity is the state machine's own name for what the bot is doing:
+	// travelling or fighting.
+	Activity string `json:"activity"`
+	// EscapeDue is a cancel that has been ordered but not yet confirmed as
+	// emitted. It is a pending action, not a one-off attempt, so it survives
+	// frames spent on healing or refused by the key budget.
+	EscapeDue      bool `json:"escape_due"`
+	TargetAttempts int  `json:"target_attempts"`
+	// The three ages are nil while nothing is in flight, and are measured at
+	// publish time rather than written when they happen - the same split
+	// HealState.LastAgeMS uses.
+	BackoffMSLeft  *int   `json:"backoff_ms_left"`
+	PauseMSLeft    *int   `json:"pause_ms_left"`
+	LastSpell      string `json:"last_spell,omitempty"`
+	LastSpellAgeMS *int   `json:"last_spell_age_ms"`
 	// Reason is why nothing fired on this frame, for the panel to show.
 	Reason string `json:"reason,omitempty"`
 }

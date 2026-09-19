@@ -29,6 +29,11 @@ const maxVisionBars = 64
 func (l *Loop) observeVision(f frame.Frame) {
 	l.combat, l.view, l.bars = CombatState{}, VisionView{}, nil
 	l.hpReading, l.manaReading = vitals.Reading{}, vitals.Reading{}
+	// battleRead is the difference between "the list is empty" and "the list
+	// never arrived", which the activity machine must not confuse: rows of
+	// zero from a frame that never carried the region would drive an exit
+	// from a fight that is still going on.
+	l.battleRead = false
 	cc := l.cfg.Combat
 	if !cc.Enabled() {
 		return
@@ -56,6 +61,7 @@ func (l *Loop) observeVision(f frame.Frame) {
 		}
 	}
 	if im, ok := f.Image(frame.RegionBattle); ok {
+		l.battleRead = true
 		o, err := cc.battleOptions()
 		if err != nil {
 			// Unreachable on a config that passed validate() - it already
