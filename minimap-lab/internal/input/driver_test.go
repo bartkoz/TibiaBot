@@ -694,3 +694,41 @@ func TestHealingRefusesStaleObservation(t *testing.T) {
 		t.Error("nieświeża obserwacja jednak coś wysłała")
 	}
 }
+
+// Escape is a valid key name - CancelTarget taps it - but nothing a user
+// picks may be bound to it. As a floor action or a direction it would cancel
+// the target every time the bot dug or took a step.
+func TestDriverSetInputConfigRefusesTheReservedEscapeKey(t *testing.T) {
+	for _, tt := range []struct {
+		name       string
+		keys, dirs map[string]string
+	}{
+		{"akcja", map[string]string{"rope": "escape"}, nil},
+		{"kierunek", nil, map[string]string{"N": "escape"}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			d, _, _ := driverAt(t, time.Unix(0, 0))
+			err := d.SetInputConfig(tt.keys, false, tt.dirs)
+			if err == nil {
+				t.Fatal("zastrzeżony klawisz przeszedł walidację")
+			}
+			if !strings.Contains(err.Error(), "zastrzeżony") {
+				t.Fatalf("powód = %q", err)
+			}
+			if d.ActionKeys["rope"] == "escape" || d.DirectionKeys["N"] == "escape" {
+				t.Errorf("odrzucony klawisz jednak został zapisany: %+v %+v", d.ActionKeys, d.DirectionKeys)
+			}
+		})
+	}
+}
+
+// The reserved list must not shrink the set of names the driver itself can
+// tap: CancelTarget presses escape, so it has to stay a known key.
+func TestDriverEscapeStaysTappableForCancelTarget(t *testing.T) {
+	if !hotkeyNames["escape"] {
+		t.Fatal("escape musi zostać znanym klawiszem - CancelTarget go stuka")
+	}
+	if ValidHotkey("escape") != true || !ReservedHotkey("escape") {
+		t.Fatal("escape ma być prawidłowy dla sterownika i zastrzeżony dla użytkownika")
+	}
+}

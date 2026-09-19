@@ -1,6 +1,7 @@
 package brain
 
 import (
+	"encoding/json"
 	"image"
 	"image/color"
 	"testing"
@@ -260,6 +261,62 @@ func TestFightOneNonHealKeyPerFrame(t *testing.T) {
 	}
 }
 
+// Combat.Enabled() is Viewport AND Crop, not Battle, so the whole vision
+// calibration can go while Battle stays populated - a combination
+// combatconfig.go explicitly calls legal. observeVision then returns before it
+// ever reads the battle region, and a gate that only asked Battle.Empty()
+// would let the machine sit in Fighting with nothing able to end it.
+func TestFightLosingViewportCalibrationLeavesFighting(t *testing.T) {
+	h := newHarness(t)
+	h.config(t, fightConfig)
+	h.at(1000, 1000)
+	if s := enterFight(t, h); s.Fight.Activity != "fighting" {
+		t.Fatalf("test wymaga trwającej walki, dostałem %+v", s.Fight)
+	}
+	h.config(t, func(c *Config) {
+		fightConfig(c)
+		c.Combat.Viewport, c.Combat.Crop = Rect{}, Rect{}
+	})
+	h.clock.advance(200 * time.Millisecond)
+	s := h.submit(t, h.visionFrame(t, region{frame.RegionBattle, framedBattle(visionCalibration(), 5, false)}))
+	if s.Fight.Activity != "travelling" {
+		t.Fatalf("utrata kalibracji widzenia zostawiła pętlę w walce: %+v", s.Fight)
+	}
+	if h.ctrl.cancelCount() == 0 {
+		t.Error("utrata kalibracji w walce musi wysłać Escape")
+	}
+}
+
+// The battle region can simply stop arriving while the calibration still
+// looks healthy - a cut that fails, a rectangle that slid off the captured
+// area. An unread list is "unknown, not empty", so it drives no ordinary
+// exit; without unreadBattleLimit's backstop nothing else would either, and
+// the route would stay frozen at "Walka." indefinitely.
+func TestFightLeavesWhenBattleListStopsArriving(t *testing.T) {
+	h := newHarness(t)
+	h.config(t, fightConfig)
+	h.at(1000, 1000)
+	if s := enterFight(t, h); s.Fight.Activity != "fighting" {
+		t.Fatalf("test wymaga trwającej walki, dostałem %+v", s.Fight)
+	}
+	// Creature still in frame, battle region gone: nothing here says the
+	// fight ended, so only the backstop can end it.
+	var s *State
+	for i := 0; i < 14; i++ {
+		h.clock.advance(300 * time.Millisecond)
+		s = h.submit(t, h.visionFrame(t, region{frame.RegionViewport, crop(image.Pt(1, 0))}))
+		if s.Fight.Activity == "travelling" {
+			break
+		}
+	}
+	if s.Fight.Activity != "travelling" {
+		t.Fatalf("nieczytana battle lista zostawiła pętlę w walce na zawsze: %+v", s.Fight)
+	}
+	if h.ctrl.cancelCount() == 0 {
+		t.Error("wyjście z walki bez battle listy też musi wysłać Escape")
+	}
+}
+
 // Turning "Atakuj" off mid-fight has to cancel the target: an Escape nobody
 // sent leaves the client chasing the creature into the next room. SetConfig
 // has no frame to measure an observation age against, so it orders the
@@ -275,14 +332,19 @@ func TestFightDisablingAttackWhileFightingSendsEscape(t *testing.T) {
 	if !h.loop.Snapshot().Fight.EscapeDue {
 		t.Fatal("wyłączenie ataku w trakcie walki musi zlecić Escape")
 	}
-	h.config(t, fightConfig)
+	// Attacking deliberately stays off: every frame from here on returns at
+	// the disabled gate, so an Escape left for "later" would wait until the
+	// user switched attacking back on - with the client chasing all the while.
 	h.clock.advance(100 * time.Millisecond)
 	s := h.submit(t, h.visionFrame(t))
 	if h.ctrl.cancelCount() == 0 {
-		t.Fatal("zlecony Escape musi polecieć w pierwszej klatce, która ma jak go wysłać")
+		t.Fatal("zlecony Escape musi polecieć bez czekania na ponowne włączenie ataku")
 	}
 	if s.Fight.EscapeDue {
 		t.Fatal("po potwierdzonej emisji Escape escape_due musi zgasnąć")
+	}
+	if s.Fight.Enabled {
+		t.Fatal("test wymaga, by atak przez cały czas pozostał wyłączony")
 	}
 }
 
@@ -361,8 +423,8 @@ func TestFightLosingBattleCalibrationLeavesFighting(t *testing.T) {
 	if s.Fight.Activity != "travelling" {
 		t.Fatalf("utrata kalibracji battle listy zostawiła pętlę w walce: %+v", s.Fight)
 	}
-	if !s.Fight.EscapeDue {
-		t.Error("utrata kalibracji w walce musi zlecić Escape - klient może dalej gonić")
+	if h.ctrl.cancelCount() == 0 {
+		t.Error("utrata kalibracji w walce musi wysłać Escape - klient może dalej gonić")
 	}
 	if s.Route.Next == "Walka." {
 		t.Errorf("trasa dalej stoi na walce mimo wyjścia z niej: %q", s.Route.Next)
@@ -428,6 +490,40 @@ func TestFightStallPausesAndLetsRouteContinue(t *testing.T) {
 	}
 	if s.Fight.PauseMSLeft == nil {
 		t.Fatal("po zastoju panel musi pokazać odliczanie pauzy")
+	}
+}
+
+// A config document that never mentioned the fight surface is not asking for
+// it to be cleared. Until the panel grows a fight module, every click it
+// makes sends exactly such a document, and applying it as a zero FightConfig
+// would switch attacking off behind the user's back.
+func TestFightSetConfigWithoutTheFightKeyKeepsIt(t *testing.T) {
+	h := newHarness(t)
+	h.config(t, fightConfig)
+	h.at(1000, 1000)
+	if s := enterFight(t, h); s.Fight.Activity != "fighting" {
+		t.Fatalf("test wymaga trwającej walki, dostałem %+v", s.Fight)
+	}
+	// Built the way the panel builds it: the whole brain document, no "fight".
+	raw := `{"zoom":1,"min_score":0.85,"min_gap":0.015,"speed":20,"floor_radius":8,
+		"record_every":10,"tolerance":1,"floor":7}`
+	var c Config
+	if err := json.Unmarshal([]byte(raw), &c); err != nil {
+		t.Fatal(err)
+	}
+	c.Combat = visionCalibration()
+	if err := h.loop.SetConfig(h.ctx, c); err != nil {
+		t.Fatalf("SetConfig: %v", err)
+	}
+	if s := h.loop.Snapshot(); !s.Fight.Enabled {
+		t.Fatalf("brak klucza fight wyłączył atak: %+v", s.Fight)
+	}
+	h.clock.advance(200 * time.Millisecond)
+	s := h.submit(t, h.visionFrame(t,
+		region{frame.RegionViewport, crop(image.Pt(1, 0))},
+		region{frame.RegionBattle, framedBattle(visionCalibration(), 5, false)}))
+	if s.Fight.Activity != "fighting" {
+		t.Fatalf("walka nie przetrwała konfiguracji bez klucza fight: %+v", s.Fight)
 	}
 }
 

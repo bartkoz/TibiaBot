@@ -461,6 +461,9 @@ func (d *Driver) SetInputConfig(keys map[string]string, clickAfterHotkey bool, d
 		if !hotkeyNames[key] {
 			return fmt.Errorf("nieznany klawisz dla akcji %s: %s", action, key)
 		}
+		if reservedKeys[key] {
+			return fmt.Errorf("klawisz %s jest zastrzeżony i nie może obsługiwać akcji %s", key, action)
+		}
 		cleanKeys[action] = key
 	}
 	cleanDirections := make(map[string]string, len(directions))
@@ -473,6 +476,9 @@ func (d *Driver) SetInputConfig(keys map[string]string, clickAfterHotkey bool, d
 		}
 		if !hotkeyNames[key] {
 			return fmt.Errorf("nieznany klawisz dla kierunku %s: %s", dir, key)
+		}
+		if reservedKeys[key] {
+			return fmt.Errorf("klawisz %s jest zastrzeżony i nie może być kierunkiem %s", key, dir)
 		}
 		cleanDirections[dir] = key
 	}

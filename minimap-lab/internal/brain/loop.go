@@ -2,6 +2,7 @@ package brain
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"image"
 	"sync/atomic"
@@ -93,6 +94,37 @@ type Config struct {
 	// Fight is the targeting surface: the "Atakuj" switch, the attack key,
 	// the spell rules and the timings behind them.
 	Fight FightConfig `json:"fight"`
+
+	// fightAbsent records that the document this Config was decoded from
+	// carried no "fight" key at all, as opposed to an explicitly empty one.
+	// It is unexported, so it never rides on the wire, and it is false in a
+	// Config built in Go - a literal always means what it says.
+	fightAbsent bool
+}
+
+// UnmarshalJSON decodes a Config and remembers whether "fight" was in the
+// document. The panel has no fight module yet, so its config request omits
+// the key entirely; applying that as a zero FightConfig would silently wipe a
+// setup made through the API on every unrelated panel click. The distinction
+// between "absent" and "present but empty" is the same one FightConfig draws
+// one level down with BlockMixedCrowd's *bool - here it is drawn with a
+// pointer that shadows the embedded field, because the shallower name wins.
+func (c *Config) UnmarshalJSON(data []byte) error {
+	type alias Config
+	var probe struct {
+		alias
+		Fight *FightConfig `json:"fight"`
+	}
+	if err := json.Unmarshal(data, &probe); err != nil {
+		return err
+	}
+	*c = Config(probe.alias)
+	if probe.Fight != nil {
+		c.Fight = *probe.Fight
+		return nil
+	}
+	c.fightAbsent = true
+	return nil
 }
 
 func (c Config) validate() error {
@@ -218,6 +250,9 @@ type Loop struct {
 	targeter   fight.Targeter
 	engine     *fight.Engine
 	battleRead bool
+	// unreadBattle is the backstop against sitting in Fighting forever with a
+	// battle region that stopped arriving - see unreadBattleLimit.
+	unreadBattle fight.Presence
 
 	fightState        FightState
 	fightKeyLastFrame bool
@@ -331,6 +366,7 @@ func (l *Loop) SetConfig(ctx context.Context, c Config) error {
 			l.anchorEpoch++
 		}
 		l.searchStopped = false
+		prevFight := l.cfg.Fight
 		l.cfg = c
 		l.healer.SetRules(c.Heal.Rules)
 		if !c.Heal.Enabled {
@@ -345,20 +381,29 @@ func (l *Loop) SetConfig(ctx context.Context, c Config) error {
 			// happened.
 			l.healState, l.hasHealed = HealState{LastIndex: -1}, false
 		}
-		l.cfg.Fight = c.Fight.withDefaults()
-		l.engine.SetRules(l.cfg.Fight.Spells)
-		if !l.cfg.Fight.Enabled {
-			// Same reasoning as heal's own cleanup a few lines up: fightStep
-			// runs once per frame, so without this a disabled attack would
-			// leave "fighting" published until the next frame arrives - or
-			// forever, if the camera stopped. escapeDue survives on purpose:
-			// turning attack off mid-fight still has to cancel the target.
-			if l.activity.State() == fight.Fighting {
-				l.escapeDue = true
+		if c.fightAbsent {
+			// A document that never mentioned the fight config is not asking
+			// for it to be cleared - see Config.UnmarshalJSON. l.cfg was
+			// overwritten wholesale just above, so the previous value is put
+			// back here and the engine's rules are left exactly as they were.
+			l.cfg.Fight = prevFight
+		} else {
+			l.cfg.Fight = c.Fight.withDefaults()
+			l.engine.SetRules(l.cfg.Fight.Spells)
+			if !l.cfg.Fight.Enabled {
+				// Same reasoning as heal's own cleanup a few lines up:
+				// fightStep runs once per frame, so without this a disabled
+				// attack would leave "fighting" published until the next frame
+				// arrives - or forever, if the camera stopped. escapeDue
+				// survives on purpose: turning attack off mid-fight still has
+				// to cancel the target, and the next frame sends it.
+				if l.activity.State() == fight.Fighting {
+					l.escapeDue = true
+				}
+				l.activity.Force(fight.Travelling)
+				l.targeter.Reset()
+				l.fightState = FightState{Enabled: false, Activity: fight.Travelling.String(), EscapeDue: l.escapeDue}
 			}
-			l.activity.Force(fight.Travelling)
-			l.targeter.Reset()
-			l.fightState = FightState{Enabled: false, Activity: fight.Travelling.String(), EscapeDue: l.escapeDue}
 		}
 		l.cfg.Combat = c.Combat.withDefaults()
 		if !l.cfg.Combat.Enabled() {

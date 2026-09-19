@@ -46,6 +46,9 @@ func (c HealConfig) validate() error {
 		if !input.ValidHotkey(r.Hotkey) {
 			return fmt.Errorf("reguła %d: nieznany klawisz %q", n, r.Hotkey)
 		}
+		if input.ReservedHotkey(r.Hotkey) {
+			return fmt.Errorf("reguła %d: klawisz %q jest zastrzeżony", n, r.Hotkey)
+		}
 	}
 	return nil
 }

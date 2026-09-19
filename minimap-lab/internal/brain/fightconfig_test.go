@@ -1,6 +1,7 @@
 package brain
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -73,6 +74,10 @@ func TestFightConfigRejections(t *testing.T) {
 		{"target_stall_ms poza zakresem", func(c *FightConfig) { c.TargetStallMS = 100 }, "target_stall_ms"},
 		{"fight_pause_ms poza zakresem", func(c *FightConfig) { c.FightPauseMS = 100 }, "fight_pause_ms"},
 		{"nieznany klawisz ataku", func(c *FightConfig) { c.AttackKey = "??" }, "attack_key"},
+		{"zastrzeżony klawisz ataku", func(c *FightConfig) { c.AttackKey = "escape" }, "zastrzeżony"},
+		{"reguła: zastrzeżony klawisz", func(c *FightConfig) {
+			c.Spells = []fight.Rule{{Hotkey: "escape", CooldownMS: 1000, MinMonsters: 1, Radius: 1}}
+		}, "zastrzeżony"},
 		{"za dużo reguł", func(c *FightConfig) {
 			for i := 0; i < 9; i++ {
 				c.Spells = append(c.Spells, fight.Rule{Hotkey: "f1", CooldownMS: 1000})
@@ -124,5 +129,40 @@ func TestFightConfigRuleDefaults(t *testing.T) {
 	c = c.withDefaults()
 	if c.Spells[0].CooldownMS != 2000 {
 		t.Errorf("domyślny cooldown reguły = %d, oczekiwano 2000", c.Spells[0].CooldownMS)
+	}
+}
+
+// The panel has no fight module yet, so every config it sends omits the key
+// entirely. Decoding that as a zero FightConfig would let an unrelated panel
+// click silently wipe a setup made through the API, so "absent" and "present
+// but empty" have to stay distinguishable - the same line FightConfig draws
+// one level down with BlockMixedCrowd's own *bool.
+func TestConfigTellsAnAbsentFightKeyFromAnEmptyOne(t *testing.T) {
+	const withoutFight = `{"zoom":1,"min_score":0.85,"min_gap":0.015,"speed":20,
+		"floor_radius":8,"record_every":10,"tolerance":1,"floor":7}`
+	var absent Config
+	if err := json.Unmarshal([]byte(withoutFight), &absent); err != nil {
+		t.Fatal(err)
+	}
+	if !absent.fightAbsent {
+		t.Error("dokument bez klucza fight musi być odróżniony od pustego")
+	}
+	const withEmptyFight = `{"zoom":1,"min_score":0.85,"min_gap":0.015,"speed":20,
+		"floor_radius":8,"record_every":10,"tolerance":1,"floor":7,"fight":{}}`
+	var empty Config
+	if err := json.Unmarshal([]byte(withEmptyFight), &empty); err != nil {
+		t.Fatal(err)
+	}
+	if empty.fightAbsent {
+		t.Error("jawnie pusty fight to decyzja panelu, nie brak klucza")
+	}
+	// The rest of the document still has to decode exactly as before.
+	if absent.Zoom != 1 || absent.Speed != 20 || absent.Floor != 7 || absent.Tolerance != 1 {
+		t.Fatalf("reszta konfiguracji zdekodowana źle: %+v", absent)
+	}
+	// A Config built in Go always means what it says - only JSON can be
+	// missing a key, so a literal must never read as absent.
+	if baseConfig().fightAbsent {
+		t.Error("konfiguracja zbudowana w Go nie może udawać braku klucza")
 	}
 }

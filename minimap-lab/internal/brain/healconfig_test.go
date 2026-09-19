@@ -80,3 +80,17 @@ func TestConfigCarriesHealRules(t *testing.T) {
 		t.Fatal("zła reguła przeszła walidacją całej konfiguracji")
 	}
 }
+
+// Escape is reserved: it means exactly one thing to the client, and a heal
+// rule bound to it would cancel the target every time the character drank.
+func TestHealConfigRefusesTheReservedEscapeKey(t *testing.T) {
+	r := rule()
+	r.Hotkey = "escape"
+	err := (HealConfig{Enabled: true, Rules: []heal.Rule{r}}).validate()
+	if err == nil {
+		t.Fatal("reguła leczenia na zastrzeżonym klawiszu przeszła")
+	}
+	if !strings.Contains(err.Error(), "zastrzeżony") {
+		t.Fatalf("powód = %q", err)
+	}
+}

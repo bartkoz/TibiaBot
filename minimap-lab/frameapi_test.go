@@ -232,6 +232,59 @@ func TestConfigRefusesAHealingKeyBoundToAFloorAction(t *testing.T) {
 	}
 }
 
+// heal.Engine and fight.Engine keep independent cooldown maps, so one key on
+// both a heal rule and a spell would be pressed twice in quick succession
+// with neither engine aware of the other's emission. That is the failure the
+// collision check exists to prevent, not merely a tidiness rule.
+func TestConfigRefusesAHealingKeyBoundToASpell(t *testing.T) {
+	f := brainServer(t, nil)
+	body := `{"brain":{"zoom":1,"min_score":0.85,"min_gap":0.015,"speed":20,
+		"floor_radius":8,"record_every":10,"tolerance":1,"floor":7,
+		"heal":{"enabled":true,"rules":[
+			{"enabled":true,"resource":"hp","below_pct":60,"hotkey":"f3","cooldown_ms":1000}]},
+		"fight":{"enabled":true,"attack_key":"space","spells":[
+			{"enabled":true,"hotkey":"f3","min_monsters":1,"radius":1,"cooldown_ms":2000}]}},
+		"keys":{},"directions":{"N":"numpad8"}}`
+	w := f.request(t, "PUT", "/api/config", []byte(body))
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("kod = %d, oczekiwano 400", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "leczenia") {
+		t.Fatalf("powód nie mówi, z czym jest kolizja: %s", w.Body.String())
+	}
+}
+
+func TestConfigRefusesAnAttackKeyBoundToAFloorAction(t *testing.T) {
+	f := brainServer(t, nil)
+	body := `{"brain":{"zoom":1,"min_score":0.85,"min_gap":0.015,"speed":20,
+		"floor_radius":8,"record_every":10,"tolerance":1,"floor":7,
+		"fight":{"enabled":true,"attack_key":"f7"}},
+		"keys":{"rope":"f7"},"directions":{"N":"numpad8"}}`
+	w := f.request(t, "PUT", "/api/config", []byte(body))
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("kod = %d, oczekiwano 400", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "liny") {
+		t.Fatalf("powód nie mówi, z czym jest kolizja: %s", w.Body.String())
+	}
+}
+
+// Duplicates inside the attack/spell category are deliberately legal:
+// fight.Engine tracks one cooldown per hotkey, shared by every rule naming
+// it, so two rules on one key behave the way the user expects.
+func TestConfigAllowsTwoSpellsOnOneHotkey(t *testing.T) {
+	f := brainServer(t, nil)
+	body := `{"brain":{"zoom":1,"min_score":0.85,"min_gap":0.015,"speed":20,
+		"floor_radius":8,"record_every":10,"tolerance":1,"floor":7,
+		"fight":{"enabled":true,"attack_key":"space","spells":[
+			{"enabled":true,"hotkey":"f4","min_monsters":3,"radius":1,"cooldown_ms":2000},
+			{"enabled":true,"hotkey":"f4","min_monsters":1,"radius":1,"cooldown_ms":2000}]}},
+		"keys":{"rope":"f7"},"directions":{"N":"numpad8"}}`
+	if w := f.request(t, "PUT", "/api/config", []byte(body)); w.Code != 200 {
+		t.Fatalf("dwie reguły na jednym klawiszu odrzucone: %d %s", w.Code, w.Body.String())
+	}
+}
+
 func TestRouteRoundTripsThroughTheAPI(t *testing.T) {
 	f := brainServer(t, nil)
 	in := `{"version":1,"name":"Venore","waypoints":[

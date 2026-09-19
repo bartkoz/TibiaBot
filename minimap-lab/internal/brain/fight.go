@@ -69,6 +69,58 @@ func (l *Loop) blockMixedCrowd() bool {
 	return *l.cfg.Fight.BlockMixedCrowd
 }
 
+// unreadBattleLimit bounds how long Fighting may survive without a single
+// readable battle list. An unread list is "unknown, not empty", so it must
+// never drive an ordinary exit - but unknown cannot mean forever: the region
+// can stop arriving on its own (a cut that fails, a rectangle that slid off
+// the captured area) while the rest of the calibration still looks healthy,
+// and without a bound the machine would sit in Fighting with the route frozen
+// at "Walka." until somebody noticed. Deliberately several times
+// LeaveFightMS's own default, so this stays a backstop rather than becoming a
+// second exit rule.
+const unreadBattleLimit = 3 * time.Second
+
+// abandonFight drives the machine out of Fighting when the loop has lost the
+// ability to watch a fight at all, rather than because the fight ended. It
+// orders the Escape for the same reason the "Atakuj" switch going off does:
+// we can no longer see what is happening, but the client may well still be
+// attacking something.
+func (l *Loop) abandonFight(capturedAt time.Time, reason string) {
+	if l.activity.State() == fight.Fighting {
+		l.escapeDue = true
+	}
+	l.activity.Force(fight.Travelling)
+	l.targeter.Reset()
+	l.unreadBattle = fight.Presence{}
+	l.fightState.Activity = fight.Travelling.String()
+	l.fightState.EscapeDue = l.escapeDue
+	l.fightState.Reason = reason
+	l.sendPendingEscape(capturedAt)
+}
+
+// sendPendingEscape carries out an ordered cancel, if this frame still has a
+// key to spend and a driver to spend it on. Every gate that returns early
+// calls it rather than merely queueing: while that gate's own condition
+// holds, every later frame returns at the same place, so an Escape left for
+// "the next frame" would wait until the user fixed whatever tripped the gate
+// - and meanwhile the client keeps chasing, which is the one thing escapeDue
+// exists to stop. A refusal still costs the frame its key: the attempt was
+// made, and the order stays pending for the next one.
+func (l *Loop) sendPendingEscape(capturedAt time.Time) {
+	if !l.escapeDue || l.healedLastFrame || l.fightKeyLastFrame {
+		return
+	}
+	if l.deps.Driver == nil || !l.deps.Driver.Armed() {
+		return
+	}
+	res := l.deps.Driver.CancelTarget(l.deps.Now().Sub(capturedAt))
+	l.fightState.Reason = res.Reason
+	l.fightKeyLastFrame = true
+	if res.Status == "emitted" {
+		l.escapeDue, l.fightState.EscapeDue = false, false
+	}
+}
+
 // fightStep evaluates activity, targeting and spell rules for this frame and
 // presses at most one non-heal key. Priority within the frame: healing (run
 // before this step) beats a pending Escape, which beats targeting, which
@@ -85,26 +137,23 @@ func (l *Loop) fightStep(capturedAt time.Time) {
 		}
 		l.activity.Force(fight.Travelling)
 		l.targeter.Reset()
+		l.unreadBattle = fight.Presence{}
 		l.fightState = FightState{Enabled: false, Activity: fight.Travelling.String(), EscapeDue: l.escapeDue}
+		l.sendPendingEscape(capturedAt)
 		return
 	}
-	if l.cfg.Combat.Battle.Empty() {
-		// Losing the battle list is losing the only evidence a fight is still
-		// going on, so the machine cannot be left sitting in Fighting: nothing
-		// would ever drive it out again, and follow() would hold the route at
-		// "Walka." until the user switched attacking off. It is treated like
-		// the switch going off for the same reason that branch orders an
-		// Escape - the client may well still be attacking something we can no
-		// longer see - and the order keeps until a calibrated frame can carry
-		// it out.
-		if l.activity.State() == fight.Fighting {
-			l.escapeDue = true
+	// Both halves of the calibration are checked, not just the battle
+	// rectangle: Combat.Enabled() is Viewport AND Crop, so observeVision can
+	// return before it ever looks at the battle region while Battle itself is
+	// still non-empty - a combination combatconfig.go explicitly calls legal.
+	// Gating on combat.Calibrated as well is also what makes this step agree
+	// with healStep about what "calibrated" means.
+	if !l.combat.Calibrated || l.cfg.Combat.Battle.Empty() {
+		reason := "brak kalibracji battle listy"
+		if !l.combat.Calibrated {
+			reason = "brak kalibracji widzenia"
 		}
-		l.activity.Force(fight.Travelling)
-		l.targeter.Reset()
-		l.fightState.Activity = fight.Travelling.String()
-		l.fightState.EscapeDue = l.escapeDue
-		l.fightState.Reason = "brak kalibracji battle listy"
+		l.abandonFight(capturedAt, reason)
 		return
 	}
 	if l.deps.Driver == nil || !l.deps.Driver.Armed() {
@@ -119,6 +168,12 @@ func (l *Loop) fightStep(capturedAt time.Time) {
 		l.targeter.Reset()
 		l.fightState.Activity = fight.Travelling.String()
 		l.fightState.Reason = "wykonawca jest rozbrojony"
+		return
+	}
+
+	if l.unreadBattle.Observe(!l.battleRead, capturedAt, unreadBattleLimit) &&
+		l.activity.State() == fight.Fighting {
+		l.abandonFight(capturedAt, "battle lista nie dociera")
 		return
 	}
 
@@ -157,12 +212,7 @@ func (l *Loop) fightStep(capturedAt time.Time) {
 	}
 
 	if l.escapeDue {
-		res := l.deps.Driver.CancelTarget(now.Sub(capturedAt))
-		l.fightState.Reason = res.Reason
-		l.fightKeyLastFrame = true
-		if res.Status == "emitted" {
-			l.escapeDue, l.fightState.EscapeDue = false, false
-		}
+		l.sendPendingEscape(capturedAt)
 		return
 	}
 

@@ -193,7 +193,7 @@ func (s *server) config(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &body) {
 		return
 	}
-	if err := healKeyConflict(body); err != nil {
+	if err := keyConflicts(body); err != nil {
 		writeJSONError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -224,24 +224,70 @@ var actionNames = map[string]string{
 	"rope": "liny", "ladder": "drabiny", "hole": "dziury", "shovel": "łopaty",
 }
 
-// healKeyConflict refuses a request where one key would both heal and dig. The
-// halves of the config are applied to different owners - the action hotkeys to
-// the driver, the rules to the loop - so this is the only point where both are
-// visible at once, and it runs before anything is stored.
-func healKeyConflict(body configRequest) error {
-	for action, key := range body.Keys {
+// keyCategory is one group of bindings for the collision check. Duplicates
+// are legal inside a category and never across one, so the check needs both
+// the machine-readable group and the phrase a refusal should name.
+type keyCategory struct {
+	group  string
+	phrase string
+}
+
+// keyConflicts refuses a request where one key would do two different jobs.
+// The halves of the config are applied to different owners - the action
+// hotkeys to the driver, the rules to the loop - so this is the only point
+// where all of them are visible at once, and it runs before anything is
+// stored.
+//
+// The attack key and every spell hotkey form one category, inside which
+// duplicates are deliberately allowed: fight.Engine tracks one cooldown per
+// hotkey, shared by every rule that names it, so two rules on one key behave
+// exactly the way the user expects. Across categories they do not.
+// heal.Engine and fight.Engine keep independent cooldown maps, so a key bound
+// to both a heal rule and a spell would be pressed twice in quick succession
+// with neither engine aware of the other's emission - which is the failure
+// this check exists to prevent, not merely a tidiness rule.
+//
+// Floor actions are claimed first so that a collision with one is reported by
+// the genitive name a human recognises ("liny") rather than by a rule number.
+func keyConflicts(body configRequest) error {
+	held := map[string]keyCategory{}
+	// claim records a key for a category, or reports who has it already.
+	claim := func(key string, as keyCategory) (keyCategory, bool) {
 		if key == "" {
-			continue
+			return keyCategory{}, true
 		}
-		for i, r := range body.Brain.Heal.Rules {
-			if r.Hotkey != key {
-				continue
-			}
-			name, ok := actionNames[action]
-			if !ok {
-				name = action
-			}
-			return fmt.Errorf("reguła %d używa klawisza %s, przypisanego już do %s", i+1, key, name)
+		if had, ok := held[key]; ok && had.group != as.group {
+			return had, false
+		}
+		held[key] = as
+		return keyCategory{}, true
+	}
+	for action, key := range body.Keys {
+		name, ok := actionNames[action]
+		if !ok {
+			name = action
+		}
+		if had, ok := claim(key, keyCategory{group: "action", phrase: name}); !ok {
+			return fmt.Errorf("klawisz %s obsługuje %s, a jest przypisany już do %s", key, name, had.phrase)
+		}
+	}
+	for i, r := range body.Brain.Heal.Rules {
+		n := i + 1
+		as := keyCategory{group: "heal", phrase: fmt.Sprintf("reguły leczenia %d", n)}
+		if had, ok := claim(r.Hotkey, as); !ok {
+			return fmt.Errorf("reguła %d używa klawisza %s, przypisanego już do %s", n, r.Hotkey, had.phrase)
+		}
+	}
+	const fightGroup = "fight"
+	if had, ok := claim(body.Brain.Fight.AttackKey,
+		keyCategory{group: fightGroup, phrase: "ataku i czarów"}); !ok {
+		return fmt.Errorf("klawisz ataku %s jest przypisany już do %s", body.Brain.Fight.AttackKey, had.phrase)
+	}
+	for i, r := range body.Brain.Fight.Spells {
+		n := i + 1
+		as := keyCategory{group: fightGroup, phrase: "ataku i czarów"}
+		if had, ok := claim(r.Hotkey, as); !ok {
+			return fmt.Errorf("reguła czaru %d używa klawisza %s, przypisanego już do %s", n, r.Hotkey, had.phrase)
 		}
 	}
 	return nil

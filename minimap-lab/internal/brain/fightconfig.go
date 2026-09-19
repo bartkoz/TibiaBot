@@ -112,6 +112,9 @@ func (c FightConfig) validate(decisionRadius float64) error {
 	if c.AttackKey != "" && !input.ValidHotkey(c.AttackKey) {
 		return fmt.Errorf("nieznany klawisz attack_key %q", c.AttackKey)
 	}
+	if input.ReservedHotkey(c.AttackKey) {
+		return fmt.Errorf("klawisz %q jest zastrzeżony i nie może być attack_key", c.AttackKey)
+	}
 	if len(c.Spells) > maxSpellRules {
 		return fmt.Errorf("reguł czarów może być najwyżej %d, podano %d", maxSpellRules, len(c.Spells))
 	}
@@ -119,6 +122,9 @@ func (c FightConfig) validate(decisionRadius float64) error {
 		n := i + 1
 		if !input.ValidHotkey(r.Hotkey) {
 			return fmt.Errorf("reguła %d: nieznany klawisz %q", n, r.Hotkey)
+		}
+		if input.ReservedHotkey(r.Hotkey) {
+			return fmt.Errorf("reguła %d: klawisz %q jest zastrzeżony", n, r.Hotkey)
 		}
 		if r.MinMonsters < 1 || r.MinMonsters > 64 {
 			return fmt.Errorf("reguła %d: min_monsters musi mieścić się w zakresie 1–64", n)

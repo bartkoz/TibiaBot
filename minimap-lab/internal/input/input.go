@@ -62,6 +62,20 @@ var hotkeyNames = map[string]bool{
 	"escape": true, "space": true, "tab": true,
 }
 
+// reservedKeys are names the emitters know but nothing may be bound to. They
+// are deliberately kept out of hotkeyNames rather than left out of it: the
+// name has to stay valid for the driver's own tap - CancelTarget presses
+// escape - while being refused everywhere a user picks a key. Escape means
+// exactly one thing to the client ("stop attacking and stop chasing"), so
+// bound to a direction it would cancel the target on every step, and bound as
+// the attack key it would make attacking cancel attacking.
+var reservedKeys = map[string]bool{"escape": true}
+
+// ReservedHotkey answers whether a key name is one nothing may be bound to.
+// internal/brain validates the heal and fight rule lists and has no business
+// knowing the per-platform key tables, but must refuse a reserved name.
+func ReservedHotkey(key string) bool { return reservedKeys[key] }
+
 // init adds the ANSI letter keys a-z and the top-row digits 0-9, so a client
 // whose movement is bound to letters (WASD and the like) has a key name to
 // configure at all - darwinKeys and windowsKeys each carry the matching
