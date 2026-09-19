@@ -551,6 +551,86 @@ func TestNonHealingActionsShareOneBudget(t *testing.T) {
 	}
 }
 
+func TestCastAndCancelTargetCountInCombatBudget(t *testing.T) {
+	em := &DryEmitter{Window: Window{PID: 1}}
+	d := NewDriver(em, DefaultMaxObservationAgeMS)
+	if _, err := d.Arm(); err != nil {
+		t.Fatalf("Arm: %v", err)
+	}
+	for i := 0; i < 3; i++ {
+		res := d.Cast("f4", 0)
+		if res.Status != "emitted" {
+			t.Fatalf("czar %d: status = %s, oczekiwano emitted", i, res.Status)
+		}
+	}
+	// Fourth combat-purpose tap in the same second must be refused - Cast and
+	// CancelTarget share one budget row.
+	if res := d.CancelTarget(0); res.Status != "refused" {
+		t.Fatalf("czwarty klawisz walki w tej samej sekundzie: status = %s, oczekiwano refused", res.Status)
+	}
+}
+
+func TestCastRefusesUnknownKey(t *testing.T) {
+	em := &DryEmitter{Window: Window{PID: 1}}
+	d := NewDriver(em, DefaultMaxObservationAgeMS)
+	if _, err := d.Arm(); err != nil {
+		t.Fatalf("Arm: %v", err)
+	}
+	if res := d.Cast("nieznany-klawisz", 0); res.Status != "refused" {
+		t.Fatalf("nieznany klawisz czaru: status = %s, oczekiwano refused", res.Status)
+	}
+}
+
+func TestCancelTargetTapsEscape(t *testing.T) {
+	em := &DryEmitter{Window: Window{PID: 1}}
+	d := NewDriver(em, DefaultMaxObservationAgeMS)
+	if _, err := d.Arm(); err != nil {
+		t.Fatalf("Arm: %v", err)
+	}
+	res := d.CancelTarget(0)
+	if res.Status != "emitted" || res.Key != "escape" {
+		t.Fatalf("CancelTarget = %+v, oczekiwano emitted/escape", res)
+	}
+}
+
+func TestCombatBudgetDoesNotBorrowFromHealReserve(t *testing.T) {
+	em := &DryEmitter{Window: Window{PID: 1}}
+	d := NewDriver(em, DefaultMaxObservationAgeMS)
+	if _, err := d.Arm(); err != nil {
+		t.Fatalf("Arm: %v", err)
+	}
+	// Six non-heal taps (the shared non-heal fence) must not block a
+	// subsequent heal - the heal reserve stays carved out regardless of how
+	// combat taps are spent. The combat row holds three, so two casts plus one
+	// CancelTarget fill it, and three steps top the fence up to six; every one
+	// of them is checked, because a silently refused tap would leave the fence
+	// unfilled and the final heal proving nothing.
+	for i := 0; i < 2; i++ {
+		if res := d.Cast("f4", 0); res.Status != "emitted" {
+			t.Fatalf("czar %d: status = %s, oczekiwano emitted", i, res.Status)
+		}
+	}
+	if res := d.CancelTarget(0); res.Status != "emitted" {
+		t.Fatalf("anulowanie celu: status = %s, oczekiwano emitted", res.Status)
+	}
+	for i := 0; i < 3; i++ {
+		if res := d.Walk("N", 0); res.Status != "emitted" {
+			t.Fatalf("krok %d: status = %s, oczekiwano emitted", i, res.Status)
+		}
+	}
+	if res := d.Heal("f1", 0); res.Status != "emitted" {
+		t.Fatalf("leczenie po sześciu nieleczących stuknięciach: status = %s, oczekiwano emitted", res.Status)
+	}
+}
+
+func TestValidHotkeyAcceptsEscapeSpaceTab(t *testing.T) {
+	for _, k := range []string{"escape", "space", "tab"} {
+		if !ValidHotkey(k) {
+			t.Errorf("ValidHotkey(%q) = false, oczekiwano true", k)
+		}
+	}
+}
+
 // Re-arming happens after every lost focus. Clearing the tap history there
 // would turn the rate limit into a suggestion.
 func TestArmingDoesNotClearTheTapHistory(t *testing.T) {

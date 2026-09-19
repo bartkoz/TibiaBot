@@ -33,12 +33,13 @@ const (
 	// ceiling on purpose - they are a fence, not an allocation.
 	//
 	// maxNonHealTapsPerSecond is what actually fences the healing reserve off:
-	// without it, walking and floor actions could take three each, fill the
-	// ceiling between them, and leave the reserve existing only on paper.
+	// without it, walking, floor actions and combat could take three each, fill
+	// the ceiling between them, and leave the reserve existing only on paper.
 	maxTapsPerSecond        = 8
 	maxWalkTapsPerSecond    = 3
 	maxActionTapsPerSecond  = 3
 	maxHealTapsPerSecond    = 2
+	maxCombatTapsPerSecond  = 3
 	maxNonHealTapsPerSecond = 6
 	actionClickDelayMS      = 120
 )
@@ -82,6 +83,7 @@ const (
 	purposeWalk purpose = iota
 	purposeAction
 	purposeHeal
+	purposeCombat
 )
 
 type tap struct {
@@ -95,6 +97,8 @@ func purposeLimit(p purpose) int {
 		return maxWalkTapsPerSecond
 	case purposeAction:
 		return maxActionTapsPerSecond
+	case purposeCombat:
+		return maxCombatTapsPerSecond
 	default:
 		return maxHealTapsPerSecond
 	}
@@ -298,6 +302,42 @@ func (d *Driver) Heal(key string, observationAge time.Duration) Result {
 	}
 	d.taps = append(d.taps, tap{at: d.now(), p: purposeHeal})
 	return Result{Status: "emitted", Key: key}
+}
+
+// Cast taps one spell hotkey. Like Heal, the key is literal - it comes
+// straight from the panel's rule list - and carries no "in flight" semantics:
+// a floor action stays pending until the panel confirms the floor changed,
+// and a cast spell has nothing to confirm.
+func (d *Driver) Cast(key string, observationAge time.Duration) Result {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if !hotkeyNames[key] {
+		return Result{Status: "refused", Reason: "nieznany klawisz czaru: " + key}
+	}
+	if res, ok := d.guardLocked(observationAge, purposeCombat); !ok {
+		return res
+	}
+	if err := d.em.TapKey(key, holdMS); err != nil {
+		return d.emitterFailureLocked(err)
+	}
+	d.taps = append(d.taps, tap{at: d.now(), p: purposeCombat})
+	return Result{Status: "emitted", Key: key}
+}
+
+// CancelTarget taps Escape, which the client reads as "stop attacking and
+// stop chasing". Unlike Cast, the key is fixed: Escape has exactly one
+// meaning in this project, so there is nothing for a caller to get wrong.
+func (d *Driver) CancelTarget(observationAge time.Duration) Result {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if res, ok := d.guardLocked(observationAge, purposeCombat); !ok {
+		return res
+	}
+	if err := d.em.TapKey("escape", holdMS); err != nil {
+		return d.emitterFailureLocked(err)
+	}
+	d.taps = append(d.taps, tap{at: d.now(), p: purposeCombat})
+	return Result{Status: "emitted", Key: "escape"}
 }
 
 // ValidHotkey answers whether a key name is one the platform emitters know.

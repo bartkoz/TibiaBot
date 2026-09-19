@@ -20,6 +20,7 @@ var darwinKeys = map[string]uint16{
 	"up": 126, "down": 125, "left": 123, "right": 124,
 	"f1": 122, "f2": 120, "f3": 99, "f4": 118, "f5": 96, "f6": 97,
 	"f7": 98, "f8": 100, "f9": 101, "f10": 109, "f11": 103, "f12": 111,
+	"escape": 53, "space": 49, "tab": 48,
 	// ANSI letters, keyed by physical position (kVK_ANSI_*), not by
 	// alphabetical order or ASCII value - e.g. "a" is 0, "s" is 1, "d" is 2,
 	// "w" is 13, matching a US/ANSI keyboard's WASD cluster.

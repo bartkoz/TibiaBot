@@ -57,6 +57,9 @@ var hotkeyNames = map[string]bool{
 	"up": true, "down": true, "left": true, "right": true,
 	"f1": true, "f2": true, "f3": true, "f4": true, "f5": true, "f6": true,
 	"f7": true, "f8": true, "f9": true, "f10": true, "f11": true, "f12": true,
+	// Combat keys: Escape is what CancelTarget taps, and space and tab are key
+	// names a spell rule may be bound to.
+	"escape": true, "space": true, "tab": true,
 }
 
 // init adds the ANSI letter keys a-z and the top-row digits 0-9, so a client
