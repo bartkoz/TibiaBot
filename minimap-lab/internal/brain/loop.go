@@ -127,6 +127,16 @@ func (c *Config) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// FightAbsent reports whether the document this Config was decoded from
+// carried no "fight" key at all - the caller-visible half of the distinction
+// UnmarshalJSON records, needed by frameapi.go's cross-category key-collision
+// check: that check runs before SetConfig, against whichever fight config is
+// about to actually apply, and a request that omits "fight" keeps the
+// retained one rather than the zero value sitting in this Config.
+func (c Config) FightAbsent() bool {
+	return c.fightAbsent
+}
+
 func (c Config) validate() error {
 	if c.Zoom < 0 || c.Zoom > 8 {
 		return fmt.Errorf("skala musi mieścić się w zakresie 0–8 (0 = Auto)")
@@ -324,6 +334,19 @@ func (l *Loop) Submit(f frame.Frame, receivedAt time.Time) {
 }
 
 func (l *Loop) Snapshot() *State { return l.snap.Load() }
+
+// CurrentFightConfig returns the fight configuration presently applied,
+// synchronized through the loop goroutine the same way SetConfig writes it -
+// so a caller validating an incoming request against the retained value never
+// races the field SetConfig is about to overwrite. Published State carries
+// only FightState (runtime activity), not the config fields a collision
+// check needs (AttackKey, Spells), which is why this exists alongside
+// Snapshot rather than reusing it.
+func (l *Loop) CurrentFightConfig(ctx context.Context) FightConfig {
+	var out FightConfig
+	l.do(ctx, func() { out = l.cfg.Fight })
+	return out
+}
 
 func (l *Loop) ResetCapture(ctx context.Context, session uint64) {
 	l.do(ctx, func() {

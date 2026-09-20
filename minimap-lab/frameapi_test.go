@@ -285,6 +285,38 @@ func TestConfigAllowsTwoSpellsOnOneHotkey(t *testing.T) {
 	}
 }
 
+// A request that omits "fight" entirely - every panel request today, since
+// the panel has no fight module yet - must not blind the collision check to
+// a fight key set through the API on an earlier request. Before the fix this
+// checked only the incoming (zero) Fight value, so a key already claimed by
+// an attack/spell binding was invisible on the very requests that are the
+// only way anyone edits heal rules or floor actions today.
+func TestConfigRefusesRetainedFightKeyCollisionWhenFightIsOmitted(t *testing.T) {
+	f := brainServer(t, nil)
+	setFight := `{"brain":{"zoom":1,"min_score":0.85,"min_gap":0.015,"speed":20,
+		"floor_radius":8,"record_every":10,"tolerance":1,"floor":7,
+		"fight":{"enabled":true,"attack_key":"f7"}},
+		"keys":{},"directions":{"N":"numpad8"}}`
+	if w := f.request(t, "PUT", "/api/config", []byte(setFight)); w.Code != 200 {
+		t.Fatalf("ustawienie fight przez API odrzucone: %d %s", w.Code, w.Body.String())
+	}
+	// Shaped like a real panel request: no "fight" key at all.
+	panelRequest := `{"brain":{"zoom":1,"min_score":0.85,"min_gap":0.015,"speed":20,
+		"floor_radius":8,"record_every":10,"tolerance":1,"floor":7},
+		"keys":{"rope":"f7"},"directions":{"N":"numpad8"}}`
+	w := f.request(t, "PUT", "/api/config", []byte(panelRequest))
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("kod = %d, oczekiwano 400 (klawisz f7 wciąż należy do ataku)", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "ataku") {
+		t.Fatalf("powód nie mówi, z czym jest kolizja: %s", w.Body.String())
+	}
+	// The refused panel request must not have displaced the retained key.
+	if got := f.server.driver.ActionKeys["rope"]; got != "" {
+		t.Errorf("hotkey liny = %q — odrzucona konfiguracja jednak coś zapisała", got)
+	}
+}
+
 func TestRouteRoundTripsThroughTheAPI(t *testing.T) {
 	f := brainServer(t, nil)
 	in := `{"version":1,"name":"Venore","waypoints":[

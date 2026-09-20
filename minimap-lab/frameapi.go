@@ -193,7 +193,17 @@ func (s *server) config(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &body) {
 		return
 	}
-	if err := keyConflicts(body); err != nil {
+	// A request that omits "fight" keeps the retained config (SetConfig's own
+	// fightAbsent handling below) rather than the zero value sitting in
+	// body.Brain.Fight - the collision check must see whichever one is about
+	// to actually apply, or a key already claimed by an attack/spell binding
+	// made through the API is invisible to every panel request, since the
+	// panel has no fight module yet and so never sends the key at all.
+	effectiveFight := body.Brain.Fight
+	if body.Brain.FightAbsent() {
+		effectiveFight = s.loop.CurrentFightConfig(r.Context())
+	}
+	if err := keyConflicts(body, effectiveFight); err != nil {
 		writeJSONError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -238,6 +248,12 @@ type keyCategory struct {
 // where all of them are visible at once, and it runs before anything is
 // stored.
 //
+// fight is the fight config to check against, not necessarily body.Brain.Fight:
+// a request that omits "fight" (every panel request today, since the panel
+// has no fight module yet) keeps the retained config rather than applying a
+// zero one, and this check must see whichever one is about to actually
+// apply - the caller resolves that before calling in.
+//
 // The attack key and every spell hotkey form one category, inside which
 // duplicates are deliberately allowed: fight.Engine tracks one cooldown per
 // hotkey, shared by every rule that names it, so two rules on one key behave
@@ -249,7 +265,7 @@ type keyCategory struct {
 //
 // Floor actions are claimed first so that a collision with one is reported by
 // the genitive name a human recognises ("liny") rather than by a rule number.
-func keyConflicts(body configRequest) error {
+func keyConflicts(body configRequest, fight brain.FightConfig) error {
 	held := map[string]keyCategory{}
 	// claim records a key for a category, or reports who has it already.
 	claim := func(key string, as keyCategory) (keyCategory, bool) {
@@ -279,11 +295,11 @@ func keyConflicts(body configRequest) error {
 		}
 	}
 	const fightGroup = "fight"
-	if had, ok := claim(body.Brain.Fight.AttackKey,
+	if had, ok := claim(fight.AttackKey,
 		keyCategory{group: fightGroup, phrase: "ataku i czarów"}); !ok {
-		return fmt.Errorf("klawisz ataku %s jest przypisany już do %s", body.Brain.Fight.AttackKey, had.phrase)
+		return fmt.Errorf("klawisz ataku %s jest przypisany już do %s", fight.AttackKey, had.phrase)
 	}
-	for i, r := range body.Brain.Fight.Spells {
+	for i, r := range fight.Spells {
 		n := i + 1
 		as := keyCategory{group: fightGroup, phrase: "ataku i czarów"}
 		if had, ok := claim(r.Hotkey, as); !ok {
